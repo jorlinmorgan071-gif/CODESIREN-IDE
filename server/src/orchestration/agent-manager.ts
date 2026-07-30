@@ -24,10 +24,60 @@ import {
   setOutcome,
   addStep,
 } from '../observability/traces.js';
+import { contextManager } from '../context/manager.js';
 
 class AgentManager {
   private agents = new Map<string, IAgent>();
   private activeTasks = new Map<string, { task: AgentTask; abort: AbortController }>();
+
+  // ── Phase B (Context Manager) — assemble contextBundle for a task ────────
+  //
+  // Per directive Section 4: this is called inside send() / executeAndWait()
+  // BEFORE the task reaches the target agent. The result is attached to the
+  // task as `task.contextBundle` (an additive optional field — see types.ts).
+  //
+  // TIMEOUT + FAIL-OPEN BEHAVIOR (deliberate exception to fail-closed):
+  //
+  //   The whole rest of Code Siren fails closed — if anything goes wrong,
+  //   the operation is aborted. This is the ONE deliberate exception:
+  //   context assembly failing should NOT block the agent pipeline. The
+  //   agent can still do its job without an assembled bundle (it'll just
+  //   have less context). Blocking here would turn a context-assembly bug
+  //   into a complete outage of the agent system, which is much worse
+  //   than a degraded (bundle-less) dispatch.
+  //
+  //   DO NOT "fix" this to fail-closed without explicit discussion — the
+  //   trade-off is intentional and documented per directive Section 4.
+  //
+  // Implementation:
+  //   - 2-second outer timeout via Promise.race
+  //   - On timeout OR any thrown error: log the failure and return undefined
+  //   - The caller (send/executeAndWait) attaches the result to
+  //     task.contextBundle; undefined means "no bundle, dispatch anyway"
+  private async assembleContextBundle(task: AgentTask): Promise<import('../context/types.js').ContextBundle | undefined> {
+    const ASSEMBLE_TIMEOUT_MS = 2000;
+    const userId = task.context.userId ?? 'unknown';
+    const agentId = task.agentId;
+    // modelId is '' in Phase B — the budget module falls back to 32K + warning.
+    // A future phase can populate this when model selection gets richer.
+    const modelId = '';
+
+    try {
+      const result = await Promise.race([
+        contextManager.assemble({ userId, agentId, task, modelId }),
+        new Promise<undefined>((resolve) =>
+          setTimeout(() => {
+            console.warn(`[manager] context assembly timed out after ${ASSEMBLE_TIMEOUT_MS}ms (task=${task.id}) — dispatching without bundle (fail-open)`);
+            resolve(undefined);
+          }, ASSEMBLE_TIMEOUT_MS),
+        ),
+      ]);
+      return result;
+    } catch (err: any) {
+      console.warn(`[manager] context assembly failed: ${err.message} (task=${task.id}) — dispatching without bundle (fail-open)`);
+      return undefined;
+    }
+  }
 
   register(agent: IAgent): void {
     if (this.agents.has(agent.id)) {
@@ -73,6 +123,33 @@ class AgentManager {
       label: `task received — agent=${agent.id} mode=${task.executionMode} origin=${task.origin}`,
       meta: { taskType: task.type, priority: task.priority },
     });
+
+    // ── Phase B (Context Manager) — assemble the contextBundle ────────
+    // Per directive Section 4: this happens BEFORE the task reaches the
+    // agent. The result is attached to the task as an additive optional
+    // field. Fail-open: if assembly fails or times out (2s), the task
+    // is dispatched with contextBundle === undefined.
+    const bundle = await this.assembleContextBundle(task);
+    if (bundle) {
+      task.contextBundle = bundle;
+      addStep(task.id, {
+        kind: 'llm-call',
+        label: `context bundle assembled — used=${bundle.tokenBudget.used}/${bundle.tokenBudget.max} tokens, ${bundle.tokenBudget.truncated.length} source(s) truncated`,
+        meta: {
+          openFiles: bundle.openFiles.length,
+          hasSelection: bundle.selection !== null,
+          projectGraphNodes: bundle.projectGraph.length,
+          historyTurns: bundle.conversationHistory.length,
+          memoryEntries: bundle.relevantMemory.length,
+          truncated: bundle.tokenBudget.truncated,
+        },
+      });
+    } else {
+      addStep(task.id, {
+        kind: 'llm-call',
+        label: `context bundle NOT assembled (fail-open — see assembleContextBundle comment)`,
+      });
+    }
 
     const abort = new AbortController();
     this.activeTasks.set(task.id, { task, abort });
@@ -213,6 +290,35 @@ class AgentManager {
       label: `relay task — agent=${agent.id} mode=${task.executionMode} origin=${task.origin}`,
       meta: { taskType: task.type, priority: task.priority, via: 'executeAndWait' },
     });
+
+    // ── Phase B (Context Manager) — assemble the contextBundle ────────
+    // Same fail-open behavior as send(). Both call paths get context
+    // assembly; the bundle is attached to the same `task.contextBundle`
+    // field, so agents reading it don't need to care which dispatch path
+    // they came through.
+    const bundle = await this.assembleContextBundle(task);
+    if (bundle) {
+      task.contextBundle = bundle;
+      addStep(task.id, {
+        kind: 'llm-call',
+        label: `context bundle assembled — used=${bundle.tokenBudget.used}/${bundle.tokenBudget.max} tokens, ${bundle.tokenBudget.truncated.length} source(s) truncated`,
+        meta: {
+          openFiles: bundle.openFiles.length,
+          hasSelection: bundle.selection !== null,
+          projectGraphNodes: bundle.projectGraph.length,
+          historyTurns: bundle.conversationHistory.length,
+          memoryEntries: bundle.relevantMemory.length,
+          truncated: bundle.tokenBudget.truncated,
+          via: 'executeAndWait',
+        },
+      });
+    } else {
+      addStep(task.id, {
+        kind: 'llm-call',
+        label: `context bundle NOT assembled (fail-open — see assembleContextBundle comment)`,
+        meta: { via: 'executeAndWait' },
+      });
+    }
 
     const abort = new AbortController();
     this.activeTasks.set(task.id, { task, abort });

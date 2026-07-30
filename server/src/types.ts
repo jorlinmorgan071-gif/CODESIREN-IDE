@@ -74,6 +74,15 @@ export interface AgentTask {
   // 'voice' is added here ahead of Step 8 to make the contract explicit.
   origin: 'chat' | 'voice' | 'gesture' | 'api';
   createdAt: number;
+  // ── Phase B (Context Manager) — additive optional field ────────────────
+  // Assembled by AgentManager.send()/executeAndWait() before the task is
+  // dispatched to the target agent. Purely additive — no existing agent is
+  // REQUIRED to read this field; callers that don't set it work unchanged.
+  //
+  // Per directive Section 4: if Context Manager throws or times out (2s),
+  // the task is dispatched with contextBundle === undefined (fail-open —
+  // see the explicit comment in agent-manager.ts for the rationale).
+  contextBundle?: import('./context/types.js').ContextBundle;
 }
 
 export interface ProjectContext {
