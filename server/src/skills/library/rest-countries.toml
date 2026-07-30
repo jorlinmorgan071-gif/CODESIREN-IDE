@@ -1,0 +1,15 @@
+# REST Countries Lookup
+# Fetches structured facts about a country by name.
+# No API key required — public REST API.
+# Input: { "country": "France" } → returns country facts as JSON
+
+name = "rest-countries"
+version = "0.1.0"
+description = "Fetch country facts by name. Input: { \"country\": \"France\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://restcountries.com/v3.1/name/{{country}}", "method": "GET"}'
+output_key = "country_data"

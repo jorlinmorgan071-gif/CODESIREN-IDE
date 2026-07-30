@@ -1,0 +1,15 @@
+# Open-Meteo Current Weather
+# Fetches current weather for a latitude/longitude.
+# No API key required — public API.
+# Input: { "latitude": 40.7128, "longitude": -74.0060 } → returns weather JSON
+
+name = "open-meteo-weather"
+version = "0.1.0"
+description = "Fetch current weather by lat/lon. Input: { \"latitude\": 40.71, \"longitude\": -74.01 }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.open-meteo.com/v1/forecast?latitude={{latitude}}&longitude={{longitude}}&current_weather=true", "method": "GET"}'
+output_key = "weather"

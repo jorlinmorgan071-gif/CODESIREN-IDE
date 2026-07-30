@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment files (NEVER commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Code Siren runtime
+server/backups/
+server/.biometric-templates/
+server/.env.local
+server/.env.*.local
+server/traces-export-*.json
+server/settings-export-*.json
+
+# Stray nested extraction artifact (duplicate of repo root — do NOT track)
+/code_siren/
+gcode-out/
+*.stl
+*.gcode
+
+# Lockfiles (optional — keep if you want reproducible installs)
+# package-lock.json
+# yarn.lock
+
+# Z.ai SDK credentials
+.z-ai-config
+**/.z-ai-config
+server/dist/

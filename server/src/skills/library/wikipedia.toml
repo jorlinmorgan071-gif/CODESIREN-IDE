@@ -1,0 +1,15 @@
+# Wikipedia Summary Lookup
+# Fetches a summary of a Wikipedia article by title.
+# No API key required — public REST API.
+# Input: { "title": "TypeScript" } → returns article summary as JSON
+
+name = "wikipedia-summary"
+version = "0.1.0"
+description = "Fetch a Wikipedia article summary by title. Input: { \"title\": \"TypeScript\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://en.wikipedia.org/api/rest_v1/page/summary/{{title}}", "method": "GET"}'
+output_key = "summary"

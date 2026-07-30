@@ -1,0 +1,34 @@
+/* Zero Two: Code Siren — App Styles */
+
+/* Ensure the app fills the viewport */
+#root {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Monaco editor container adjustments */
+.monaco-editor {
+  border-radius: 0 !important;
+}
+
+/* Prevent text selection on UI elements */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Smooth transitions for theme changes */
+* {
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+/* Code font utilities */
+.font-code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* Display font utilities */
+.font-display {
+  font-family: 'Bebas Neue', 'Arial Black', sans-serif;
+}

@@ -1,0 +1,404 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Bebas+Neue&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Zero Two: Code Siren — Default Dark Theme */
+    --siren-red: #EE1C1C;
+    --active-red: #C41010;
+    --dim-red: #6A0808;
+    --bright-silver: #C8C8DC;
+    --steel-silver: #8A8AA0;
+    --muted-silver: #5A5A72;
+    --void-black: #07070B;
+    --surface-dark: #0E0E14;
+    --surface-raised: #15151E;
+    --border-subtle: #1E1E2A;
+    --border-hover: #2A2A3C;
+    --success: #22C55E;
+    --warning: #F59E0B;
+    --error: #EE1C1C;
+    --info: #3B82F6;
+
+    --background: 240 33% 3.5%;
+    --foreground: 245 20% 87%;
+    --card: 240 25% 6%;
+    --card-foreground: 245 20% 87%;
+    --popover: 240 25% 6%;
+    --popover-foreground: 245 20% 87%;
+    --primary: 0 85% 52%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 15% 12%;
+    --secondary-foreground: 245 20% 87%;
+    --muted: 240 15% 12%;
+    --muted-foreground: 245 10% 55%;
+    --accent: 240 15% 12%;
+    --accent-foreground: 245 20% 87%;
+    --destructive: 0 85% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 15% 14%;
+    --input: 240 15% 8%;
+    --ring: 0 85% 52%;
+    --radius: 0.375rem;
+    --sidebar-background: 240 25% 6%;
+    --sidebar-foreground: 245 20% 87%;
+    --sidebar-primary: 0 85% 52%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 15% 12%;
+    --sidebar-accent-foreground: 245 20% 87%;
+    --sidebar-border: 240 15% 14%;
+    --sidebar-ring: 0 85% 52%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--void-black);
+    color: var(--bright-silver);
+    overflow: hidden;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-subtle);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-hover);
+  }
+}
+
+@layer components {
+  .zt-panel {
+    background-color: var(--surface-dark);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+  }
+
+  .zt-elevated {
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-hover);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6), 0 0 1px rgba(200, 200, 220, 0.05);
+  }
+
+  .zt-input {
+    background-color: #0A0A10;
+    border: 1px solid var(--border-subtle);
+    color: var(--bright-silver);
+  }
+
+  .zt-input:focus {
+    outline: none;
+    border-color: var(--siren-red);
+  }
+
+  .zt-grid-bg {
+    background-image:
+      radial-gradient(ellipse at 50% 30%, rgba(238, 28, 28, 0.03) 0%, transparent 60%),
+      linear-gradient(rgba(30, 30, 42, 0.3) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(30, 30, 42, 0.3) 1px, transparent 1px);
+    background-size: 100% 100%, 40px 40px, 40px 40px;
+  }
+
+  /* Bug F fix — thin, subtle, theme-matched scrollbar for the editor tab bar.
+     Only the horizontal scrollbar is styled (the tab bar never scrolls
+     vertically). Height matches the global scrollbar (6px) but the thumb
+     is shorter and more transparent so it doesn't compete with the tabs. */
+  .zt-tabbar-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 4px;
+  }
+  .zt-tabbar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .zt-tabbar-scroll::-webkit-scrollbar-thumb {
+    background: rgba(138, 138, 160, 0.25);
+    border-radius: 2px;
+  }
+  .zt-tabbar-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(138, 138, 160, 0.45);
+  }
+  /* Firefox */
+  .zt-tabbar-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(138, 138, 160, 0.25) transparent;
+  }
+
+  .agent-pulse {
+    animation: agent-pulse 2s ease-in-out infinite;
+  }
+
+  .typing-cursor::after {
+    content: '|';
+    animation: cursor-blink 1s step-end infinite;
+    color: var(--siren-red);
+  }
+
+  .progress-stripes {
+    background-image: linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.1) 25%,
+      transparent 25%,
+      transparent 50%,
+      rgba(255, 255, 255, 0.1) 50%,
+      rgba(255, 255, 255, 0.1) 75%,
+      transparent 75%,
+      transparent
+    );
+    background-size: 20px 20px;
+    animation: stripe-move 1s linear infinite;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: 'Bebas Neue', 'Arial Black', sans-serif;
+  }
+
+  .font-code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  .text-siren {
+    color: var(--siren-red);
+  }
+
+  .text-silver {
+    color: var(--bright-silver);
+  }
+
+  .text-steel {
+    color: var(--steel-silver);
+  }
+
+  .text-muted-silver {
+    color: var(--muted-silver);
+  }
+
+  .bg-void {
+    background-color: var(--void-black);
+  }
+
+  .bg-surface {
+    background-color: var(--surface-dark);
+  }
+
+  .bg-raised {
+    background-color: var(--surface-raised);
+  }
+
+  .border-subtle {
+    border-color: var(--border-subtle);
+  }
+
+  .border-hover {
+    border-color: var(--border-hover);
+  }
+}
+
+@keyframes agent-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 0.5;
+  }
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes stripe-move {
+  0% { background-position: 0 0; }
+  100% { background-position: 20px 20px; }
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes ring-progress {
+  from { stroke-dashoffset: var(--circumference); }
+  to { stroke-dashoffset: var(--target-offset); }
+}
+
+/* Terminal theme overrides */
+.xterm-viewport {
+  background-color: #0A0A10 !important;
+}
+
+/* Monaco editor theme overrides will be applied via JS */
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Chat interface directive animations ────────────────────────────────── */
+
+/* Shimmer loop — for "thinking" label, link shine, image-gen shimmer */
+@keyframes shimmer-loop {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Shimmer once — for scroll-reveal text */
+@keyframes shimmer-once {
+  0% { background-position: 200% 0; }
+  100% { background-position: 0 0; }
+}
+
+/* Glow rotate — for conic-gradient glow on buttons (Section 4) */
+@property --glow-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes glow-rotate {
+  0% { --glow-angle: 0deg; }
+  100% { --glow-angle: 360deg; }
+}
+
+/* Glass panel utility — for chat input container (Section 2.1) */
+.glass-panel {
+  background-color: rgba(21, 21, 30, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-subtle);
+}
+
+/* Chat bubble — Style A: fixed premium glass (Section 6) */
+.bubble-style-a {
+  background-color: rgba(14, 14, 20, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Chat bubble — Style B: theme-reactive accent tint (Section 6) */
+.bubble-style-b {
+  background-color: rgba(14, 14, 20, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--siren-red);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), 0 0 12px rgba(238, 28, 28, 0.15);
+}
+
+/* Dock glass pill (Section 5) */
+.dock-glass {
+  background-color: rgba(21, 21, 30, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Dock reflection (Section 5 — mirror effect beneath) */
+.dock-reflection {
+  background: linear-gradient(to bottom, var(--surface-raised), transparent);
+  opacity: 0.15;
+  filter: blur(4px);
+  transform: scaleY(-1);
+  mask-image: linear-gradient(to bottom, black 0%, transparent 60%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, transparent 60%);
+}
+
+/* Code block in chat (Section 6.1) */
+.chat-code-block {
+  background-color: var(--void-black);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.chat-code-block-header {
+  background-color: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--steel-silver);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.chat-code-block pre {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--bright-silver);
+}
+
+/* Follow-up suggestion chip (Section 6.1) */
+.follow-up-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--surface-raised);
+  color: var(--steel-silver);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.follow-up-chip:hover {
+  border-color: var(--siren-red);
+  color: var(--bright-silver);
+  background-color: rgba(238, 28, 28, 0.05);
+}

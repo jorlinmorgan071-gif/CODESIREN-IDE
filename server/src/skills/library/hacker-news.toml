@@ -1,0 +1,15 @@
+# Hacker News Top Stories
+# Fetches the top story IDs from Hacker News.
+# No API key required — public Firebase API.
+# Input: { } (no args needed) → returns top story IDs as JSON
+
+name = "hacker-news-top"
+version = "0.1.0"
+description = "Fetch top Hacker News story IDs. Input: { } (no args needed)"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://hacker-news.firebaseio.com/v0/topstories.json", "method": "GET"}'
+output_key = "top_story_ids"
