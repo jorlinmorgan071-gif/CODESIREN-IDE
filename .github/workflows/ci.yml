@@ -17,7 +17,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22 LTS — required by isolated-vm@6.1.2 (engines.node >= 22).
+          # Code Siren's Security Sandbox (server/src/security/sandbox.ts)
+          # uses isolated-vm for V8-isolate-based code execution. Node 20
+          # fails to compile isolated-vm because V8's SourceLocation API
+          # is incompatible. Bumping to Node 22 matches the dependency's
+          # declared engines requirement and resolves the build failure.
+          node-version: 22
       - run: npm install
       - run: npm run typecheck
       - run: npm run test
@@ -34,7 +40,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Match server job — Node 22 LTS (no native modules in app, but
+          # keeping the versions aligned avoids drift and surprises later).
+          node-version: 22
       - run: npm install
       - run: npx tsc --noEmit -p tsconfig.app.json
       - run: npx eslint . --max-warnings 0

@@ -109,7 +109,13 @@ export function CodeEditor() {
       // Configure Monaco's built-in TypeScript worker. Without this,
       // quickSuggestions:true produces nothing — the worker isn't
       // configured to do semantic analysis.
-      const ts = monaco.languages.typescript;
+      //
+      // NOTE: monaco-editor v0.55+ deprecates `monaco.languages.typescript`
+      // in favor of the new top-level `monaco.typescript` namespace. The
+      // old namespace is typed as `{ deprecated: true }` and produces
+      // TS2339 errors. The new namespace exposes the same API surface
+      // (typescriptDefaults, javascriptDefaults, ScriptTarget, etc.).
+      const ts = monaco.typescript;
       ts.typescriptDefaults.setCompilerOptions({
         target: ts.ScriptTarget.ESNext,
         allowNonTsExtensions: true,
@@ -180,7 +186,11 @@ export function CodeEditor() {
         if (resource.toString() !== model.uri.toString()) return;
         const markers = monaco.editor.getModelMarkers({ resource });
         // Monaco MarkerSeverity: Error=8, Warning=4, Info=2, Hint=1.
-        const problems = markers.map((m) => ({
+        // Build the problem list with explicit literal-union typing so
+        // TypeScript accepts the severity value (the conditional would
+        // otherwise widen to `string`, which isn't assignable to
+        // Problem['severity'] = 'error' | 'warning' | 'info').
+        const problems: import('@/types').Problem[] = markers.map((m) => ({
           file: model.uri.path.split('/').pop() ?? model.uri.path,
           line: m.startLineNumber,
           column: m.startColumn,
@@ -520,7 +530,17 @@ export function CodeEditor() {
               foldingStrategy: 'indentation',
               showUnused: true,
               showDeprecated: true,
-              lightbulb: { enabled: 'on' },
+              // ShowLightbulbIconMode is an enum (not a string literal union)
+              // in monaco-editor v0.55+. The enum's underlying value for
+              // `On` is the string 'on' (see monaco.d.ts: enum ShowLightbulbIconMode { Off='off', OnCode='onCode', On='on' }).
+              // We can't import the enum as a value here without bloating
+              // the bundle (we use `import type * as MonacoType` for types
+              // only), so we cast the string literal through `unknown` to
+              // the enum type. This is safe because the literal 'on' matches
+              // the enum's serialized value exactly.
+              lightbulb: {
+                enabled: 'on' as unknown as MonacoType.editor.ShowLightbulbIconMode,
+              },
               bracketPairColorization: { enabled: true },
               guides: {
                 bracketPairs: true,

@@ -95,7 +95,7 @@ export function RelayProvider({ children }: { children: React.ReactNode }) {
       setState({
         ...initialState,
         activePlanId: payload.planId,
-        activeProjectName: payload.plan.planName,
+        activeProjectName: payload.plan.projectName,
         totalMilestones: payload.plan.milestones.length,
         status: 'idle',  // plan-ready means awaiting user approval, not running yet
       });

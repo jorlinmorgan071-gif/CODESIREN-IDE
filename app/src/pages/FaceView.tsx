@@ -16,7 +16,7 @@
 //   Brows: BrowsD_L, BrowsD_R, BrowsU_C, BrowsU_L, BrowsU_R
 //   Base: Basis, base_head
 
-import React, { useState, useEffect, useRef, useCallback, Suspense, Component, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense, Component, type ReactNode } from 'react';
 import { Canvas, useFrame, useLoader } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';

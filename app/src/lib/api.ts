@@ -6,6 +6,10 @@ import type {
   AuthResponse,
   AgentListItem,
   SendTaskResponse,
+  OrchestratorPlan,
+  OrchestratorPlanStatus,
+  OrchestratorPlanSummary,
+  OrchestratorSettings,
 } from '@/types';
 import { getToken, clearAuth } from './auth';
 
