@@ -530,14 +530,23 @@ export function CodeEditor() {
               foldingStrategy: 'indentation',
               showUnused: true,
               showDeprecated: true,
-              // ShowLightbulbIconMode is an enum (not a string literal union)
-              // in monaco-editor v0.55+. The enum's underlying value for
-              // `On` is the string 'on' (see monaco.d.ts: enum ShowLightbulbIconMode { Off='off', OnCode='onCode', On='on' }).
+              // ShowLightbulbIconMode is a string enum (not a string literal
+              // union) in monaco-editor v0.55+. The enum's underlying value
+              // for `On` is the literal string 'on'.
+              //
+              // RUNTIME-VERIFIED (not just type-checked) via
+              // app/tests/lightbulb-enum.runtime.test.ts — that test imports
+              // the real monaco-editor bundle in a jsdom environment and
+              // asserts `monaco.editor.ShowLightbulbIconMode.On === 'on'`
+              // at runtime. If monaco-editor ever changes the enum value
+              // (e.g. numeric in a future major version), the test will
+              // catch it before this cast silently breaks.
+              //
               // We can't import the enum as a value here without bloating
               // the bundle (we use `import type * as MonacoType` for types
               // only), so we cast the string literal through `unknown` to
-              // the enum type. This is safe because the literal 'on' matches
-              // the enum's serialized value exactly.
+              // the enum type. Safe because the literal 'on' matches the
+              // enum's serialized value exactly (verified at runtime).
               lightbulb: {
                 enabled: 'on' as unknown as MonacoType.editor.ShowLightbulbIconMode,
               },

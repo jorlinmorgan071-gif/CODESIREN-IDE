@@ -31,7 +31,7 @@ jobs:
       - run: bash ../scripts/grep-audit.sh
 
   app:
-    name: App (typecheck + lint + build)
+    name: App (typecheck + lint + test + build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -46,4 +46,5 @@ jobs:
       - run: npm install
       - run: npx tsc --noEmit -p tsconfig.app.json
       - run: npx eslint . --max-warnings 0
+      - run: npx vitest run
       - run: npm run build
