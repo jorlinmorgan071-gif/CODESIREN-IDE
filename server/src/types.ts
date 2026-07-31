@@ -456,6 +456,53 @@ export interface BackendRouteResult {
   referencedColumns?: string[];
 }
 
+// ── Phase C Agent 5 (DevOpsAgent) — operational health types ────────────
+
+export interface BuildResult {
+  success: boolean;
+  output: string;        // stdout + stderr combined
+  durationMs: number;
+}
+
+export interface VerifyBuildResult {
+  app: BuildResult;
+  server: BuildResult;
+  overallSuccess: boolean;
+}
+
+export interface OutdatedPackage {
+  name: string;
+  current: string;
+  wanted: string;
+  latest: string;
+  type: 'minor' | 'major' | 'patch';  // kind of update available
+}
+
+export interface DependencyHealthResult {
+  server: OutdatedPackage[];
+  app: OutdatedPackage[];
+  totalOutdated: number;
+  majorUpdatesAvailable: number;
+}
+
+export interface PreflightResult {
+  passed: boolean;
+  warnings: string[];
+  failures: string[];
+  rawOutput: string;
+  exitCode: number;
+}
+
+export interface FullHealthCheckResult {
+  build: VerifyBuildResult;
+  dependencies: DependencyHealthResult;
+  preflight: PreflightResult;
+  tests: { passed: boolean; output: string; durationMs: number };
+  grepAudit: { passed: boolean; output: string };
+  overallHealth: 'healthy' | 'degraded' | 'unhealthy';
+  checkedAt: number;      // epoch ms
+}
+
 export interface MemoryChunk {
   id: string;
   content: string;
