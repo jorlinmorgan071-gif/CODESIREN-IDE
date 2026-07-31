@@ -526,6 +526,43 @@ export interface PerformanceReviewResult {
   skipped: string[];
 }
 
+// ── Phase C Agent 7 (DocumentationAgent) — doc generation types ─────────
+
+export interface CommentDocResult {
+  file: string;
+  updatedContent: string | null;   // null if refused or no changes needed
+  written: boolean;
+  refused?: string;                // reason if generation was refused
+  commentAdded: boolean;
+}
+
+export interface ReadmeSectionResult {
+  file: string;
+  sectionName: string;
+  updatedContent: string | null;   // null if refused
+  written: boolean;
+  preservedOutsideMarkers: boolean; // byte-for-byte preservation proof
+  refused?: string;
+}
+
+export interface ApiDocEntry {
+  method: string;             // GET, POST, PUT, DELETE, PATCH
+  path: string;               // e.g. '/:agentId/send'
+  mountPath: string;          // e.g. '/api/agents'
+  fullPath: string;           // mountPath + path
+  requiresAuth: boolean;
+  schemaFields: { name: string; type: string; required: boolean; description?: string }[];
+  description: string;        // from file-level comment or route-level comment
+}
+
+export interface ApiDocResult {
+  file: string;
+  routerVarName: string;
+  mountPath: string | null;   // null if can't determine from index.ts
+  routes: ApiDocEntry[];
+  refused?: string;
+}
+
 export interface MemoryChunk {
   id: string;
   content: string;
