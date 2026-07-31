@@ -503,6 +503,29 @@ export interface FullHealthCheckResult {
   checkedAt: number;      // epoch ms
 }
 
+// ── Phase C Agent 6 (PerformanceAgent) — static analysis types ──────────
+
+export interface PerformanceAntiPatternFinding {
+  file: string;
+  line: number;
+  pattern: string;            // e.g. 'execSync-in-route-handler', 'unbounded-select'
+  severity: 'warning' | 'info';
+  suggestion: string;         // actionable fix recommendation
+}
+
+export interface BundleSizes {
+  app: number;                 // bytes, or 0 if not built
+  server: number;              // bytes, or 0 if not built
+  unit: 'bytes';
+}
+
+export interface PerformanceReviewResult {
+  antiPatternFindings: PerformanceAntiPatternFinding[];
+  bundleSizes: BundleSizes | null;   // null if dist/ doesn't exist
+  overallAssessment: 'healthy' | 'attention-needed' | 'unknown';
+  skipped: string[];
+}
+
 export interface MemoryChunk {
   id: string;
   content: string;
