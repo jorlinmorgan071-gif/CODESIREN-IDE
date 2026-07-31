@@ -245,129 +245,103 @@ describe('Phase C Agent 5 — DevOpsAgent', () => {
   // Steps 2-4) and test ONLY the classification logic.
 
   describe('Step 5: fullHealthCheck() — classification logic', () => {
-    it('classifies as unhealthy when build fails', async () => {
+    // fullHealthCheck() calls verifyBuild() + checkDependencyHealth() +
+    // runPreflight() + runValidatedCommand('npx vitest run') +
+    // runValidatedCommand('bash grep-audit.sh'). The last two are REAL
+    // commands that take 30+ seconds. To test ONLY the classification
+    // logic (not re-run the test suite recursively), we mock ALL five
+    // sub-calls.
+
+    function mockAllSubCalls(opts: {
+      buildSuccess?: boolean;
+      testSuccess?: boolean;
+      grepSuccess?: boolean;
+      preflightPassed?: boolean;
+      majorUpdates?: number;
+    }) {
+      const {
+        buildSuccess = true,
+        testSuccess = true,
+        grepSuccess = true,
+        preflightPassed = true,
+        majorUpdates = 0,
+      } = opts;
+
       vi.spyOn(agent, 'verifyBuild').mockResolvedValue({
-        app: { success: false, output: 'TS error', durationMs: 100 },
-        server: { success: true, output: '', durationMs: 100 },
-        overallSuccess: false,
+        app: { success: buildSuccess, output: '', durationMs: 100 },
+        server: { success: buildSuccess, output: '', durationMs: 100 },
+        overallSuccess: buildSuccess,
       });
       vi.spyOn(agent, 'checkDependencyHealth').mockResolvedValue({
-        server: [], app: [], totalOutdated: 0, majorUpdatesAvailable: 0,
+        server: majorUpdates > 0
+          ? [{ name: 'old-pkg', current: '1.0.0', wanted: '1.0.0', latest: '2.0.0', type: 'major' as const }]
+          : [],
+        app: [],
+        totalOutdated: majorUpdates,
+        majorUpdatesAvailable: majorUpdates,
       });
       vi.spyOn(agent, 'runPreflight').mockResolvedValue({
-        passed: true, warnings: [], failures: [], rawOutput: '', exitCode: 0,
+        passed: preflightPassed,
+        warnings: [],
+        failures: preflightPassed ? [] : ['JWT_SECRET missing'],
+        rawOutput: '',
+        exitCode: preflightPassed ? 0 : 1,
       });
+      // Mock the private runValidatedCommand for tests + grep-audit
+      // (these are the two REAL commands that would take 30+ seconds)
+      vi.spyOn(agent as any, 'runValidatedCommand').mockImplementation((...args: unknown[]) => {
+        const command = String(args[0] ?? '');
+        if (command.includes('vitest')) {
+          return { success: testSuccess, output: 'mocked test output', durationMs: 100 };
+        }
+        if (command.includes('grep-audit')) {
+          return { success: grepSuccess, output: 'mocked grep output', durationMs: 100 };
+        }
+        return { success: true, output: 'mocked', durationMs: 100 };
+      });
+    }
 
+    it('classifies as unhealthy when build fails', async () => {
+      mockAllSubCalls({ buildSuccess: false });
       const result = await agent.fullHealthCheck(PROJECT_ROOT);
       expect(result.overallHealth).toBe('unhealthy');
       expect(result.build.overallSuccess).toBe(false);
     });
 
     it('classifies as unhealthy when tests fail', async () => {
-      vi.spyOn(agent, 'verifyBuild').mockResolvedValue({
-        app: { success: true, output: '', durationMs: 100 },
-        server: { success: true, output: '', durationMs: 100 },
-        overallSuccess: true,
-      });
-      vi.spyOn(agent, 'checkDependencyHealth').mockResolvedValue({
-        server: [], app: [], totalOutdated: 0, majorUpdatesAvailable: 0,
-      });
-      vi.spyOn(agent, 'runPreflight').mockResolvedValue({
-        passed: true, warnings: [], failures: [], rawOutput: '', exitCode: 0,
-      });
-
+      mockAllSubCalls({ testSuccess: false });
       const result = await agent.fullHealthCheck(PROJECT_ROOT);
-      // Tests will actually run (npx vitest run) — they should pass in this sandbox.
-      // But if they fail, overallHealth should be 'unhealthy'.
-      if (!result.tests.passed) {
-        expect(result.overallHealth).toBe('unhealthy');
-      }
+      expect(result.overallHealth).toBe('unhealthy');
+      expect(result.tests.passed).toBe(false);
     });
 
     it('classifies as unhealthy when grep-audit fails', async () => {
-      vi.spyOn(agent, 'verifyBuild').mockResolvedValue({
-        app: { success: true, output: '', durationMs: 100 },
-        server: { success: true, output: '', durationMs: 100 },
-        overallSuccess: true,
-      });
-      vi.spyOn(agent, 'checkDependencyHealth').mockResolvedValue({
-        server: [], app: [], totalOutdated: 0, majorUpdatesAvailable: 0,
-      });
-      vi.spyOn(agent, 'runPreflight').mockResolvedValue({
-        passed: true, warnings: [], failures: [], rawOutput: '', exitCode: 0,
-      });
-
+      mockAllSubCalls({ grepSuccess: false });
       const result = await agent.fullHealthCheck(PROJECT_ROOT);
-      // grep-audit runs for real — it should pass in this sandbox.
-      // If it fails, overallHealth should be 'unhealthy'.
-      if (!result.grepAudit.passed) {
-        expect(result.overallHealth).toBe('unhealthy');
-      }
+      expect(result.overallHealth).toBe('unhealthy');
+      expect(result.grepAudit.passed).toBe(false);
     });
 
     it('classifies as degraded when major updates available (build+tests+grep pass)', async () => {
-      vi.spyOn(agent, 'verifyBuild').mockResolvedValue({
-        app: { success: true, output: '', durationMs: 100 },
-        server: { success: true, output: '', durationMs: 100 },
-        overallSuccess: true,
-      });
-      vi.spyOn(agent, 'checkDependencyHealth').mockResolvedValue({
-        server: [{ name: 'old-pkg', current: '1.0.0', wanted: '1.0.0', latest: '2.0.0', type: 'major' as const }],
-        app: [],
-        totalOutdated: 1,
-        majorUpdatesAvailable: 1,
-      });
-      vi.spyOn(agent, 'runPreflight').mockResolvedValue({
-        passed: true, warnings: [], failures: [], rawOutput: '', exitCode: 0,
-      });
-
+      mockAllSubCalls({ majorUpdates: 1 });
       const result = await agent.fullHealthCheck(PROJECT_ROOT);
-
-      // Build passed (mocked), deps have major updates (mocked), preflight passed (mocked).
-      // Tests + grep-audit run for real. If they pass → degraded (from major updates).
-      // If they fail → unhealthy (from test/grep failure, not deps).
-      if (result.tests.passed && result.grepAudit.passed) {
-        expect(result.overallHealth).toBe('degraded');
-      } else {
-        expect(result.overallHealth).toBe('unhealthy');
-      }
+      expect(result.overallHealth).toBe('degraded');
     });
 
     it('classifies as degraded when preflight fails (build+tests+grep pass)', async () => {
-      vi.spyOn(agent, 'verifyBuild').mockResolvedValue({
-        app: { success: true, output: '', durationMs: 100 },
-        server: { success: true, output: '', durationMs: 100 },
-        overallSuccess: true,
-      });
-      vi.spyOn(agent, 'checkDependencyHealth').mockResolvedValue({
-        server: [], app: [], totalOutdated: 0, majorUpdatesAvailable: 0,
-      });
-      vi.spyOn(agent, 'runPreflight').mockResolvedValue({
-        passed: false, warnings: [], failures: ['JWT_SECRET missing'], rawOutput: '', exitCode: 1,
-      });
-
+      mockAllSubCalls({ preflightPassed: false });
       const result = await agent.fullHealthCheck(PROJECT_ROOT);
+      expect(result.overallHealth).toBe('degraded');
+    });
 
-      if (result.tests.passed && result.grepAudit.passed) {
-        expect(result.overallHealth).toBe('degraded');
-      } else {
-        expect(result.overallHealth).toBe('unhealthy');
-      }
+    it('classifies as healthy when all checks pass (no major updates, preflight ok)', async () => {
+      mockAllSubCalls({}); // all defaults = everything passes
+      const result = await agent.fullHealthCheck(PROJECT_ROOT);
+      expect(result.overallHealth).toBe('healthy');
     });
 
     it('returns FullHealthCheckResult with all sub-results', async () => {
-      vi.spyOn(agent, 'verifyBuild').mockResolvedValue({
-        app: { success: true, output: '', durationMs: 100 },
-        server: { success: true, output: '', durationMs: 100 },
-        overallSuccess: true,
-      });
-      vi.spyOn(agent, 'checkDependencyHealth').mockResolvedValue({
-        server: [], app: [], totalOutdated: 0, majorUpdatesAvailable: 0,
-      });
-      vi.spyOn(agent, 'runPreflight').mockResolvedValue({
-        passed: true, warnings: [], failures: [], rawOutput: '', exitCode: 0,
-      });
-
+      mockAllSubCalls({});
       const result = await agent.fullHealthCheck(PROJECT_ROOT);
 
       expect(result).toHaveProperty('build');
