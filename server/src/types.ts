@@ -437,6 +437,25 @@ export interface DatabaseAgentResult {
   };
 }
 
+// ── Phase C Agent 4 (BackendAgent) — route generation result ────────────
+//
+// Backend Agent generates Express route files + registers them in index.ts.
+// Both writes go through writeProjectFile() → CodeReviewAgent gate.
+// This result tracks whether each write succeeded — partial failure is
+// reported honestly, never silently reported as success.
+
+export interface BackendRouteResult {
+  routeFileWritten: boolean;
+  registered: boolean;         // whether index.ts registration succeeded
+  routeFilePath: string | null;
+  routeContent: string | null;  // the generated route file content
+  error?: string;               // present if any write failed
+  // Refusal reasons (pre-write sanity checks that blocked generation)
+  refused?: string;
+  // Which columns the generated code references (for DB-backed routes)
+  referencedColumns?: string[];
+}
+
 export interface MemoryChunk {
   id: string;
   content: string;
