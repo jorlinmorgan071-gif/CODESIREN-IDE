@@ -382,13 +382,45 @@ export interface MigrationResult {
   sql: string;               // the full SQL content
   tables: TableSpec[];       // parsed table/column specs from the SQL
   applied: boolean;          // whether the migration was executed
-  error?: string;            // if applied=false, why
+  // Standardized error code when applied=false. 'postgres-unavailable' is
+  // the degraded-mode signal (Postgres not connected). Other strings are
+  // human-readable details (validation failures, Ghost Mode rejection, etc.).
+  // Callers checking for degraded mode should test `error === 'postgres-unavailable'`
+  // OR `error?.startsWith('postgres-unavailable')` for forward-compat.
+  error?: string;
 }
 
 export interface SchemaIntrospectionResult {
   tables: TableSpec[];
   available: boolean;        // false when Postgres unavailable (degraded mode)
-  skipped?: string;          // reason when available=false
+  skipped?: string;          // human-readable reason when available=false
+  // Standardized error code — 'postgres-unavailable' when degraded mode.
+  // Callers checking for degraded mode should test this field, not `skipped`.
+  error?: 'postgres-unavailable';
+}
+
+/**
+ * The confirmed-schema output that Backend Agent's caller passes via
+ * task.inputData. This is what Backend Agent reads to know what
+ * tables/columns are live.
+ *
+ * Per directive Section 4: distinct from SchemaIntrospectionResult —
+ * confirmSchema() returns THIS shape (for ONE table), while
+ * introspectSchema() returns SchemaIntrospectionResult (for ALL tables,
+ * used for diagnostic/monitoring purposes). Backend Agent consumes
+ * confirmSchema() output; introspectSchema() is for admin/dashboards.
+ */
+export interface SchemaConfirmation {
+  // null when postgres-unavailable (we couldn't check), NOT the same as
+  // false (table doesn't exist). Backend Agent should refuse to proceed
+  // when tableExists is null — it means the confirmation is incomplete.
+  tableExists: boolean | null;
+  columns: { name: string; dataType: string }[];
+  migrationApplied: boolean;
+  migrationFile: string | null;
+  confirmedAt: number;       // epoch ms — when this confirmation was generated
+  // Degraded-mode flag — when set, tableExists is null and columns is empty.
+  error?: 'postgres-unavailable';
 }
 
 export interface DatabaseAgentResult {

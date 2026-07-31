@@ -29,12 +29,14 @@ import type {
   TableSpec,
   ColumnSpec,
   SchemaIntrospectionResult,
+  SchemaConfirmation,
 } from '../../types.js';
 import { IAgent } from '../base-agent.js';
 import { dispatchStrategy } from '../../orchestration/strategies/dispatcher.js';
 import { modelRouter } from '../../orchestration/model-router.js';
 import { ghostMode } from '../../orchestration/ghost-mode.js';
 import { writeProjectFile } from '../_shared/project-files.js';
+import { validateMigrationSql } from '../_shared/migration-validate.js';
 import { isDbAvailable, withClient, query } from '../../db/client.js';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -228,14 +230,30 @@ export class DatabaseAgent extends IAgent {
   }): Promise<MigrationResult> {
     const { filename, sql, traceId, userId, taskId, testOnlyAutoApprove } = params;
 
-    // If Postgres is unavailable, can't apply — fail honestly
+    // ── Step 0: SQL validation (BEFORE Ghost Mode — hard blocks are
+    // independent of approval, per directive Section 2/3) ─────────────
+    // validateMigrationSql() catches dangerous patterns (DROP DATABASE,
+    // bare TRUNCATE, etc.) unconditionally — no approval override possible.
+    const validation = validateMigrationSql(sql);
+    if (!validation.valid) {
+      return {
+        filename,
+        sql,
+        tables: [],
+        applied: false,
+        error: `SQL validation FAILED (hard block, not overridable): ${validation.errors.join('; ')}`,
+      };
+    }
+
+    // If Postgres is unavailable, can't apply — fail honestly with
+    // standardized error code (directive Section 5)
     if (!isDbAvailable()) {
       return {
         filename,
         sql,
         tables: [], // tables already known from designMigration; not re-parsed here
         applied: false,
-        error: 'Postgres unavailable — migration not applied (degraded mode)',
+        error: 'postgres-unavailable',
       };
     }
 
@@ -253,22 +271,37 @@ export class DatabaseAgent extends IAgent {
 
     const plan = await ghostMode.planFix(finding);
 
-    // Wait for approval (same poll loop as Terminal Agent)
+    // Wait for approval (same poll loop as Terminal Agent — lines 220-266)
     if (ghostMode.currentState === 'awaiting_approval') {
       if (testOnlyAutoApprove && process.env.NODE_ENV === 'test') {
         await ghostMode.approve(plan);
       } else {
-        // Poll for real approval
+        // Production poll loop — uses getResolution() as the PRIMARY signal
+        // (reliable), currentState as FALLBACK (covers auto-amend mode).
+        // Same pattern as Terminal Agent lines 242-266.
+        //
+        // Why getResolution() is primary: approve() transitions
+        // applying→verifying→complete→scanning SYNCHRONOUSLY. By the time
+        // we poll, the FSM may already be back in 'scanning' —
+        // indistinguishable from a rejection without getResolution().
         const deadline = Date.now() + APPROVAL_TIMEOUT_MS;
         let approved = false;
         let rejected = false;
 
         while (Date.now() < deadline) {
-          // Re-read the state fresh each iteration — ghostMode.currentState
-          // is a getter that returns the FSM's current state, which changes
-          // when the user approves/rejects via the API endpoint. TS can't
-          // know the getter's return value changes between accesses, so we
-          // cast to the full GhostState union to avoid narrowing errors.
+          // PRIMARY: check the resolution map first (the reliable signal)
+          const resolution = ghostMode.getResolution(finding.id);
+          if (resolution === 'approved') {
+            approved = true;
+            break;
+          }
+          if (resolution === 'rejected') {
+            rejected = true;
+            break;
+          }
+
+          // FALLBACK: check state (covers auto-amend mode where no
+          // approval was needed — FSM skips awaiting_approval entirely)
           const state = ghostMode.currentState as string;
           if (state === 'applying' || state === 'verifying' || state === 'complete') {
             approved = true;
@@ -351,6 +384,7 @@ export class DatabaseAgent extends IAgent {
         tables: [],
         available: false,
         skipped: 'Postgres unavailable — schema introspection not possible in degraded mode',
+        error: 'postgres-unavailable',
       };
     }
 
@@ -418,6 +452,104 @@ export class DatabaseAgent extends IAgent {
         tables: [],
         available: false,
         skipped: `Schema introspection failed: ${err.message}`,
+      };
+    }
+  }
+
+  /**
+   * Confirm the schema state for ONE specific table.
+   *
+   * Per directive Section 4: THIS is the method Backend Agent's caller
+   * consumes. It returns a SchemaConfirmation shape with:
+   *   - tableExists (true/false/null — null when we couldn't check)
+   *   - columns (name + dataType for each column)
+   *   - migrationApplied (whether the migration that created this table was applied)
+   *   - migrationFile (which migration file created it, if known)
+   *   - confirmedAt (epoch ms)
+   *   - error ('postgres-unavailable' when degraded mode)
+   *
+   * Distinct from introspectSchema() (which returns ALL tables for
+   * diagnostic/admin purposes). Backend Agent reads confirmSchema() output
+   * via task.inputData to know exactly what columns exist on the table it's
+   * building routes for — it doesn't need the full schema, just the one table.
+   *
+   * Queries information_schema.columns directly — THIS IS THE FIRST TIME
+   * this codebase queries its own schema (confirmed in Section 0).
+   */
+  async confirmSchema(tableName: string): Promise<SchemaConfirmation> {
+    const confirmedAt = Date.now();
+
+    // Degraded-mode handling (directive Section 5) — return explicit error,
+    // never a silent no-op
+    if (!isDbAvailable()) {
+      return {
+        tableExists: null,  // null = couldn't check, NOT false = doesn't exist
+        columns: [],
+        migrationApplied: false,
+        migrationFile: null,
+        confirmedAt,
+        error: 'postgres-unavailable',
+      };
+    }
+
+    try {
+      // Query information_schema.columns for this specific table.
+      // This is the schema introspection path that didn't exist before
+      // this phase (confirmed in Section 0).
+      const columnRows = await query<{
+        column_name: string;
+        data_type: string;
+      }>(`
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = $1
+        ORDER BY ordinal_position
+      `, [tableName]);
+
+      const tableExists = columnRows.length > 0;
+
+      // Check if any migration file mentions this table (heuristic — we
+      // don't have a formal table→migration mapping, so we scan filenames
+      // + content. This is best-effort, not authoritative.)
+      let migrationFile: string | null = null;
+      let migrationApplied = false;
+      if (existsSync(migrationsDir)) {
+        const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+        for (const file of files) {
+          try {
+            const content = readFileSync(join(migrationsDir, file), 'utf8');
+            if (content.toLowerCase().includes(`table ${tableName.toLowerCase()}`) ||
+                content.toLowerCase().includes(`table ${tableName.toLowerCase()} (`)) {
+              migrationFile = file;
+              // Check if this migration is recorded as applied
+              const appliedRows = await query<{ filename: string }>(`
+                SELECT filename FROM schema_migrations WHERE filename = $1
+              `, [file]);
+              migrationApplied = appliedRows.length > 0;
+              break; // first matching migration wins
+            }
+          } catch {
+            // skip unreadable files
+          }
+        }
+      }
+
+      return {
+        tableExists,
+        columns: columnRows.map(c => ({ name: c.column_name, dataType: c.data_type })),
+        migrationApplied,
+        migrationFile,
+        confirmedAt,
+      };
+    } catch (err: any) {
+      // Query failed — return error result, NOT a silent empty success
+      return {
+        tableExists: null,
+        columns: [],
+        migrationApplied: false,
+        migrationFile: null,
+        confirmedAt,
+        error: 'postgres-unavailable', // treat query failure same as unavailable
       };
     }
   }
