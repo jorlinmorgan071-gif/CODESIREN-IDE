@@ -83,6 +83,17 @@ export interface AgentTask {
   // the task is dispatched with contextBundle === undefined (fail-open —
   // see the explicit comment in agent-manager.ts for the rationale).
   contextBundle?: import('./context/types.js').ContextBundle;
+  // ── Phase C Agent 3 (Database Agent) — additive inter-agent hand-off field ──
+  // Generic input field for passing typed data from a prior agent's output
+  // to this agent's task. Used by the caller-supplies-confirmed-schema pattern:
+  //   1. Caller dispatches Database Agent via executeAndWait() → collects result
+  //   2. Caller constructs Backend Agent task with inputData: databaseAgentResult
+  //   3. Backend Agent reads task.inputData to get the confirmed schema
+  //
+  // No multi-agent dispatch exists in AgentManager today — the CALLER mediates
+  // sequencing. This field is the typed hand-off channel. Agents that don't
+  // read it work unchanged (it's optional).
+  inputData?: Record<string, unknown>;
 }
 
 export interface ProjectContext {
@@ -345,6 +356,53 @@ export interface SecurityReviewResult {
   overallRisk: 'critical' | 'high' | 'moderate' | 'low' | 'none';
   reviewTier: 'full-scan' | 'partial-scan' | 'stub-fallback';
   skipped: string[];         // honest reporting of anything that couldn't run
+}
+
+// ── Phase C Agent 3 (DatabaseAgent) — schema/migration types ────────────
+//
+// Database Agent owns schema changes ONLY. It never writes route/handler
+// code (that's Backend Agent's job). These types define the confirmed-
+// schema output that gets passed to Backend Agent via task.inputData.
+
+export interface ColumnSpec {
+  name: string;
+  dataType: string;          // e.g. 'uuid', 'text', 'timestamp', 'integer'
+  isNullable: boolean;
+  defaultValue: string | null;
+  isPrimaryKey: boolean;
+}
+
+export interface TableSpec {
+  name: string;
+  columns: ColumnSpec[];
+}
+
+export interface MigrationResult {
+  filename: string;          // e.g. '011_add_user_avatar.sql'
+  sql: string;               // the full SQL content
+  tables: TableSpec[];       // parsed table/column specs from the SQL
+  applied: boolean;          // whether the migration was executed
+  error?: string;            // if applied=false, why
+}
+
+export interface SchemaIntrospectionResult {
+  tables: TableSpec[];
+  available: boolean;        // false when Postgres unavailable (degraded mode)
+  skipped?: string;          // reason when available=false
+}
+
+export interface DatabaseAgentResult {
+  migration?: MigrationResult;
+  schemaIntrospection?: SchemaIntrospectionResult;
+  reviewTier: 'full-scan' | 'partial-scan' | 'stub-fallback';
+  skipped: string[];
+  // The confirmed schema to pass to Backend Agent via task.inputData.
+  // Backend Agent reads this to know what tables/columns are live.
+  confirmedSchema?: {
+    tables: TableSpec[];
+    migrationFile: string;
+    applied: boolean;
+  };
 }
 
 export interface MemoryChunk {
