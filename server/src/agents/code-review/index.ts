@@ -21,7 +21,20 @@ CRITICAL SECURITY CHECKS — auto-reject (score 0, approved: false) if ANY of th
 - Disabled security headers or CORS *
 - Private keys or certificates in source code
 
-Output format for review:
+OUTPUT FORMAT (Phase C — fence-based structured output):
+Wrap your entire review in <review>...</review> XML fences containing a JSON object.
+The JSON must have these fields:
+  score: number (0-100)
+  approved: boolean
+  summary: string (one sentence)
+  issues: array of strings (each "[severity] description")
+
+Example:
+<review>
+{"score": 85, "approved": true, "summary": "Good code quality, minor doc gaps.", "issues": ["[LOW] Missing JSDoc on public function"]}
+</review>
+
+If you cannot produce the fenced JSON format, fall back to:
 First line: SCORE: <number 0-100>
 Second line: APPROVED: true|false
 Remaining lines: List each issue as "- [severity] description"
@@ -52,17 +65,55 @@ export class CodeReviewAgent extends IAgent {
     // These are auto-rejects — if any pattern matches, score 0, no LLM call.
     const securityIssues: string[] = [];
 
-    // Hardcoded secrets
+    // Hardcoded secrets — existing keyword-based check
     if (/(?:password|secret|api[_-]?key|token|private[_-]?key)\s*[:=]\s*['"][^'"]{8,}['"]/i.test(content)) {
       securityIssues.push('[CRITICAL] Hardcoded secret/credential detected');
     }
-    // SQL injection (string interpolation in query)
-    if (/query\s*\(\s*['"`].*\$\{.*\}.*['"`]/i.test(content) || /query\s*\(\s*['"`].*"\s*\+.*['"`]/i.test(content)) {
-      securityIssues.push('[CRITICAL] Potential SQL injection — string interpolation in query');
+    // NEW (Phase C): Broadened secret detection — pattern-based, not keyword-based.
+    // Catches credential formats that don't use the `password = "..."` keyword pattern:
+    //   - AWS access key IDs: AKIA followed by 16 uppercase alphanumerics
+    //   - GitHub PATs: ghp_ / github_pat_ prefixes
+    //   - JWTs: eyJ... (base64-encoded JSON header) in Authorization headers
+    //
+    // FALSE-POSITIVE MITIGATION: each pattern requires context to avoid
+    // matching test fixtures, comments, and documentation:
+    //   - AWS/GitHub: must appear in an assignment context (`= "..."` or `: "..."`)
+    //   - JWT: must appear in an Authorization header context
+    //   - All require word-boundary anchors
+    if (/\bAKIA[A-Z0-9]{16}\b/.test(content) && /(?:=|:)\s*['"][^'"]*AKIA[A-Z0-9]{16}[^'"]*['"]/.test(content)) {
+      securityIssues.push('[CRITICAL] Hardcoded AWS access key ID detected');
+    }
+    if (/(?:=|:)\s*['"](?:ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,})['"]/.test(content)) {
+      securityIssues.push('[CRITICAL] Hardcoded GitHub token detected');
+    }
+    if (/Authorization\s*[:=]\s*['"]\s*Bearer\s+eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/i.test(content)) {
+      securityIssues.push('[CRITICAL] Hardcoded JWT in Authorization header detected');
+    }
+    // SQL injection (string interpolation OR concatenation in query)
+    // Existing: catches template-literal ${} interpolation in query() calls.
+    // NEW (Phase C): also catches single-quote and double-quote string
+    // concatenation — `query('...' + userInput)` and `query("..." + userInput)`.
+    // The original regex only matched `"` + `+` (double-quote concat), missing
+    // the common single-quote form and the case where the concat wraps the
+    // entire query string.
+    if (
+      /query\s*\(\s*['"`].*\$\{.*\}.*['"`]/i.test(content)                     // template literal ${}
+      || /query\s*\(\s*['"`].*['"`]\s*\+\s*\w/i.test(content)                  // any quote style + concat (NEW)
+      || /query\s*\(\s*['"`][^'"`]*['"`]\s*\+/i.test(content)                  // literal + concat (NEW — multiline)
+    ) {
+      securityIssues.push('[CRITICAL] Potential SQL injection — string interpolation or concatenation in query');
     }
     // eval with user input
     if (/eval\s*\(/i.test(content)) {
       securityIssues.push('[CRITICAL] eval() detected — code execution vulnerability');
+    }
+    // NEW (Phase C): Function() constructor as eval-equivalent.
+    // `new Function('...')` and `Function('...')` both compile and execute
+    // a string at runtime — functionally identical to eval() for arbitrary
+    // code execution. Must require the `()` to avoid false-positives on
+    // `Function` as a type annotation (TypeScript: `const fn: Function = ...`).
+    if (/\bnew\s+Function\s*\(/i.test(content) || /\bFunction\s*\(/i.test(content)) {
+      securityIssues.push('[CRITICAL] Function() constructor detected — eval-equivalent code execution');
     }
     // CORS *
     if (/cors\s*\(\s*\{[^}]*origin\s*:\s*['"]\*['"]/i.test(content) || /Access-Control-Allow-Origin.*\*/i.test(content)) {
@@ -72,6 +123,18 @@ export class CodeReviewAgent extends IAgent {
     if (/-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/i.test(content)) {
       securityIssues.push('[CRITICAL] Private key embedded in source code');
     }
+    // NEW (Phase C): child_process.exec/execSync with string concatenation
+    // or template-literal interpolation. Catches shell injection via the
+    // child_process module. Only matches when user input reaches the shell
+    // via concat (`+`) or `${}` — hardcoded commands are safe.
+    // Does NOT match execFile/spawn with array args (those don't use a shell).
+    if (
+      /\bexec(?:Sync)?\s*\(\s*['"`].*\$\{.*\}.*['"`]/i.test(content)           // template literal ${}
+      || /\bexec(?:Sync)?\s*\(\s*['"`].*['"`]\s*\+\s*\w/i.test(content)        // string concat (NEW)
+      || /\bexec(?:Sync)?\s*\(\s*['"`][^'"`]*['"`]\s*\+/i.test(content)        // literal + concat multiline (NEW)
+    ) {
+      securityIssues.push('[CRITICAL] child_process exec with unsanitized string concatenation — shell injection risk');
+    }
 
     if (securityIssues.length > 0) {
       return {
@@ -79,6 +142,7 @@ export class CodeReviewAgent extends IAgent {
         score: 0,
         notes: 'Auto-rejected by security checks',
         issues: securityIssues,
+        reviewTier: 'security-rejected' as const,
       };
     }
 
@@ -114,24 +178,57 @@ export class CodeReviewAgent extends IAgent {
         score: 0,
         notes: `Review failed (LLM error): ${err.message}`,
         issues: ['Code Review Agent could not analyze code — write refused (fail closed)'],
+        reviewTier: 'llm-error' as const,
       };
     }
   }
 
   /**
    * Parse the LLM's review response into a ReviewResult.
-   * Expected format:
-   *   SCORE: 85
-   *   APPROVED: true
-   *   - [LOW] Missing JSDoc on public function
-   *   SUMMARY: Good code quality, minor doc gaps.
+   *
+   * Phase C — three-tier parse chain (ALL three preserved, not replaced):
+   *   1. FIRST: <review>{...json...}</review> fence extraction (new in Phase C)
+   *      If the LLM wrapped its output in XML fences, parse the JSON.
+   *   2. SECOND: SCORE:/APPROVED:/SUMMARY: text-parse (existing, unchanged)
+   *      If no fences but the text has SCORE: and APPROVED: lines, use those.
+   *   3. FINAL: stub-fallback (existing, unchanged — approved:true, score:75)
+   *      If neither fences nor SCORE:/APPROVED:, and no security issues,
+   *      default to approved at 75. This is the rubber-stamp surface the
+   *      directive asked to reduce — it stays as the last resort but is
+   *      now tagged with reviewTier='stub-fallback' so callers can
+   *      distinguish it from a real LLM review.
    */
   private parseReviewResponse(text: string, securityIssues: string[]): ReviewResult {
+    // ── TIER 2a: <review>JSON</review> fence extraction (NEW — Phase C) ──
+    const fenceMatch = text.match(/<review>\s*([\s\S]*?)\s*<\/review>/i);
+    if (fenceMatch) {
+      try {
+        const parsed = JSON.parse(fenceMatch[1]);
+        if (typeof parsed.score === 'number' && typeof parsed.approved === 'boolean') {
+          const issues: string[] = [...securityIssues];
+          if (Array.isArray(parsed.issues)) {
+            for (const issue of parsed.issues) {
+              if (typeof issue === 'string') issues.push(issue);
+            }
+          }
+          return {
+            approved: parsed.approved && securityIssues.length === 0,
+            score: parsed.score,
+            notes: typeof parsed.summary === 'string' ? parsed.summary : 'Review complete (fenced JSON)',
+            issues,
+            reviewTier: 'llm-reviewed' as const,
+          };
+        }
+      } catch {
+        // JSON parse failed inside fences — fall through to text-parse
+      }
+    }
+
+    // ── TIER 2b: SCORE:/APPROVED:/SUMMARY: text-parse (EXISTING — unchanged) ──
     const scoreMatch = text.match(/SCORE:\s*(\d+)/i);
     const approvedMatch = text.match(/APPROVED:\s*(true|false)/i);
     const summaryMatch = text.match(/SUMMARY:\s*(.+)/i);
 
-    // If the LLM produced structured output, use it
     if (scoreMatch && approvedMatch) {
       const score = parseInt(scoreMatch[1], 10);
       const approved = approvedMatch[1].toLowerCase() === 'true';
@@ -147,10 +244,12 @@ export class CodeReviewAgent extends IAgent {
         score,
         notes: summaryMatch ? summaryMatch[1].trim() : 'Review complete',
         issues,
+        reviewTier: 'llm-reviewed' as const,
       };
     }
 
-    // If the LLM response is unstructured (stub engine, no SCORE:/APPROVED:),
+    // ── TIER 2c: stub-fallback (EXISTING — unchanged, now tagged) ──
+    // If the LLM response is unstructured (stub engine, no fences, no SCORE:/APPROVED:),
     // AND no security issues were found by the fast-path checks, default to
     // approved with a baseline score. The security checks are the real gate —
     // the LLM analysis is additive, not the sole gate. A real LLM (Ollama/
@@ -161,6 +260,7 @@ export class CodeReviewAgent extends IAgent {
         score: 75,
         notes: 'No security issues detected (stub engine — real LLM will provide detailed review)',
         issues: [],
+        reviewTier: 'stub-fallback' as const,
       };
     }
 
@@ -170,6 +270,7 @@ export class CodeReviewAgent extends IAgent {
       score: 0,
       notes: 'Auto-rejected by security checks',
       issues: securityIssues,
+      reviewTier: 'security-rejected' as const,
     };
   }
 

@@ -298,6 +298,14 @@ export interface ReviewResult {
   score: number;            // 0–100
   notes: string;
   issues: string[];
+  // ── Phase C (CodeReviewAgent hardening) — additive optional field ──────
+  // Distinguishes which tier produced this review result:
+  //   'security-rejected' — Tier 1 regex caught a security issue (score 0, auto-reject)
+  //   'llm-reviewed'      — Tier 2 LLM produced structured output (SCORE:/APPROVED: or <review>JSON</review>)
+  //   'llm-error'         — Tier 2 LLM call threw an error (fail-closed reject)
+  //   'stub-fallback'     — Tier 2 LLM produced unstructured output, no security issues → approved at score 75
+  // Undefined for backwards compat (callers that don't read this field still work).
+  reviewTier?: 'security-rejected' | 'stub-fallback' | 'llm-reviewed' | 'llm-error';
 }
 
 export interface MemoryChunk {
