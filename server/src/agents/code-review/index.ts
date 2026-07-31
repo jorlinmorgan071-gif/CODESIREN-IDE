@@ -3,6 +3,7 @@ import type { AgentChunk, AgentTask, AgentDomain, ReviewResult } from '../../typ
 import { IAgent } from '../base-agent.js';
 import { dispatchStrategy } from '../../orchestration/strategies/dispatcher.js';
 import { modelRouter } from '../../orchestration/model-router.js';
+import { parseReviewResponse } from '../_shared/review-parse.js';
 
 const SYSTEM_PROMPT = `You are the Code Review Agent of Zero Two: Code Siren.
 Your role: quality scoring, anti-pattern detection, and reviewing all AI-generated code before it's committed.
@@ -169,8 +170,10 @@ export class CodeReviewAgent extends IAgent {
         reviewText += chunk.delta;
       }
 
-      // Parse the LLM response
-      return this.parseReviewResponse(reviewText, securityIssues);
+      // Parse the LLM response — delegated to the shared parseReviewResponse()
+      // in _shared/review-parse.ts (extracted in Phase C Agent 2 for reuse
+      // by SecurityAgent's auth review via extractFencedJson()).
+      return parseReviewResponse(reviewText, securityIssues);
     } catch (err: any) {
       // If the LLM call fails, fail CLOSED — reject the write
       return {
@@ -181,97 +184,6 @@ export class CodeReviewAgent extends IAgent {
         reviewTier: 'llm-error' as const,
       };
     }
-  }
-
-  /**
-   * Parse the LLM's review response into a ReviewResult.
-   *
-   * Phase C — three-tier parse chain (ALL three preserved, not replaced):
-   *   1. FIRST: <review>{...json...}</review> fence extraction (new in Phase C)
-   *      If the LLM wrapped its output in XML fences, parse the JSON.
-   *   2. SECOND: SCORE:/APPROVED:/SUMMARY: text-parse (existing, unchanged)
-   *      If no fences but the text has SCORE: and APPROVED: lines, use those.
-   *   3. FINAL: stub-fallback (existing, unchanged — approved:true, score:75)
-   *      If neither fences nor SCORE:/APPROVED:, and no security issues,
-   *      default to approved at 75. This is the rubber-stamp surface the
-   *      directive asked to reduce — it stays as the last resort but is
-   *      now tagged with reviewTier='stub-fallback' so callers can
-   *      distinguish it from a real LLM review.
-   */
-  private parseReviewResponse(text: string, securityIssues: string[]): ReviewResult {
-    // ── TIER 2a: <review>JSON</review> fence extraction (NEW — Phase C) ──
-    const fenceMatch = text.match(/<review>\s*([\s\S]*?)\s*<\/review>/i);
-    if (fenceMatch) {
-      try {
-        const parsed = JSON.parse(fenceMatch[1]);
-        if (typeof parsed.score === 'number' && typeof parsed.approved === 'boolean') {
-          const issues: string[] = [...securityIssues];
-          if (Array.isArray(parsed.issues)) {
-            for (const issue of parsed.issues) {
-              if (typeof issue === 'string') issues.push(issue);
-            }
-          }
-          return {
-            approved: parsed.approved && securityIssues.length === 0,
-            score: parsed.score,
-            notes: typeof parsed.summary === 'string' ? parsed.summary : 'Review complete (fenced JSON)',
-            issues,
-            reviewTier: 'llm-reviewed' as const,
-          };
-        }
-      } catch {
-        // JSON parse failed inside fences — fall through to text-parse
-      }
-    }
-
-    // ── TIER 2b: SCORE:/APPROVED:/SUMMARY: text-parse (EXISTING — unchanged) ──
-    const scoreMatch = text.match(/SCORE:\s*(\d+)/i);
-    const approvedMatch = text.match(/APPROVED:\s*(true|false)/i);
-    const summaryMatch = text.match(/SUMMARY:\s*(.+)/i);
-
-    if (scoreMatch && approvedMatch) {
-      const score = parseInt(scoreMatch[1], 10);
-      const approved = approvedMatch[1].toLowerCase() === 'true';
-      const issues: string[] = [...securityIssues];
-      for (const line of text.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('- ')) {
-          issues.push(trimmed.slice(2));
-        }
-      }
-      return {
-        approved: approved && securityIssues.length === 0,
-        score,
-        notes: summaryMatch ? summaryMatch[1].trim() : 'Review complete',
-        issues,
-        reviewTier: 'llm-reviewed' as const,
-      };
-    }
-
-    // ── TIER 2c: stub-fallback (EXISTING — unchanged, now tagged) ──
-    // If the LLM response is unstructured (stub engine, no fences, no SCORE:/APPROVED:),
-    // AND no security issues were found by the fast-path checks, default to
-    // approved with a baseline score. The security checks are the real gate —
-    // the LLM analysis is additive, not the sole gate. A real LLM (Ollama/
-    // OpenRouter) will produce structured output that overrides this default.
-    if (securityIssues.length === 0) {
-      return {
-        approved: true,
-        score: 75,
-        notes: 'No security issues detected (stub engine — real LLM will provide detailed review)',
-        issues: [],
-        reviewTier: 'stub-fallback' as const,
-      };
-    }
-
-    // Security issues found — reject regardless of LLM response
-    return {
-      approved: false,
-      score: 0,
-      notes: 'Auto-rejected by security checks',
-      issues: securityIssues,
-      reviewTier: 'security-rejected' as const,
-    };
   }
 
   async *execute(task: AgentTask, signal: AbortSignal): AsyncGenerator<AgentChunk> {

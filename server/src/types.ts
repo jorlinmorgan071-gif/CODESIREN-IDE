@@ -308,6 +308,45 @@ export interface ReviewResult {
   reviewTier?: 'security-rejected' | 'stub-fallback' | 'llm-reviewed' | 'llm-error';
 }
 
+// ── Phase C Agent 2 (SecurityAgent) — SecurityReviewResult ───────────────
+//
+// Distinct from ReviewResult — SecurityAgent is NOT a per-write gate (unlike
+// CodeReviewAgent). It performs a holistic scan across 3 surfaces:
+//   1. Dependency vulnerabilities (npm audit --json)
+//   2. Auth/session logic (LLM holistic review)
+//   3. API/network exposure (static route-file pass)
+//
+// The shape reflects the directive's Section 4 spec exactly.
+
+export interface DependencyFinding {
+  package: string;
+  currentVersion: string;
+  severity: 'low' | 'moderate' | 'high' | 'critical';
+  advisory: string;          // advisory title + URL
+  recommendedFix: string;    // e.g. "upgrade to >=1.20.6"
+}
+
+export interface AuthFinding {
+  file: string;
+  issue: string;
+  severity: 'low' | 'moderate' | 'high' | 'critical';
+}
+
+export interface ExposureFinding {
+  route: string;
+  issue: string;
+  severity: 'low' | 'moderate' | 'high' | 'critical';
+}
+
+export interface SecurityReviewResult {
+  dependencyFindings: DependencyFinding[];
+  authFindings: AuthFinding[];
+  exposureFindings: ExposureFinding[];
+  overallRisk: 'critical' | 'high' | 'moderate' | 'low' | 'none';
+  reviewTier: 'full-scan' | 'partial-scan' | 'stub-fallback';
+  skipped: string[];         // honest reporting of anything that couldn't run
+}
+
 export interface MemoryChunk {
   id: string;
   content: string;
