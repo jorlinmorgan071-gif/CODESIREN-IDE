@@ -625,6 +625,42 @@ export interface UIGenerateResult {
   refused?: string;
 }
 
+// ── Phase C Agent 10 (PromptEngineerAgent) — prompt analysis types ──────
+
+export interface PromptFinding {
+  agentId: string;
+  promptName: string;          // 'SYSTEM_PROMPT' or 'MIGRATION_GEN_PROMPT' etc.
+  findingType: 'length' | 'missing-role' | 'missing-output-format' | 'missing-constraints' | 'missing-examples' | 'conflicting-instructions';
+  severity: 'warning' | 'info';
+  detail: string;
+  line: number;
+}
+
+export interface PromptAnalysisResult {
+  agentId: string;
+  prompts: {
+    promptName: string;
+    content: string;
+    tokenEstimate: number;
+    findings: PromptFinding[];
+  }[];
+  totalFindings: number;
+}
+
+export interface EmpiricalTestResult {
+  agentId: string;
+  reviewTier: 'security-rejected' | 'stub-fallback' | 'llm-reviewed' | 'llm-error' | 'not-applicable';
+  inconclusive: boolean;       // true when stub engine is active
+  reason: string;
+}
+
+export interface PromptProposal {
+  agentId: string;
+  promptName: string;
+  proposedPrompt: string;
+  changes: { what: string; why: string; findingType: PromptFinding['findingType'] }[];
+}
+
 export interface MemoryChunk {
   id: string;
   content: string;
