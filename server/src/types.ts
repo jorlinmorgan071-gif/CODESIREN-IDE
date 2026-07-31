@@ -590,6 +590,41 @@ export interface ResearchResult {
   reason?: string;              // present when mode === 'no-search-available'
 }
 
+// ── Phase C Agent 9 (UIDesignerAgent) — UI review types ─────────────────
+
+export interface UITokenFinding {
+  hardcodedColor: string;     // the hex value found, e.g. '#FF0000'
+  line: number;
+  suggestion: string;         // e.g. 'Use var(--siren-red) instead' or 'No matching token — add a new one'
+}
+
+export interface UIAccessibilityFinding {
+  issue: string;
+  line: number;
+  severity: 'warning';
+}
+
+export interface UIConventionFinding {
+  rule: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface UIReviewResult {
+  tokenFindings: UITokenFinding[];
+  accessibilityFindings: UIAccessibilityFinding[];
+  conventionFindings: UIConventionFinding[];
+  overallCompliance: 'compliant' | 'minor-issues' | 'needs-attention';
+  outOfScopeNote: string;
+}
+
+export interface UIGenerateResult {
+  filePath: string;
+  content: string | null;
+  written: boolean;
+  refused?: string;
+}
+
 export interface MemoryChunk {
   id: string;
   content: string;
