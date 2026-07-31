@@ -563,6 +563,33 @@ export interface ApiDocResult {
   refused?: string;
 }
 
+// ── Phase C Agent 8 (ResearchAgent) — web search types ──────────────────
+
+export interface SearchResult {
+  url: string;
+  title: string;
+  snippet: string;
+  hostName: string;
+  rank: number;
+}
+
+export interface PageContent {
+  title: string;
+  url: string;
+  content: string;       // stripped text content
+  tokensUsed: number;
+}
+
+export interface ResearchResult {
+  query: string;
+  mode: 'web-search' | 'no-search-available';
+  searchResults: SearchResult[];
+  fetchedPages: PageContent[];
+  synthesis: string | null;     // LLM synthesis with source citations. null if mode != 'web-search'
+  sources: { url: string; title: string }[];  // every source cited in synthesis
+  reason?: string;              // present when mode === 'no-search-available'
+}
+
 export interface MemoryChunk {
   id: string;
   content: string;
