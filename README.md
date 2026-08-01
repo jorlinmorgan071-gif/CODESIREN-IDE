@@ -2,9 +2,21 @@
 
 > AI-powered development environment. Single Express + WS server, single JWT auth, single ModelRouter, single AgentManager.send() — every input modality (typed chat, voice, gesture) routes through the same agent bus.
 
-**Current version:** Phase 6 — DX + Release Readiness
+**Current version:** Phase E — Multi-Provider Voice Pipeline
 **License:** private
-**Status:** production-ready (build green, 96/96 tests pass, no donor-project names in code)
+**Status:** production-ready (build green, 618/618 tests pass across 36 files, 35 Skills Vault manifests, 3 swappable TTS providers, no donor-project names in code)
+
+---
+
+## What's New (Phases A–E, post-Phase-6)
+
+| Phase | What it added | Evidence |
+|---|---|---|
+| **Phase A** — Monaco IDE Intelligence | TypeScript IntelliSense, diagnostics, hover docs, multi-file sync, AI completions, format-on-demand | `app/src/components/editor/CodeEditor.tsx` rewrite |
+| **Phase B** — Context Manager | Token-budget-aware context bundles (selection, open files, history, memory, project graph) | `server/src/context/{types,budget,manager,project-graph}.ts` |
+| **Phase C** — 10 Hardened Agents | CodeReview, Security, Database, Backend, DevOps, Performance, Documentation, Research, UIDesigner, PromptEngineer — each with Tier-1 regex checks + LLM review + tested capabilities | `server/src/agents/*/index.ts`, 24+ tests in `tests/security/` |
+| **Phase D** — Skills Vault (35 skills) | `http_request` tool + 35 TOML skill manifests across 8 batches (Wikipedia, NewsAPI, GitHub, TMDb, MapTiler, Alpha Vantage, NASA, YouTube, etc.) | `server/src/skills/library/*.toml`, `server/src/agents/_shared/tool-registry.ts` |
+| **Phase E** — Voice Pipeline | 3 swappable TTS providers (Zai cloud, Kokoro local neural, ElevenLabs BYOK cloud) + voice settings + Voice tab in Settings UI | `server/src/systems/voice/`, `server/src/orchestrator/voice-settings.ts`, `app/src/components/modals/SettingsModal.tsx` |
 
 ---
 
@@ -111,33 +123,41 @@ code_siren/
 │   ├── src/
 │   │   ├── index.ts                 Bootstrap: 1 Express + 1 WS on 1 port
 │   │   ├── config.ts                Zod-validated env config
-│   │   ├── types.ts                 AgentTask, AgentChunk, AgentDomain, ExecutionMode
+│   │   ├── types.ts                 AgentTask, AgentChunk, AgentDomain, ExecutionMode, VoiceSettings
 │   │   │
 │   │   ├── agents/                  20 IAgent implementations
 │   │   │   ├── base-agent.ts        abstract IAgent (PDF Section 05)
 │   │   │   ├── _shared/
-│   │   │   │   ├── tool-registry.ts calculator, code_interpreter, think
+│   │   │   │   ├── tool-registry.ts calculator, code_interpreter, think, http_request (Phase D)
+│   │   │   │   ├── review-parse.ts  Shared fenced-JSON + parseReviewResponse (Phase C)
+│   │   │   │   ├── migration-validate.ts  validateMigrationSql 5 hard-block rules (Phase C)
 │   │   │   │   └── project-files.ts Code Review gate (writeProjectFile)
 │   │   │   ├── architect/           Planning agent (Step 0 — first real IAgent)
 │   │   │   ├── qa-tester/           Test generation
-│   │   │   ├── extension/           Skills Vault manager
+│   │   │   ├── extension/           Skills Vault manager (Phase D)
 │   │   │   ├── frontend/            UI codegen
-│   │   │   ├── backend/             API codegen
-│   │   │   ├── database/            Schema design
-│   │   │   ├── security/            Threat modeling
-│   │   │   ├── devops/              CI/CD
-│   │   │   ├── documentation/       Docs
-│   │   │   ├── performance/         Profiling
+│   │   │   ├── backend/             API codegen (Phase C — hardened)
+│   │   │   ├── database/            Schema design (Phase C — hardened, migration validation)
+│   │   │   ├── security/            Threat modeling (Phase C — hardened)
+│   │   │   ├── devops/              CI/CD (Phase C — hardened)
+│   │   │   ├── documentation/       Docs (Phase C — hardened)
+│   │   │   ├── performance/         Profiling (Phase C — hardened)
 │   │   │   ├── terminal/            Shell exec (Ghost Mode approval)
 │   │   │   ├── memory/              Recall surface
-│   │   │   ├── ui-designer/         Design tokens
-│   │   │   ├── research/            Deep research
+│   │   │   ├── ui-designer/         Design tokens (Phase C — hardened)
+│   │   │   ├── research/            Deep research (Phase C — hardened, real z-ai SDK web_search)
 │   │   │   ├── deployment/          Deploy pipelines
-│   │   │   ├── prompt-engineer/     Prompt tuning
-│   │   │   ├── code-review/         Review gate
+│   │   │   ├── prompt-engineer/     Prompt tuning (Phase C — hardened)
+│   │   │   ├── code-review/         Review gate (Phase C — 9 Tier-1 regex checks + 3-tier parse)
 │   │   │   ├── fabrication/         CAD + 3D printer (build123d sidecar)
 │   │   │   ├── operative/           Browser + smart home (kasa sidecar)
 │   │   │   └── sentinel/            Ambient monitoring (Ghost Mode)
+│   │   │
+│   │   ├── context/                 Phase B — Context Manager
+│   │   │   ├── types.ts             ContextBundle shape (5 sources)
+│   │   │   ├── budget.ts            Token-budget allocation across sources
+│   │   │   ├── manager.ts           Assembles context bundles (fail-open on timeout)
+│   │   │   └── project-graph.ts     Project structure graph for context
 │   │   │
 │   │   ├── orchestration/
 │   │   │   ├── agent-manager.ts     send(task) — single entry point
@@ -152,6 +172,13 @@ code_siren/
 │   │   │   └── engines/
 │   │   │       └── ollama.ts        Real Ollama engine + auto-start
 │   │   │
+│   │   ├── orchestrator/            Phase E — Voice + LLM orchestrator settings
+│   │   │   ├── settings.ts          Orchestrator engine/approvalMode/tier1Model (JSON file)
+│   │   │   ├── voice-settings.ts    Voice provider/voice settings (JSON file, runtime-built availability)
+│   │   │   ├── engine.ts            Active engine selection + availability checks
+│   │   │   ├── relay-loop.ts        Gemini/Nemotron relay orchestration
+│   │   │   └── tier1-chat.ts        OpenRouter Tier-1 chat routing
+│   │   │
 │   │   ├── auth/                    Single JWT auth (register/login/me)
 │   │   │   ├── jwt.ts
 │   │   │   ├── routes.ts
@@ -160,26 +187,28 @@ code_siren/
 │   │   │
 │   │   ├── db/
 │   │   │   ├── client.ts            pg Pool + degraded in-memory fallback
-│   │   │   ├── migrate.ts           Runs migrations in order
-│   │   │   └── migrations/          8 SQL files (001-008)
+│   │   │   ├── migrate.ts           Runs migrations in order (SHA-256 checksum verify)
+│   │   │   └── migrations/          10 SQL files (001-010, incl. 003_skills_vault, 010_migration_tracking)
 │   │   │
 │   │   ├── ws/
-│   │   │   ├── server.ts            Single WS server (PDF Section 13)
+│   │   │   ├── server.ts            Single WS server (PDF Section 13) + binary voice audio routing
 │   │   │   └── events.ts            Typed event registry + broadcast sink
 │   │   │
-│   │   ├── routes/                  14 route files
+│   │   ├── routes/                  18 route files
 │   │   │   ├── agents.ts            POST /api/agents/:id/send
 │   │   │   ├── health.ts            GET /api/health
 │   │   │   ├── system-health.ts     GET /api/system/health (Phase 6)
 │   │   │   ├── traces.ts            GET /api/traces
 │   │   │   ├── dashboard.ts         11 read-only aggregation endpoints
 │   │   │   ├── models.ts            Ollama model listing + selection
-│   │   │   ├── skills.ts            Skills Vault API
+│   │   │   ├── skills.ts            Skills Vault API (Phase D)
 │   │   │   ├── fabrication.ts       CAD + printer
 │   │   │   ├── operative.ts         Browser + devices
 │   │   │   ├── sentinel.ts          Sentinel + Ghost Mode
 │   │   │   ├── sandbox.ts           isolated-vm sandbox
-│   │   │   ├── voice.ts             Voice sessions
+│   │   │   ├── voice.ts             Voice sessions + GET/POST /api/voice/settings (Phase E Build 2/3)
+│   │   │   ├── voice-live.ts        Live voice pipeline (Phase E)
+│   │   │   ├── orchestrator.ts      GET/POST /api/orchestrator/settings
 │   │   │   ├── presence.ts          Gesture + face auth
 │   │   │   └── project-files.ts     Code Review gate funnel
 │   │   │
@@ -203,16 +232,28 @@ code_siren/
 │   │   │   └── sandbox.ts           isolated-vm v6 (32MB/30s, no require/process/fs)
 │   │   │
 │   │   ├── sidecars/
-│   │   │   └── manager.ts           Spawns+owns Python sidecars (crash → error)
+│   │   │   └── manager.ts           Spawns+owns Python sidecars (crash → SidecarCrashedError)
+│   │   │                            + ensureBuild123dSidecar() + ensureKokoroSidecar() (Phase E)
 │   │   │
-│   │   ├── skills/
+│   │   ├── skills/                  Phase D — Skills Vault
 │   │   │   ├── manifest.ts          TOML parser + Ed25519 signature verify
 │   │   │   ├── executor.ts          Runs skill steps via toolRegistry
-│   │   │   └── discovery.ts         Mines traces for recurring sequences
+│   │   │   ├── discovery.ts         Mines traces for recurring sequences
+│   │   │   └── library/             35 TOML skill manifests (Batches 1-8)
+│   │   │       ├── *.toml           Wikipedia, Open-Meteo, NewsAPI, GNews, GitHub,
+│   │   │       │                    TMDb, OMDb, GIPHY, RAWG, PUBG, MapTiler, ORS,
+│   │   │       │                    OpenWeatherMap, Alpha Vantage (x2), ExchangeRate-API,
+│   │   │       │                    NASA APOD, YouTube Data API v3, + 18 more
+│   │   │       └── index.ts         Auto-loader (reads all .toml at boot)
 │   │   │
 │   │   └── systems/
-│   │       └── voice/
-│   │           └── voice-client.ts  Voice client interface (5 swap interfaces)
+│   │       └── voice/               Phase E — Multi-Provider Voice Pipeline
+│   │           ├── tts-provider.ts      TTSProvider interface + ZaiTTSProvider + StubTTSProvider + DI
+│   │           ├── kokoro-provider.ts   KokoroTTSProvider (local neural, Python sidecar)
+│   │           ├── elevenlabs-provider.ts  ElevenLabsTTSProvider (BYOK cloud, raw fetch)
+│   │           ├── audio-wav.ts         Shared wrapPcmInWav() + pcmDurationMs() utils
+│   │           ├── voice-client.ts      VoiceClient interface (Stub + future Gemini Live)
+│   │           └── voice-proxy.ts       Live voice pipeline: ASR → AgentManager → TTS
 │   │
 │   ├── scripts/                     Operator utilities
 │   │   ├── doctor.ts                Health check (Phase 1, expanded Phase 6)
@@ -225,18 +266,25 @@ code_siren/
 │   │   ├── export-traces.ts         Export traces as JSON (Phase 6)
 │   │   └── export-settings.ts       Export settings as JSON (Phase 6)
 │   │
-│   ├── sidecars/                    Python helpers
+│   ├── sidecars/                    Python helpers (JSON-lines stdin/stdout protocol)
 │   │   ├── build123d/sidecar.py     CAD generation
-│   │   └── kasa/sidecar.py          Smart home control
+│   │   ├── kasa/sidecar.py          Smart home control
+│   │   └── kokoro/                  Phase E — Kokoro TTS sidecar
+│   │       ├── sidecar.py           Lazy model load, /ping + /tts + /crash
+│   │       ├── requirements.txt     kokoro==0.9.4, torch CPU, transformers, misaki
+│   │       └── venv/                (gitignored — 1.4 GB, NOT committed)
 │   │
-│   ├── tests/                       96 tests across 9 files
-│   │   ├── unit/                    traces, memory, ghost-mode, sandbox, skills, loop-guard
+│   ├── tests/                       618 tests across 36 files
+│   │   ├── unit/                    traces, memory, ghost-mode, sandbox, loop-guard,
+│   │   │                            context/{budget,manager,project-graph},
+│   │   │                            skills (Batches 1-8), skills-http-request
 │   │   ├── integration/             auth
 │   │   ├── agent/                   agent-manager
-│   │   ├── security/                project-files Code Review gate
-│   │   └── e2e-architect.ts         End-to-end proof
+│   │   ├── security/                12 agent test files (Phase C) + project-files gate
+│   │   ├── e2e/                     extension-agent-pipeline (Phase D)
+│   │   └── e2e-architect.ts         End-to-end proof (Step 0)
 │   │
-│   └── .env.example
+│   └── .env.example                 25+ env slots incl. 20+ API keys (Phase D) + ELEVENLABS_API_KEY (Phase E)
 │
 ├── app/                             React 19 + Vite 7 + Tailwind 3 frontend
 │   ├── src/
@@ -246,30 +294,30 @@ code_siren/
 │   │   │   └── Dashboard.tsx        Control Center (9 views, lazy-loaded)
 │   │   ├── components/
 │   │   │   ├── layout/              TitleBar, IconSidebar, FileExplorer, StatusBar
-│   │   │   ├── editor/              CodeEditor (Monaco, lazy)
+│   │   │   ├── editor/              CodeEditor (Monaco, lazy, Phase A IntelliSense)
 │   │   │   ├── chat/                ChatPanel (lazy)
 │   │   │   ├── terminal/            Terminal (xterm, lazy)
 │   │   │   ├── panels/              InlineAI (lazy)
-│   │   │   ├── modals/              AgentPanel, SettingsModal (lazy)
+│   │   │   ├── modals/              AgentPanel, SettingsModal (6 tabs incl. Voice — Phase E)
 │   │   │   ├── dashboard/           9 read-only views (Phase 4)
 │   │   │   └── ui/                  shadcn/ui primitives
 │   │   ├── store/                   AppContext, themes, demoData
-│   │   ├── lib/                     api, ws, auth, dashboardApi, utils
+│   │   ├── lib/                     api (incl. getVoiceSettings/setVoiceSettings — Phase E), ws, auth, dashboardApi, utils
 │   │   ├── systems/presence/        gesture input
-│   │   └── types/                   Mirror of server types
+│   │   └── types/                   Mirror of server types (incl. VoiceSettings, VoiceProviderOption, KokoroVoiceOption, ElevenLabsVoiceOption)
 │   └── vite.config.ts               manualChunks: react-vendor, radix-vendor, monaco-vendor, etc.
 │
 ├── scripts/
 │   └── grep-audit.sh                Naturalization audit (zero donor names)
 │
-├── .github/workflows/ci.yml         Server + app CI
+├── .github/workflows/ci.yml         Server + app CI (Node 22 for isolated-vm)
 ├── README.md                        This file
 ├── SETUP_REPORT.md                  Phase 6 onboarding report
 ├── RELEASE_GUIDE.md                 Phase 6 release runbook
-└── PHASE{1-6}_REPORT.md             Phase reports
+└── PHASE{1-7}_REPORT.md             Phase reports (1-7)
 ```
 
-### Key invariants (DO NOT MODIFY — enforced across all 6 phases)
+### Key invariants (DO NOT MODIFY — enforced across all phases)
 
 - **One Express server, one WS server, one port** (PDF Section 12+13)
 - **One JWT auth flow** — face auth is a second factor on the same token, not a parallel path
@@ -278,8 +326,36 @@ code_siren/
 - **One Ghost Mode FSM** — 9 states, 4 autonomy levels, shared by Sentinel + Terminal
 - **One MemoryEngine** — pgvector or in-memory, shared by all 20 agents via base-agent
 - **One Security Sandbox** — isolated-vm v6, 32MB/30s, no require/process/fs
-- **One ToolRegistry** — calculator, code_interpreter, think (extensible via Skills Vault)
+- **One ToolRegistry** — calculator, code_interpreter, think, http_request (Phase D) — extensible via Skills Vault
 - **One traces system** — JSONL append-only + 1000-entry ring buffer
+- **One TTSProvider interface** (Phase E) — ZaiTTSProvider, KokoroTTSProvider, ElevenLabsTTSProvider all implement it; `setTTSProvider()` swaps the active one at runtime
+- **One SidecarManager** (Phase E) — owns all Python sidecars (build123d, kasa, kokoro); crashes surface as `SidecarCrashedError`, no silent fallback
+- **One Skills Vault** (Phase D) — 35 TOML manifests, auto-loaded at boot, executed via `toolRegistry` with honest missing-key + fabrication guards
+- **API keys live ONLY in `.env`** — never in JSON settings files, never in DB tables, never in skill manifests, never logged. The `http_request` tool's `api_key_env` field reads `process.env[KEY_NAME]` at runtime; if empty → honest "Skill unavailable" error without making the network call
+
+---
+
+## Voice Pipeline (Phase E)
+
+Three swappable TTS providers, all implementing the same `TTSProvider` interface (`speak(text: string): Promise<TTSResult>`). Users switch between them via **Settings → Voice tab** in the UI, or via `POST /api/voice/settings`. The active provider is swapped at runtime via `setTTSProvider()` — no server restart needed. The saved setting persists to `server/.runtime/voice-settings.json` and is applied at boot via `applyVoiceProvider(getVoiceSettings())`.
+
+| Provider | Type | Setup | Latency | Voices | Cost |
+|---|---|---|---|---|---|
+| **Zai** (default) | Cloud | None (uses z-ai SDK built-in creds) | ~1-2s | 1 (tongtong) | Free (z-ai) |
+| **Kokoro-82M** | Local neural | Python sidecar (~1.4 GB venv, 312 MB model) | ~2s first call, ~1.4s subsequent (2-core CPU) | 54 across 9 languages | Free (Apache 2.0) |
+| **ElevenLabs** | Cloud BYOK | `ELEVENLABS_API_KEY` in `.env` | ~1s (cloud) | 21 premade English | 10k credits/month free |
+
+**Provider selection is dynamic:** `getVoiceProviders()` checks `process.env.ELEVENLABS_API_KEY` at runtime — if not set, ElevenLabs shows as `available: false` with the reason "API key not configured — add ELEVENLABS_API_KEY to server/.env and restart the server." The UI picker shows it as disabled with the reason as a tooltip.
+
+**Failure handling:** every provider throws honest, specific errors — no silent fallback to Stub or another provider:
+- Missing key → `"ElevenLabs: ELEVENLABS_API_KEY not configured — add it to server/.env..."`
+- Invalid key → `"ElevenLabs: invalid API key — check ELEVENLABS_API_KEY in server/.env."`
+- Quota exceeded → `"ElevenLabs: monthly quota exceeded — upgrade your plan at https://elevenlabs.io/pricing..."`
+- Invalid voice → `"ElevenLabs: invalid voice_id — ..."`
+- Sidecar crash (Kokoro) → `SidecarCrashedError` propagates, no hang, no stub audio
+- Empty text → `"TTS: empty text"` (provider-side pre-check, before any network/sidecar call)
+
+**Kokoro sidecar lifecycle:** spawned lazily on first `speak()` call (not at server boot). Model loads lazily inside the sidecar on first `/tts` request. Per Section 0.2 decision, the sidecar is left running on switch-away (no teardown) — the ~1.3 GB RAM stays allocated in case the user switches back. The sidecar is owned by `SidecarManager` and dies with the Node server (no orphan processes).
 
 ---
 
@@ -354,6 +430,8 @@ The preflight checks: Node version, env vars valid, port available, Postgres rea
 
 See `server/.env.example` for the full list with comments. Summary:
 
+### Core (server + auth + DB + LLM)
+
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `PORT` | no | 3001 | Server listen port |
@@ -371,6 +449,7 @@ See `server/.env.example` for the full list with comments. Summary:
 | `OPENROUTER_API_KEY` | no | — | Cloud LLM fallback (used when Ollama down) |
 | `OPENAI_API_KEY` | no | — | Direct OpenAI (not currently routed) |
 | `ANTHROPIC_API_KEY` | no | — | Direct Anthropic (not currently routed) |
+| `GEMINI_API_KEY` | no | — | Gemini 2.5 Flash orchestrator (Phase 11) |
 | `CORS_ORIGINS` | no | http://localhost:3000,... | Comma-separated allowed origins |
 | `RATE_LIMIT_PER_IP` | no | 100 | Requests per minute per IP |
 | `RATE_LIMIT_PER_USER` | no | 200 | Requests per minute per user |
@@ -378,6 +457,40 @@ See `server/.env.example` for the full list with comments. Summary:
 | `RATE_LIMIT_WINDOW_MS` | no | 60000 | Rate limit window in ms |
 | `REQUEST_TIMEOUT_MS` | no | 30000 | Request timeout in ms |
 | `SLOW_REQUEST_THRESHOLD_MS` | no | 500 | Threshold for slow request logging |
+
+### Phase D — Skills Vault API keys (all optional, leave empty to skip the skill)
+
+All keys live in `server/.env` and are read at runtime via `process.env[KEY_NAME]`. When a key is not set, the corresponding skill returns an honest "Skill unavailable: missing KEY_NAME" error without making the network call. See `server/.env.example` for the full commented list.
+
+| Variable | Service | Free tier |
+|---|---|---|
+| `NEWSAPI_KEY` | NewsAPI | 100 req/day |
+| `GNEWS_KEY` | GNews | 100 req/day |
+| `MEDIASTACK_KEY` | Mediastack | 500 req/month |
+| `GITHUB_TOKEN` | GitHub (skill) | 5000 req/hour |
+| `DEVTO_API_KEY` | Dev.to | unlimited (read) |
+| `HASHNODE_API_KEY` | Hashnode | GraphQL, rate-limited |
+| `TMDB_API_KEY` | TMDb | unlimited (read) |
+| `OMDB_API_KEY` | OMDb | 1000 req/day |
+| `GIPHY_API_KEY` | GIPHY | 42 req/hour |
+| `RAWG_API_KEY` | RAWG | 20000 req/month |
+| `PUBG_API_KEY` | PUBG API | rate-limited |
+| `MAPTILER_API_KEY` | MapTiler | 100k req/month |
+| `OPENROUTESERVICE_KEY` | OpenRouteService | 2000 req/day |
+| `OPENWEATHERMAP_KEY` | OpenWeatherMap | 60 req/min |
+| `ALPHA_VANTAGE_KEY` | Alpha Vantage | 25 req/day |
+| `YOUTUBE_API_KEY` | YouTube Data API v3 | 10000 units/day |
+| `NASA_API_KEY` | NASA APOD | DEMO_KEY (shared, 30 req/hr) — slot is documentation-only |
+
+### Phase E — Voice TTS provider keys
+
+| Variable | Service | Free tier | Notes |
+|---|---|---|---|
+| `ELEVENLABS_API_KEY` | ElevenLabs (BYOK cloud TTS) | 10000 credits/month (~1 char = 1 credit) | When not set, ElevenLabs shows as "unavailable" in the Voice tab. Get a key at https://elevenlabs.io → Profile → API Keys. |
+
+**Kokoro** (local neural TTS) needs no API key — it runs entirely locally via a Python sidecar. First-time setup: `cd server/sidecars/kokoro && python3 -m venv venv && source venv/bin/activate && pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install -r requirements.txt` (~1.4 GB venv, 312 MB model downloads on first use). The venv is gitignored — never committed.
+
+**Zai** (cloud TTS via z-ai-web-dev-sdk) needs no API key — it uses the z-ai SDK's built-in credentials (configured at the system level via `/etc/.z-ai-config`).
 
 ---
 
@@ -391,7 +504,7 @@ See `server/.env.example` for the full list with comments. Summary:
 | `npm start` | Start server without watch |
 | `npm run build` | TypeScript compile to `dist/` |
 | `npm run typecheck` | Type-check without emitting |
-| `npm test` | Run vitest (96 tests, ~4s) |
+| `npm test` | Run vitest (618 tests across 36 files, ~2min) |
 | `npm run test:watch` | Run vitest in watch mode |
 | `npm run test:coverage` | Run vitest with coverage report |
 | `npm run test:e2e` | End-to-end Architect agent proof |
