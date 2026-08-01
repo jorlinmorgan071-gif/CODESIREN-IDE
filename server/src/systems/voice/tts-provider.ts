@@ -78,38 +78,26 @@ export class ZaiTTSProvider implements TTSProvider {
 
 // ── StubTTSProvider — for testing without z-ai ───────────────────────────
 
+import { wrapPcmInWav, pcmDurationMs } from './audio-wav.js';
+
 export class StubTTSProvider implements TTSProvider {
   readonly implementation = 'stub';
 
   async speak(text: string): Promise<TTSResult> {
-    // Return a minimal valid WAV header + silence
-    // This lets the audio pipeline work end-to-end without z-ai
+    // Return a minimal valid WAV (silence) — lets the audio pipeline work
+    // end-to-end without z-ai. Uses the shared wrapPcmInWav util.
     const sampleRate = 24000;
     const durationSec = Math.max(1, Math.min(10, text.length / 15));  // ~15 chars/sec
     const numSamples = Math.floor(sampleRate * durationSec);
-    const buffer = Buffer.alloc(44 + numSamples * 2);
+    const pcmBytes = Buffer.alloc(numSamples * 2);  // all zeros = silence
 
-    // WAV header
-    buffer.write('RIFF', 0);
-    buffer.writeUInt32LE(36 + numSamples * 2, 4);
-    buffer.write('WAVE', 8);
-    buffer.write('fmt ', 12);
-    buffer.writeUInt32LE(16, 16);
-    buffer.writeUInt16LE(1, 20);  // PCM
-    buffer.writeUInt16LE(1, 22);  // mono
-    buffer.writeUInt32LE(sampleRate, 24);
-    buffer.writeUInt32LE(sampleRate * 2, 28);  // byte rate
-    buffer.writeUInt16LE(2, 32);  // block align
-    buffer.writeUInt16LE(16, 34);  // bits per sample
-    buffer.write('data', 36);
-    buffer.writeUInt32LE(numSamples * 2, 40);
-    // Samples are zero (silence) — already initialized to 0
+    const wavBuffer = wrapPcmInWav(pcmBytes, sampleRate, 1);
 
     return {
-      audioBase64: buffer.toString('base64'),
+      audioBase64: wavBuffer.toString('base64'),
       format: 'wav',
       sampleRate,
-      durationMs: Math.round(durationSec * 1000),
+      durationMs: pcmDurationMs(pcmBytes, sampleRate, 1),
     };
   }
 }

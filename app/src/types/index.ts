@@ -253,12 +253,13 @@ export interface OrchestratorSettings {
 
 // Phase E Build 2: Voice provider settings — mirrors server-side VoiceSettings
 // in server/src/orchestrator/voice-settings.ts. Extensible for Chatterbox/ElevenLabs.
-export type VoiceProviderId = 'zai' | 'kokoro';
+export type VoiceProviderId = 'zai' | 'kokoro' | 'elevenlabs';
 
 export interface VoiceSettings {
   provider: VoiceProviderId;
   kokoroVoice?: string;
   kokoroLangCode?: string;
+  elevenlabsVoiceId?: string;
 }
 
 export interface VoiceProviderOption {
@@ -275,6 +276,17 @@ export interface KokoroVoiceOption {
   langLabel: string;
   gender: 'female' | 'male';
   grade?: string;
+}
+
+export interface ElevenLabsVoiceOption {
+  voice_id: string;
+  name: string;
+  category: string;
+  language: string;
+  gender: string;
+  accent: string;
+  description?: string;
+  preview_url?: string;
 }
 
 export type MilestoneLogStatus = 'running' | 'approved' | 'rejected' | 'corrected' | 'failed';

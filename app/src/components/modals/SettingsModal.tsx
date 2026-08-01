@@ -2,7 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import { useState, useEffect } from 'react';
 import { useApp } from '@/store/AppContext';
 import { motion, AnimatePresence } from 'motion/react';
-import type { ThemeName, VoiceSettings, VoiceProviderOption, KokoroVoiceOption } from '@/types';
+import type { ThemeName, VoiceSettings, VoiceProviderOption, KokoroVoiceOption, ElevenLabsVoiceOption } from '@/types';
 import { themes } from '@/store/themes';
 import { api } from '@/lib/api';
 import {
@@ -219,6 +219,7 @@ export function SettingsModal() {
   const [voiceSettings, setVoiceSettingsState] = useState<VoiceSettings | null>(null);
   const [voiceProviders, setVoiceProviders] = useState<VoiceProviderOption[]>([]);
   const [kokoroVoices, setKokoroVoices] = useState<KokoroVoiceOption[]>([]);
+  const [elevenlabsVoices, setElevenlabsVoices] = useState<ElevenLabsVoiceOption[]>([]);
   const [voiceLoading, setVoiceLoading] = useState(false);
 
   useEffect(() => {
@@ -228,12 +229,13 @@ export function SettingsModal() {
           setVoiceSettingsState(res.settings);
           setVoiceProviders(res.voiceProviders);
           setKokoroVoices(res.kokoroVoices);
+          setElevenlabsVoices(res.elevenlabsVoices);
         })
         .catch((err) => console.warn('[settings] voice load failed:', err));
     }
   }, [state.settingsVisible, activeTab]);
 
-  const setVoiceProvider = async (provider: 'zai' | 'kokoro') => {
+  const setVoiceProvider = async (provider: 'zai' | 'kokoro' | 'elevenlabs') => {
     setVoiceLoading(true);
     try {
       const res = await api.setVoiceSettings({ provider });
@@ -261,6 +263,18 @@ export function SettingsModal() {
       setVoiceSettingsState(res.settings);
     } catch (err) {
       console.warn('[settings] kokoro voice set failed:', err);
+    } finally {
+      setVoiceLoading(false);
+    }
+  };
+
+  const setElevenlabsVoice = async (voiceId: string) => {
+    setVoiceLoading(true);
+    try {
+      const res = await api.setVoiceSettings({ elevenlabsVoiceId: voiceId });
+      setVoiceSettingsState(res.settings);
+    } catch (err) {
+      console.warn('[settings] elevenlabs voice set failed:', err);
     } finally {
       setVoiceLoading(false);
     }
@@ -787,6 +801,56 @@ export function SettingsModal() {
                               ))}
                             </div>
                           </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ElevenLabs voice picker — only shown when ElevenLabs is the active provider */}
+                  {voiceSettings?.provider === 'elevenlabs' && (
+                    <div>
+                      <h3 className="text-[12px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--steel-silver)' }}>
+                        ElevenLabs Voice
+                      </h3>
+                      <p className="text-[10px] mb-2" style={{ color: 'var(--muted-silver)' }}>
+                        21 premade English voices. Custom/cloned voices are not yet supported in this UI — use the API directly for those.
+                      </p>
+                      <div
+                        className="max-h-[400px] overflow-y-auto rounded-lg p-2"
+                        style={{ backgroundColor: 'var(--surface-dark)', border: '1px solid var(--border-subtle)' }}
+                      >
+                        {elevenlabsVoices.map((v) => (
+                          <button
+                            key={v.voice_id}
+                            disabled={voiceLoading}
+                            onClick={() => setElevenlabsVoice(v.voice_id)}
+                            className="w-full flex items-center justify-between px-2 py-1.5 rounded transition-colors hover:bg-white/5 text-left disabled:opacity-50"
+                            style={{
+                              backgroundColor: voiceSettings?.elevenlabsVoiceId === v.voice_id ? 'rgba(238, 28, 28, 0.08)' : 'transparent',
+                            }}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-[11px] truncate" style={{ color: 'var(--bright-silver)' }}>
+                                {v.name}
+                              </span>
+                              <span className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
+                                {v.gender === 'female' ? '♀' : v.gender === 'male' ? '♂' : ''}
+                              </span>
+                              {v.accent && (
+                                <span className="text-[9px] px-1 rounded" style={{ color: 'var(--muted-silver)', backgroundColor: 'rgba(255,255,255,0.05)' }}>
+                                  {v.accent}
+                                </span>
+                              )}
+                              {v.description && (
+                                <span className="text-[10px] truncate" style={{ color: 'var(--muted-silver)' }}>
+                                  — {v.description}
+                                </span>
+                              )}
+                            </div>
+                            {voiceSettings?.elevenlabsVoiceId === v.voice_id && (
+                              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: 'var(--siren-red)' }} />
+                            )}
+                          </button>
                         ))}
                       </div>
                     </div>

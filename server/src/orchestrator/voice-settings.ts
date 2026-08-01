@@ -30,11 +30,11 @@ const SETTINGS_PATH = join(__dirname, '..', '..', '.runtime', 'voice-settings.js
 // ── Types ────────────────────────────────────────────────────────────────
 
 /**
- * TTS provider id. Add new provider ids here (e.g. 'chatterbox', 'elevenlabs')
+ * TTS provider id. Add new provider ids here (e.g. 'chatterbox')
  * when those providers are implemented — also add a matching entry to
  * VOICE_PROVIDERS below and a case to applyVoiceProvider().
  */
-export type VoiceProviderId = 'zai' | 'kokoro';
+export type VoiceProviderId = 'zai' | 'kokoro' | 'elevenlabs';
 
 export interface VoiceProviderOption {
   id: VoiceProviderId;
@@ -57,27 +57,64 @@ export interface VoiceSettings {
   kokoroVoice?: string;
   /** Kokoro language code (e.g. 'a' = American English). Only used when provider='kokoro'. */
   kokoroLangCode?: string;
+  /** ElevenLabs voice_id (e.g. 'CwhRBWXzGAHq8TQ4Fs17'). Only used when provider='elevenlabs'. */
+  elevenlabsVoiceId?: string;
 }
 
 // ── Allowed-values list (const, exported for the UI picker) ──────────────
 
-export const VOICE_PROVIDERS: VoiceProviderOption[] = [
-  {
-    id: 'zai',
-    label: 'Z.ai Cloud TTS',
-    desc: 'Cloud-based TTS via z-ai-web-dev-sdk. No local install required.',
-    available: true,
-  },
-  {
-    id: 'kokoro',
-    label: 'Kokoro-82M (Local)',
-    desc: 'Local neural TTS — Apache 2.0, 82M params. Requires Python sidecar (~1.4 GB venv, ~312 MB model). 54 voices across 9 languages.',
-    available: true,
-  },
-  // Future providers slot in here:
-  // { id: 'chatterbox', label: 'Chatterbox', desc: '...', available: true },
-  // { id: 'elevenlabs', label: 'ElevenLabs', desc: '...', available: false, reason: 'Not yet implemented' },
-];
+/**
+ * Build the VOICE_PROVIDERS list at runtime. ElevenLabs availability is
+ * computed from whether ELEVENLABS_API_KEY is set in process.env — same
+ * pattern as the orchestrator's listAvailableEngines() (engines without
+ * their required API key show as available:false with a reason).
+ *
+ * This is a FUNCTION rather than a const so the availability check runs
+ * fresh each time it's called (e.g. after the user adds a key to .env and
+ * restarts, or in tests that mock process.env). Callers should call
+ * getVoiceProviders() rather than referencing a stale const.
+ */
+function buildVoiceProviders(): VoiceProviderOption[] {
+  const elevenlabsKeyConfigured = !!process.env.ELEVENLABS_API_KEY;
+  return [
+    {
+      id: 'zai',
+      label: 'Z.ai Cloud TTS',
+      desc: 'Cloud-based TTS via z-ai-web-dev-sdk. No local install required.',
+      available: true,
+    },
+    {
+      id: 'kokoro',
+      label: 'Kokoro-82M (Local)',
+      desc: 'Local neural TTS — Apache 2.0, 82M params. Requires Python sidecar (~1.4 GB venv, ~312 MB model). 54 voices across 9 languages.',
+      available: true,
+    },
+    {
+      id: 'elevenlabs',
+      label: 'ElevenLabs (BYOK)',
+      desc: 'Cloud TTS via ElevenLabs REST API. Bring Your Own Key — requires ELEVENLABS_API_KEY in server/.env. Free tier: 10,000 credits/month. 21 premade voices.',
+      available: elevenlabsKeyConfigured,
+      reason: elevenlabsKeyConfigured
+        ? undefined
+        : 'API key not configured — add ELEVENLABS_API_KEY to server/.env and restart the server.',
+    },
+    // Future providers slot in here:
+    // { id: 'chatterbox', label: 'Chatterbox', desc: '...', available: true },
+  ];
+}
+
+/** Runtime-built VOICE_PROVIDERS list (computed each call). */
+export function getVoiceProviders(): VoiceProviderOption[] {
+  return buildVoiceProviders();
+}
+
+/**
+ * Backwards-compat: VOICE_PROVIDERS as a const evaluated at module load.
+ * NOTE: This captures the availability state at module-load time. For fresh
+ * availability checks (e.g. after .env changes), use getVoiceProviders().
+ * Tests that mock process.env should call getVoiceProviders() explicitly.
+ */
+export const VOICE_PROVIDERS: VoiceProviderOption[] = buildVoiceProviders();
 
 // ── Kokoro voice catalog (per Section 0.1 — 54 voices, 9 languages) ──────
 // Used by the UI picker when Kokoro is selected. Grouped by language.
@@ -158,6 +195,49 @@ export const KOKORO_VOICES: KokoroVoiceOption[] = [
   { name: 'pm_santa', langCode: 'p', langLabel: 'Brazilian Portuguese', gender: 'male' },
 ];
 
+// ── ElevenLabs voice catalog (per Section 0.4 — public /v1/voices endpoint) ─
+// 21 premade voices, English only. Fetched from the public ElevenLabs API
+// (no auth required for the premade voice catalog). Hardcoded here as a const
+// so the server is the single source of truth — the UI fetches via GET
+// /api/voice/settings. To refresh this list, run:
+//   curl -s https://api.elevenlabs.io/v1/voices | jq '.voices[] | {voice_id, name, labels}'
+// and paste the result here.
+
+export interface ElevenLabsVoiceOption {
+  voice_id: string;     // e.g. 'CwhRBWXzGAHq8TQ4Fs17'
+  name: string;         // display name (e.g. 'Roger - Laid-Back, Casual, Resonant')
+  category: string;     // 'premade' | 'cloned' | 'generated'
+  language: string;     // ISO language code from labels (e.g. 'en')
+  gender: string;       // 'male' | 'female' | '' from labels
+  accent: string;       // e.g. 'american' | 'british' | ''
+  description?: string; // voice description from ElevenLabs
+  preview_url?: string; // URL to preview the voice (MP3)
+}
+
+export const ELEVENLABS_VOICES: ElevenLabsVoiceOption[] = [
+  { voice_id: 'CwhRBWXzGAHq8TQ4Fs17', name: 'Roger', category: 'premade', language: 'en', gender: 'male', accent: 'american', description: 'Easy going and perfect for casual conversations.' },
+  { voice_id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah', category: 'premade', language: 'en', gender: 'female', accent: 'american', description: 'Mature, reassuring, confident.' },
+  { voice_id: 'FGY2WhTYpPnrIDTdsKH5', name: 'Laura', category: 'premade', language: 'en', gender: 'female', accent: 'american', description: 'Enthusiast, quirky attitude.' },
+  { voice_id: 'IKne3meq5aSn9XLyUdCD', name: 'Charlie', category: 'premade', language: 'en', gender: 'male', accent: 'australian', description: 'Deep, confident, energetic.' },
+  { voice_id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George', category: 'premade', language: 'en', gender: 'male', accent: 'british', description: 'Warm, captivating storyteller.' },
+  { voice_id: 'N2lFW1XyP63u9XrYqSnl', name: 'Emily', category: 'premade', language: 'en', gender: 'female', accent: 'british', description: 'Calm, friendly, professional.' },
+  { voice_id: 'XB0fDUnXU5powFXDhCwa', name: 'Charlotte', category: 'premade', language: 'en', gender: 'female', accent: 'swedish', description: 'Soft, expressive.' },
+  { voice_id: 'Xb7hH8MSUJpSbSDYk0k2', name: 'Matilda', category: 'premade', language: 'en', gender: 'female', accent: 'american', description: 'Friendly, positive.' },
+  { voice_id: 'XrExE9yKIg1WjnnlVkGX', name: 'Matthew', category: 'premade', language: 'en', gender: 'male', accent: 'american', description: 'Calm, professional.' },
+  { voice_id: 'Yko7PKHZNWotYUsmB8tZ', name: 'Jessica', category: 'premade', language: 'en', gender: 'female', accent: 'american', description: 'Soft, expressive.' },
+  { voice_id: 'ZQe5CZNOzWyzPSCn5a3c', name: 'Brian', category: 'premade', language: 'en', gender: 'male', accent: 'american', description: 'Deep, authoritative.' },
+  { voice_id: 'Zo8NpztVZ2pkBgVvc0x4', name: 'Lily', category: 'premade', language: 'en', gender: 'female', accent: 'british', description: 'Warm, friendly.' },
+  { voice_id: 'azGgh5ui6qTbjncp7L8v', name: 'Samuel', category: 'premade', language: 'en', gender: 'male', accent: 'american', description: 'Calm, professional narrator.' },
+  { voice_id: 'bHtb6xZtHlaPoM3x5Xvy', name: 'Nicole', category: 'premade', language: 'en', gender: 'female', accent: 'american', description: 'Warm, friendly.' },
+  { voice_id: 'd8NzoULm4XQ7Lucy120v', name: 'Gigi', category: 'premade', language: 'en', gender: 'female', accent: 'american', description: 'Expressive, friendly.' },
+  { voice_id: 'eVItLK1UvVnMxkJbxpAi', name: 'Freeman', category: 'premade', language: 'en', gender: 'male', accent: 'american', description: 'Deep, mature.' },
+  { voice_id: 'fQcUMgGGRxCTACPbOaOJ', name: 'Gracie', category: 'premade', language: 'en', gender: 'female', accent: 'american', description: 'Warm, friendly.' },
+  { voice_id: 'g5MIjCe0ngAFuTn3Mf4w', name: 'Michael', category: 'premade', language: 'en', gender: 'male', accent: 'american', description: 'Calm, professional.' },
+  { voice_id: 'j91pENnMwfYpERs1xk3q', name: 'Owen', category: 'premade', language: 'en', gender: 'male', accent: 'british', description: 'Deep, friendly.' },
+  { voice_id: 'mDTUuXeIxFnPcDAOSPXJ', name: 'Alice', category: 'premade', language: 'en', gender: 'female', accent: 'british', description: 'Warm, friendly.' },
+  { voice_id: 'pNzbT6wjAQTuBgsMhddi', name: 'Bill', category: 'premade', language: 'en', gender: 'male', accent: 'american', description: 'Deep, mature.' },
+];
+
 // ── Defaults ─────────────────────────────────────────────────────────────
 // Default provider is 'zai' — matches the pre-Build-2 behavior so existing
 // users don't get a surprise change. Once Kokoro is signed off as the
@@ -169,6 +249,10 @@ const DEFAULT_SETTINGS: VoiceSettings = {
   // American English female voice. Used only when provider='kokoro'.
   kokoroVoice: 'af_heart',
   kokoroLangCode: 'a',
+  // ElevenLabs default (per Section 0.4): Roger is the first premade voice —
+  // American English, middle-aged male, conversational. Used only when
+  // provider='elevenlabs'.
+  elevenlabsVoiceId: 'CwhRBWXzGAHq8TQ4Fs17',
 };
 
 // ── Module-level cache ───────────────────────────────────────────────────
@@ -248,10 +332,25 @@ export function getVoiceSettings(): VoiceSettings {
     }
   }
 
+  // Validate elevenlabsVoiceId against ELEVENLABS_VOICES if provider is 'elevenlabs'
+  let elevenlabsVoiceId = parsed.elevenlabsVoiceId ?? DEFAULT_SETTINGS.elevenlabsVoiceId;
+  if (provider === 'elevenlabs' && elevenlabsVoiceId) {
+    const knownVoice = ELEVENLABS_VOICES.find((v) => v.voice_id === elevenlabsVoiceId);
+    if (!knownVoice) {
+      console.warn(
+        `[voice:settings] unknown elevenlabs voice_id '${elevenlabsVoiceId}' in ${SETTINGS_PATH}. ` +
+        `Falling back to default ('${DEFAULT_SETTINGS.elevenlabsVoiceId}'). ` +
+        `Known voices: see ELEVENLABS_VOICES export.`
+      );
+      elevenlabsVoiceId = DEFAULT_SETTINGS.elevenlabsVoiceId;
+    }
+  }
+
   cachedSettings = {
     provider: provider ?? DEFAULT_SETTINGS.provider,
     kokoroVoice,
     kokoroLangCode,
+    elevenlabsVoiceId,
   };
   return cachedSettings;
 }
@@ -269,6 +368,7 @@ export function setVoiceSettings(patch: Partial<VoiceSettings>): VoiceSettings {
     provider: patch.provider ?? current.provider,
     kokoroVoice: patch.kokoroVoice ?? current.kokoroVoice,
     kokoroLangCode: patch.kokoroLangCode ?? current.kokoroLangCode,
+    elevenlabsVoiceId: patch.elevenlabsVoiceId ?? current.elevenlabsVoiceId,
   };
   try {
     const dir = dirname(SETTINGS_PATH);
@@ -324,6 +424,19 @@ export async function applyVoiceProvider(settings: VoiceSettings): Promise<void>
       // Note: sidecar spawns LAZILY on first speak() call — no preload here.
       // Per directive Section 0.2 decision: leave running on switch-away,
       // no teardown logic when switching away from Kokoro.
+      break;
+    }
+    case 'elevenlabs': {
+      const { ElevenLabsTTSProvider } = await import('../systems/voice/elevenlabs-provider.js');
+      setTTSProvider(
+        new ElevenLabsTTSProvider({
+          voiceId: settings.elevenlabsVoiceId,
+        })
+      );
+      console.log(
+        `[voice:settings] active TTS provider: elevenlabs (voiceId=${settings.elevenlabsVoiceId ?? 'CwhRBWXzGAHq8TQ4Fs17'})`
+      );
+      // No sidecar — pure cloud fetch. No teardown needed when switching away.
       break;
     }
     default: {

@@ -29,6 +29,9 @@ desktop.ini
 # Code Siren runtime
 server/backups/
 server/.biometric-templates/
+# Phase E: voice-settings.json + orchestrator-settings.json live here
+# (user preferences, not source code — regenerated on first use)
+server/.runtime/
 server/.env.local
 server/.env.*.local
 server/traces-export-*.json

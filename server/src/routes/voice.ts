@@ -32,8 +32,10 @@ import {
   getVoiceSettings,
   setVoiceSettings,
   applyVoiceProvider,
+  getVoiceProviders,
   VOICE_PROVIDERS,
   KOKORO_VOICES,
+  ELEVENLABS_VOICES,
 } from '../orchestrator/voice-settings.js';
 
 export const voiceRouter = Router();
@@ -166,17 +168,22 @@ voiceRouter.get('/health', requireAuth, (_req, res) => {
 // effect immediately without requiring a server restart.
 
 const voiceSettingsSchema = z.object({
-  provider: z.enum(['zai', 'kokoro']).optional(),
+  provider: z.enum(['zai', 'kokoro', 'elevenlabs']).optional(),
   kokoroVoice: z.string().optional(),
   kokoroLangCode: z.string().optional(),
+  elevenlabsVoiceId: z.string().optional(),
 });
 
 voiceRouter.get('/settings', requireAuth, (_req, res) => {
   const settings = getVoiceSettings();
+  // Use getVoiceProviders() (runtime-built) so availability reflects current
+  // process.env state — e.g. if ELEVENLABS_API_KEY was added to .env since
+  // server boot, it shows as available without a restart.
   res.json({
     settings,
-    voiceProviders: VOICE_PROVIDERS,
+    voiceProviders: getVoiceProviders(),
     kokoroVoices: KOKORO_VOICES,
+    elevenlabsVoices: ELEVENLABS_VOICES,
   });
 });
 
@@ -187,10 +194,13 @@ voiceRouter.post('/settings', requireAuth, async (req, res) => {
     return;
   }
 
-  // Validate provider against the allowed list
-  if (parsed.data.provider && !VOICE_PROVIDERS.find((p) => p.id === parsed.data.provider && p.available)) {
+  // Validate provider against the allowed list (runtime-built so availability
+  // is checked fresh)
+  const providers = getVoiceProviders();
+  if (parsed.data.provider && !providers.find((p) => p.id === parsed.data.provider && p.available)) {
+    const unavailable = providers.find((p) => p.id === parsed.data.provider);
     res.status(400).json({
-      error: `Invalid or unavailable provider. Allowed: ${VOICE_PROVIDERS.filter((p) => p.available).map((p) => p.id).join(', ')}`,
+      error: `Invalid or unavailable provider.${unavailable?.reason ? ' ' + unavailable.reason : ''} Allowed: ${providers.filter((p) => p.available).map((p) => p.id).join(', ')}`,
     });
     return;
   }
@@ -199,6 +209,14 @@ voiceRouter.post('/settings', requireAuth, async (req, res) => {
   if (parsed.data.kokoroVoice && !KOKORO_VOICES.find((v) => v.name === parsed.data.kokoroVoice)) {
     res.status(400).json({
       error: `Invalid kokoroVoice. See KOKORO_VOICES for the full list.`,
+    });
+    return;
+  }
+
+  // Validate elevenlabsVoiceId against ELEVENLABS_VOICES if being set
+  if (parsed.data.elevenlabsVoiceId && !ELEVENLABS_VOICES.find((v) => v.voice_id === parsed.data.elevenlabsVoiceId)) {
+    res.status(400).json({
+      error: `Invalid elevenlabsVoiceId. See ELEVENLABS_VOICES for the full list.`,
     });
     return;
   }
