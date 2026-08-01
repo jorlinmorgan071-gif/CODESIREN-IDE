@@ -1,0 +1,15 @@
+# Mediastack — News headlines
+# Fetches live news headlines by country/category.
+# Requires MEDIASTACK_KEY env var — key sent as ?access_key= query param.
+# Input: { "country": "us", "category": "technology" } → returns articles as JSON
+
+name = "mediastack-headlines"
+version = "0.1.0"
+description = "Fetch news headlines via Mediastack. Input: { \"country\": \"us\", \"category\": \"technology\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.mediastack.com/v1/news?countries={{country}}&categories={{category}}&limit=5", "method": "GET", "api_key_env": "MEDIASTACK_KEY", "api_key_placement": "query", "api_key_query_param": "access_key"}'
+output_key = "news"
