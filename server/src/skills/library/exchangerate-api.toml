@@ -1,0 +1,17 @@
+# ExchangeRate-API — Latest Rates (open access)
+# Fetches latest foreign exchange rates for a base currency.
+# No API key required — public open endpoint (open.er-api.com).
+# Free open tier: unlimited requests, daily-refreshed rates.
+# Pair conversion: derive rate from `rates[target]` (e.g. USD→EUR = rates["EUR"]).
+# Input: { "base": "USD" } → returns rates JSON for all currencies vs base
+
+name = "exchangerate-api-latest"
+version = "0.1.0"
+description = "Fetch latest currency exchange rates by base currency. Input: { \"base\": \"USD\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://open.er-api.com/v6/latest/{{base}}", "method": "GET"}'
+output_key = "rates"

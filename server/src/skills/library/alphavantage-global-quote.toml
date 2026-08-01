@@ -1,0 +1,16 @@
+# Alpha Vantage — GLOBAL_QUOTE
+# Fetches real-time quote snapshot for a stock symbol (price, change, volume, etc.).
+# Requires ALPHA_VANTAGE_KEY env var — key sent as `apikey` query param.
+# Free tier: 25 requests/day (per Alpha Vantage documentation).
+# Input: { "symbol": "IBM" } → returns global quote JSON
+
+name = "alphavantage-global-quote"
+version = "0.1.0"
+description = "Fetch real-time stock quote via Alpha Vantage. Input: { \"symbol\": \"IBM\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={{symbol}}", "method": "GET", "api_key_env": "ALPHA_VANTAGE_KEY", "api_key_placement": "query", "api_key_query_param": "apikey"}'
+output_key = "quote"

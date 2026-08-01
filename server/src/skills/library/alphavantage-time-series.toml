@@ -1,0 +1,16 @@
+# Alpha Vantage — TIME_SERIES_DAILY
+# Fetches daily OHLCV (open/high/low/close/volume) for a stock symbol.
+# Requires ALPHA_VANTAGE_KEY env var — key sent as `apikey` query param.
+# Free tier: 25 requests/day (per Alpha Vantage documentation).
+# Input: { "symbol": "IBM" } → returns daily time series JSON
+
+name = "alphavantage-time-series"
+version = "0.1.0"
+description = "Fetch daily OHLCV stock prices via Alpha Vantage. Input: { \"symbol\": \"IBM\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={{symbol}}&outputsize=compact", "method": "GET", "api_key_env": "ALPHA_VANTAGE_KEY", "api_key_placement": "query", "api_key_query_param": "apikey"}'
+output_key = "time_series"
