@@ -3,6 +3,20 @@
 # Requires ALPHA_VANTAGE_KEY env var — key sent as `apikey` query param.
 # Free tier: 25 requests/day (per Alpha Vantage documentation).
 # Input: { "symbol": "IBM" } → returns daily time series JSON
+#
+# ── Deviation note (Batch 7, post-sign-off correction) ─────────────────
+# Section 0 confirmed a single Alpha Vantage skill plan (GLOBAL_QUOTE only).
+# This second skill (TIME_SERIES_DAILY) was added beyond that plan and
+# explicitly confirmed by the user after the fact. Reasoning:
+#   - GLOBAL_QUOTE  → real-time snapshot (current price, change, volume)
+#   - TIME_SERIES_DAILY → historical OHLCV for trend analysis / charting
+# These are distinct use cases with different output shapes.
+#
+# CAVEAT — shared quota: both skills draw from the same 25-req/day
+# Alpha Vantage API key budget. A user running both skills daily will
+# exhaust the budget faster than running just one. The user controls
+# how the budget is spent; the skill does not auto-throttle.
+# ────────────────────────────────────────────────────────────────────────
 
 name = "alphavantage-time-series"
 version = "0.1.0"

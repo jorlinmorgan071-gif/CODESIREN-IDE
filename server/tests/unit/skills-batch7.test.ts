@@ -10,9 +10,7 @@
 // Skipped (documented in .env.example):
 //   - CurrencyFreaks  — redundant with ExchangeRate-API open tier (key required for same data)
 //   - Fixer           — redundant + free-tier restricted (100 req/month, EUR-only base)
-//                       NOTE: Section 0 confirmed Fixer's HTTPS works fine on the free tier.
-//                       The HTTP-only claim in the initial Batch 7 commit was incorrect and
-//                       is retracted in .env.example.
+//                       (Section 0 confirmed HTTPS works fine on the free tier.)
 //
 // Test design (per user directive):
 //   - Alpha Vantage tests: missing-key (real empty .env) + mocked success.
