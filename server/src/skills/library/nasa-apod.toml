@@ -1,0 +1,36 @@
+# NASA — APOD (Astronomy Picture of the Day)
+# Fetches the APOD for today (or a specified date).
+#
+# ── DEMO_KEY handling (Batch 8, per user-confirmed Option B) ────────────
+# This skill uses NASA's shared public DEMO_KEY, hardcoded in the URL.
+# It works out-of-the-box without any env var configuration.
+#
+# Rate limits (per NASA docs, current as of Batch 8):
+#   - DEMO_KEY: 30 requests per hour per IP, 50 requests per day per IP.
+#   - These limits are SHARED across all DEMO_KEY users everywhere — they
+#     are NOT private to this installation. Other Code Siren users, plus
+#     every other app using DEMO_KEY, all draw from the same pool.
+#   - Personal API key (free signup at https://api.nasa.gov): 1000 req/hour,
+#     no daily cap.
+#
+# To use a personal key for higher limits, manually edit the URL below to
+# replace DEMO_KEY with your key. The NASA_API_KEY env var slot in .env.example
+# is retained as documentation of this upgrade path but is NOT read by this
+# skill — overriding requires editing the TOML directly.
+#
+# Rate-limit responses are reported honestly (no silent retry), matching
+# the Jikan 429 pattern from Batch 2.
+# ────────────────────────────────────────────────────────────────────────
+#
+# Input: { "date": "2026-08-01" } (optional, defaults to today) → returns APOD JSON
+
+name = "nasa-apod"
+version = "0.1.0"
+description = "Fetch NASA Astronomy Picture of the Day (uses shared DEMO_KEY). Input: { \"date\": \"2026-08-01\" } (optional)"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY&date={{date}}", "method": "GET"}'
+output_key = "apod"

@@ -1,0 +1,31 @@
+# YouTube Data API v3 — Search
+# Fetches video search results for a query (read-only, no OAuth).
+#
+# ── Auth model (Batch 8, per Section 0 confirmation) ───────────────────
+# Auth: simple API key via `key` query param. NOT OAuth 2.0.
+# Read-only operations (search.list, videos.list, channels.list) work
+# with just an API key — no consent screen, no app verification, no user
+# consent flow. This is substantively simpler than the deferred YouTube
+# Analytics OAuth tier (Gmail, Dialogflow, YouTube Analytics).
+#
+# Key acquisition (one-time, manual):
+#   1. Create a GCP project at https://console.cloud.google.com/
+#   2. Enable "YouTube Data API v3"
+#   3. Create an API key credential (Credentials → Create credentials → API key)
+#   4. Set YOUTUBE_API_KEY in server/.env
+#
+# Free-tier quota: 10,000 units/day (a search.list call costs 100 units,
+# so ~100 searches/day). Subject to Google's standard quota policies.
+#
+# Input: { "query": "typescript tutorial" } → returns video search results JSON
+
+name = "youtube-search"
+version = "0.1.0"
+description = "Search YouTube videos via Data API v3. Input: { \"query\": \"typescript tutorial\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q={{query}}", "method": "GET", "api_key_env": "YOUTUBE_API_KEY", "api_key_placement": "query", "api_key_query_param": "key"}'
+output_key = "results"
