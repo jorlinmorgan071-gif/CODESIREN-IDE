@@ -1,0 +1,15 @@
+# TVmaze Show Search
+# Searches for TV shows via the TVmaze API.
+# No API key required — public API.
+# Input: { "query": "breaking bad" } → returns matching shows as JSON
+
+name = "tvmaze-search"
+version = "0.1.0"
+description = "Search TV shows via TVmaze. Input: { \"query\": \"breaking bad\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.tvmaze.com/search/shows?q={{query}}", "method": "GET"}'
+output_key = "results"

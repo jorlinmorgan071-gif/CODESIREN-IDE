@@ -1,0 +1,15 @@
+# Rick and Morty Character Lookup
+# Fetches Rick and Morty character data by ID.
+# No API key required — public API.
+# Input: { "id": "1" } → returns character data as JSON
+
+name = "rick-morty-character"
+version = "0.1.0"
+description = "Look up Rick and Morty character by ID. Input: { \"id\": \"1\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://rickandmortyapi.com/api/character/{{id}}", "method": "GET"}'
+output_key = "character"

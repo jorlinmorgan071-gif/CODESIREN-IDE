@@ -1,0 +1,15 @@
+# CoinGecko Crypto Price
+# Fetches the current price of a cryptocurrency in a specified currency.
+# No API key required — free tier includes /simple/price endpoint.
+# Input: { "coin": "bitcoin", "currency": "usd" } → returns price as JSON
+
+name = "coingecko-price"
+version = "0.1.0"
+description = "Get cryptocurrency price via CoinGecko. Input: { \"coin\": \"bitcoin\", \"currency\": \"usd\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.coingecko.com/api/v3/simple/price?ids={{coin}}&vs_currencies={{currency}}", "method": "GET"}'
+output_key = "price"

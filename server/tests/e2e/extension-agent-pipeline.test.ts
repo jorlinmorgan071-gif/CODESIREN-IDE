@@ -47,15 +47,19 @@ describe('Phase D Batch 1 — End-to-End Pipeline (ExtensionAgent.invoke)', () =
     expect(result.action).toBe('list');
     const skills = result.data as Array<{ name: string }>;
     const names = skills.map(s => s.name).sort();
-    // These names come directly from the `name = "..."` field of each .toml
-    // in src/skills/library/. If a TOML changes its name, this list must update.
-    expect(names).toEqual([
-      'hacker-news-top',
-      'numbers-api',
-      'open-meteo-weather',
-      'rest-countries',
-      'wikipedia-summary',
-    ]);
+    // These names come from the `name = "..."` field of each .toml
+    // in src/skills/library/. Batch 1 had 5 skills, Batch 2 added 11 more (16 total).
+    // Verify Batch 1's 5 are still present (don't hard-code the full 16 —
+    // future batches will add more).
+    expect(names).toContain('hacker-news-top');
+    expect(names).toContain('numbers-api');
+    expect(names).toContain('open-meteo-weather');
+    expect(names).toContain('rest-countries');
+    expect(names).toContain('wikipedia-summary');
+    // Batch 2 skills should also be present
+    expect(names).toContain('cat-facts');
+    expect(names).toContain('coingecko-price');
+    expect(names.length).toBeGreaterThanOrEqual(15); // 5 Batch 1 + 10 Batch 2 = 15 minimum
   });
 
   // ── LIVE NETWORK TESTS ───────────────────────────────────────────────

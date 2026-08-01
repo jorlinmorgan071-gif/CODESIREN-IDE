@@ -1,0 +1,16 @@
+# Jikan Anime Search (MyAnimeList)
+# Searches for anime via the Jikan API (unofficial MyAnimeList API).
+# No API key required — but has a documented rate limit of 3 req/s.
+# Rate-limited responses (429) are reported honestly, not retried or faked.
+# Input: { "query": "naruto" } → returns matching anime as JSON
+
+name = "jikan-anime-search"
+version = "0.1.0"
+description = "Search anime via Jikan/MyAnimeList. Input: { \"query\": \"naruto\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.jikan.moe/v4/anime?q={{query}}&limit=3", "method": "GET"}'
+output_key = "results"

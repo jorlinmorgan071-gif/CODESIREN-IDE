@@ -1,0 +1,15 @@
+# Bored API (unofficial — service currently down, starts working when it recovers)
+# Fetches a random activity suggestion.
+# No API key required — public API.
+# Input: {} → returns a random activity as JSON
+
+name = "bored-activity"
+version = "0.1.0"
+description = "Get a random activity suggestion. No input required."
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://www.boredapi.com/api/activity", "method": "GET"}'
+output_key = "activity"

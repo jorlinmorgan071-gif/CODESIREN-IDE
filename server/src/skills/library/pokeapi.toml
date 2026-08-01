@@ -1,0 +1,15 @@
+# PokeAPI Pokemon Lookup
+# Fetches Pokemon data by name or ID.
+# No API key required — public API.
+# Input: { "pokemon": "pikachu" } → returns Pokemon data as JSON
+
+name = "pokeapi-pokemon"
+version = "0.1.0"
+description = "Look up Pokemon data by name. Input: { \"pokemon\": \"pikachu\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://pokeapi.co/api/v2/pokemon/{{pokemon}}", "method": "GET"}'
+output_key = "pokemon"

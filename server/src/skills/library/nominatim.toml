@@ -1,0 +1,16 @@
+# Nominatim Geocoding (OpenStreetMap)
+# Geocodes a location query using OpenStreetMap's Nominatim service.
+# No API key required — but REQUIRES a descriptive User-Agent header per
+# the Nominatim Usage Policy (https://operations.osmfoundation.org/policies/nominatim/).
+# Input: { "query": "Eiffel Tower" } → returns geocoded results as JSON
+
+name = "nominatim-geocode"
+version = "0.1.0"
+description = "Geocode a location query via OpenStreetMap Nominatim. Input: { \"query\": \"Eiffel Tower\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://nominatim.openstreetmap.org/search?q={{query}}&format=json&limit=3", "method": "GET", "headers": {"User-Agent": "CodeSiren-IDE/1.0 (development)"}}'
+output_key = "results"

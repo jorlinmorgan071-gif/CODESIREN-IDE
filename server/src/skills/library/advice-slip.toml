@@ -1,0 +1,15 @@
+# Advice Slip
+# Fetches a random piece of advice.
+# No API key required — public API.
+# Input: {} → returns a random advice as JSON
+
+name = "advice-slip"
+version = "0.1.0"
+description = "Get a random piece of advice. No input required."
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.adviceslip.com/advice", "method": "GET"}'
+output_key = "advice"

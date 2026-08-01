@@ -1,0 +1,15 @@
+# Wikidata Entity Search
+# Searches Wikidata for entities matching a query.
+# No API key required — public MediaWiki API.
+# Input: { "query": "TypeScript" } → returns matching entities as JSON
+
+name = "wikidata-search"
+version = "0.1.0"
+description = "Search Wikidata entities by query. Input: { \"query\": \"TypeScript\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://www.wikidata.org/w/api.php?action=wbsearchentities&search={{query}}&language=en&format=json&limit=3", "method": "GET"}'
+output_key = "results"

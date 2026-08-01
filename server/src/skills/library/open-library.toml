@@ -1,0 +1,15 @@
+# Open Library Book Search
+# Searches Open Library for books matching a query.
+# No API key required — public API.
+# Input: { "query": "lord of the rings" } → returns matching books as JSON
+
+name = "open-library-search"
+version = "0.1.0"
+description = "Search Open Library books by query. Input: { \"query\": \"lord of the rings\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://openlibrary.org/search.json?q={{query}}&limit=3", "method": "GET"}'
+output_key = "results"
