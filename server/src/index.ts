@@ -108,14 +108,23 @@ async function main() {
   // 3. Start Ghost Mode in approval-required mode (PDF Section 16 default)
   ghostMode.setLevel('approval-required');
 
-  // 3b. Initialize TTS provider — ZaiTTSProvider for this phase.
-  // KokoroTTSProvider will replace it in a later phase (same interface).
+  // 3b. Initialize TTS provider from saved voice settings (Phase E Build 2).
+  //
+  // Reads server/.runtime/voice-settings.json (or default 'zai' if missing),
+  // validates the provider id, and instantiates the correct TTSProvider via
+  // applyVoiceProvider(). Fixes the orchestrator-engine boot quirk (where the
+  // saved engine setting is NOT applied at boot — only on later POST) by
+  // applying the saved voice setting AT BOOT here.
+  //
+  // On any failure (missing file, invalid provider, instantiation error),
+  // falls back to the module-load default (StubTTSProvider) with a visible
+  // warning — no silent fallback, no crash.
   try {
-    const { ZaiTTSProvider, setTTSProvider } = await import('./systems/voice/tts-provider.js');
-    setTTSProvider(new ZaiTTSProvider());
-    console.log('[server] TTS provider: zai (Kokoro will replace in a later phase)');
+    const { getVoiceSettings, applyVoiceProvider } = await import('./orchestrator/voice-settings.js');
+    const settings = getVoiceSettings();
+    await applyVoiceProvider(settings);
   } catch (err: any) {
-    console.warn(`[server] ZaiTTSProvider init failed (${err.message}), using stub TTS`);
+    console.warn(`[server] voice settings init failed (${err.message}), using stub TTS`);
   }
   ghostMode.start();
 

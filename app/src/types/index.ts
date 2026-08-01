@@ -251,6 +251,32 @@ export interface OrchestratorSettings {
   tier1Model: string;
 }
 
+// Phase E Build 2: Voice provider settings — mirrors server-side VoiceSettings
+// in server/src/orchestrator/voice-settings.ts. Extensible for Chatterbox/ElevenLabs.
+export type VoiceProviderId = 'zai' | 'kokoro';
+
+export interface VoiceSettings {
+  provider: VoiceProviderId;
+  kokoroVoice?: string;
+  kokoroLangCode?: string;
+}
+
+export interface VoiceProviderOption {
+  id: VoiceProviderId;
+  label: string;
+  desc?: string;
+  available: boolean;
+  reason?: string;
+}
+
+export interface KokoroVoiceOption {
+  name: string;
+  langCode: string;
+  langLabel: string;
+  gender: 'female' | 'male';
+  grade?: string;
+}
+
 export type MilestoneLogStatus = 'running' | 'approved' | 'rejected' | 'corrected' | 'failed';
 
 export interface OrchestratorDecision {

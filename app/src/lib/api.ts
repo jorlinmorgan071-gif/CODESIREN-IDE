@@ -10,6 +10,9 @@ import type {
   OrchestratorPlanStatus,
   OrchestratorPlanSummary,
   OrchestratorSettings,
+  VoiceSettings,
+  VoiceProviderOption,
+  KokoroVoiceOption,
 } from '@/types';
 import { getToken, clearAuth } from './auth';
 
@@ -229,5 +232,26 @@ export const api = {
     tier1Models: Array<{ id: string; label: string; desc?: string }>;
   }> {
     return request('/orchestrator/settings');
+  },
+
+  // ── Phase E Build 2: Voice provider settings ───────────────────────────
+  // Mirrors getOrchestratorSettings/setOrchestratorSettings pattern.
+
+  // Get voice settings + available providers + Kokoro voice catalog.
+  getVoiceSettings(): Promise<{
+    settings: VoiceSettings;
+    voiceProviders: VoiceProviderOption[];
+    kokoroVoices: KokoroVoiceOption[];
+  }> {
+    return request('/voice/settings');
+  },
+
+  // Update voice settings (provider + optional kokoro voice/langCode).
+  // POST both persists AND applies the change at runtime via applyVoiceProvider().
+  setVoiceSettings(body: Partial<VoiceSettings>): Promise<{ settings: VoiceSettings }> {
+    return request('/voice/settings', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
   },
 };

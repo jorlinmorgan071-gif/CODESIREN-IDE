@@ -2,7 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import { useState, useEffect } from 'react';
 import { useApp } from '@/store/AppContext';
 import { motion, AnimatePresence } from 'motion/react';
-import type { ThemeName } from '@/types';
+import type { ThemeName, VoiceSettings, VoiceProviderOption, KokoroVoiceOption } from '@/types';
 import { themes } from '@/store/themes';
 import { api } from '@/lib/api';
 import {
@@ -13,6 +13,7 @@ import {
   Puzzle,
   Shield,
   Rocket,
+  Mic,
   ToggleLeft,
   ToggleRight,
   RefreshCw,
@@ -22,10 +23,11 @@ import {
   Bot,
 } from 'lucide-react';
 
-type SettingsTab = 'models' | 'themes' | 'extensions' | 'security' | 'deployment';
+type SettingsTab = 'models' | 'voice' | 'themes' | 'extensions' | 'security' | 'deployment';
 
 const settingsTabs: { id: SettingsTab; label: string; icon: LucideIcon }[] = [
   { id: 'models', label: 'Model Router', icon: Cpu },
+  { id: 'voice', label: 'Voice', icon: Mic },
   { id: 'themes', label: 'Themes', icon: Palette },
   { id: 'extensions', label: 'Extensions', icon: Puzzle },
   { id: 'security', label: 'Security', icon: Shield },
@@ -207,6 +209,60 @@ export function SettingsModal() {
       console.warn('[settings] orchestrator tier1 model set failed:', err);
     } finally {
       setOrchLoading(false);
+    }
+  };
+
+  // ── Voice provider settings state (Phase E Build 2) ────────────────────
+  // Mirrors the orchestrator settings state pattern above. Loads when the
+  // Voice tab opens, persists on change via api.setVoiceSettings (which
+  // both saves AND applies the runtime swap server-side).
+  const [voiceSettings, setVoiceSettingsState] = useState<VoiceSettings | null>(null);
+  const [voiceProviders, setVoiceProviders] = useState<VoiceProviderOption[]>([]);
+  const [kokoroVoices, setKokoroVoices] = useState<KokoroVoiceOption[]>([]);
+  const [voiceLoading, setVoiceLoading] = useState(false);
+
+  useEffect(() => {
+    if (state.settingsVisible && activeTab === 'voice') {
+      api.getVoiceSettings()
+        .then((res) => {
+          setVoiceSettingsState(res.settings);
+          setVoiceProviders(res.voiceProviders);
+          setKokoroVoices(res.kokoroVoices);
+        })
+        .catch((err) => console.warn('[settings] voice load failed:', err));
+    }
+  }, [state.settingsVisible, activeTab]);
+
+  const setVoiceProvider = async (provider: 'zai' | 'kokoro') => {
+    setVoiceLoading(true);
+    try {
+      const res = await api.setVoiceSettings({ provider });
+      setVoiceSettingsState(res.settings);
+    } catch (err) {
+      console.warn('[settings] voice provider set failed:', err);
+    } finally {
+      setVoiceLoading(false);
+    }
+  };
+
+  const setKokoroVoice = async (voiceName: string) => {
+    setVoiceLoading(true);
+    try {
+      // Find the voice in the catalog to get its langCode
+      const voice = kokoroVoices.find((v) => v.name === voiceName);
+      if (!voice) {
+        console.warn('[settings] unknown kokoro voice:', voiceName);
+        return;
+      }
+      const res = await api.setVoiceSettings({
+        kokoroVoice: voice.name,
+        kokoroLangCode: voice.langCode,
+      });
+      setVoiceSettingsState(res.settings);
+    } catch (err) {
+      console.warn('[settings] kokoro voice set failed:', err);
+    } finally {
+      setVoiceLoading(false);
     }
   };
 
@@ -621,6 +677,128 @@ export function SettingsModal() {
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Voice — Phase E Build 2: TTS provider picker + Kokoro voice picker */}
+              {activeTab === 'voice' && (
+                <div className="space-y-5">
+                  {/* Provider picker */}
+                  <div>
+                    <h3 className="text-[12px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--steel-silver)' }}>
+                      TTS Provider
+                    </h3>
+                    <div className="space-y-1">
+                      {voiceProviders.map((p) => (
+                        <button
+                          key={p.id}
+                          disabled={!p.available || voiceLoading}
+                          onClick={() => setVoiceProvider(p.id)}
+                          className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors hover:bg-white/5 text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{
+                            backgroundColor: voiceSettings?.provider === p.id ? 'rgba(238, 28, 28, 0.08)' : 'var(--surface-dark)',
+                            border: '1px solid var(--border-subtle)',
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Mic className="w-3.5 h-3.5" style={{ color: 'var(--siren-red)' }} />
+                            <div>
+                              <div className="text-[12px]" style={{ color: 'var(--bright-silver)' }}>
+                                {p.label}
+                              </div>
+                              {p.desc && (
+                                <div className="text-[10px] mt-0.5" style={{ color: 'var(--muted-silver)' }}>
+                                  {p.desc}
+                                </div>
+                              )}
+                              {!p.available && p.reason && (
+                                <div className="text-[10px] mt-0.5" style={{ color: 'var(--siren-red)' }}>
+                                  {p.reason}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          {voiceSettings?.provider === p.id && (
+                            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--siren-red)' }} />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Kokoro voice picker — only shown when Kokoro is the active provider */}
+                  {voiceSettings?.provider === 'kokoro' && (
+                    <div>
+                      <h3 className="text-[12px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--steel-silver)' }}>
+                        Kokoro Voice
+                      </h3>
+                      <p className="text-[10px] mb-2" style={{ color: 'var(--muted-silver)' }}>
+                        54 voices across 9 languages. Grade reflects training data quality and quantity (per hexgrad/Kokoro-82M VOICES.md).
+                      </p>
+                      <div
+                        className="max-h-[400px] overflow-y-auto rounded-lg p-2"
+                        style={{ backgroundColor: 'var(--surface-dark)', border: '1px solid var(--border-subtle)' }}
+                      >
+                        {Object.entries(
+                          // Group voices by language label
+                          kokoroVoices.reduce((acc, v) => {
+                            (acc[v.langLabel] ??= []).push(v);
+                            return acc;
+                          }, {} as Record<string, typeof kokoroVoices>)
+                        ).map(([langLabel, voices]) => (
+                          <div key={langLabel} className="mb-3 last:mb-0">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider mb-1 px-1" style={{ color: 'var(--steel-silver)' }}>
+                              {langLabel}
+                            </div>
+                            <div className="space-y-0.5">
+                              {voices.map((v) => (
+                                <button
+                                  key={v.name}
+                                  disabled={voiceLoading}
+                                  onClick={() => setKokoroVoice(v.name)}
+                                  className="w-full flex items-center justify-between px-2 py-1.5 rounded transition-colors hover:bg-white/5 text-left disabled:opacity-50"
+                                  style={{
+                                    backgroundColor: voiceSettings?.kokoroVoice === v.name ? 'rgba(238, 28, 28, 0.08)' : 'transparent',
+                                  }}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px]" style={{ color: 'var(--bright-silver)' }}>
+                                      {v.name}
+                                    </span>
+                                    <span className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
+                                      {v.gender === 'female' ? '♀' : '♂'}
+                                    </span>
+                                    {v.grade && (
+                                      <span
+                                        className="text-[9px] px-1 rounded"
+                                        style={{
+                                          color: v.grade.startsWith('A') ? '#22C55E' : v.grade.startsWith('B') ? '#EAB308' : 'var(--muted-silver)',
+                                          backgroundColor: 'rgba(255,255,255,0.05)',
+                                        }}
+                                      >
+                                        {v.grade}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {voiceSettings?.kokoroVoice === v.name && (
+                                    <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--siren-red)' }} />
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Loading indicator */}
+                  {voiceLoading && (
+                    <div className="text-[10px] flex items-center gap-2" style={{ color: 'var(--muted-silver)' }}>
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      Applying...
+                    </div>
+                  )}
                 </div>
               )}
 

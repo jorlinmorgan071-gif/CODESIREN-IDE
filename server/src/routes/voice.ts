@@ -3,6 +3,8 @@
 //   POST /api/voice/start         start a voice session
 //   POST /api/voice/stop          stop a voice session
 //   POST /api/voice/transcript    submit a voice transcript → AgentManager.send()
+//   GET  /api/voice/settings      get voice provider settings + available providers + voices
+//   POST /api/voice/settings      update voice provider settings (runtime swap + persist)
 //
 // Per directive Section 7: "A spoken command and a typed command must resolve
 // to the SAME AgentTask shape and travel through the SAME AgentManager.send()
@@ -13,6 +15,11 @@
 // (agentId, type, executionMode, context, priority) is identical. The task
 // goes through the same AgentManager.send() → same agent:chunk WS events →
 // same trace recorder.
+//
+// Phase E Build 2: added /settings routes mirroring /api/orchestrator/settings.
+// POST /settings both persists AND applies the change at runtime via
+// applyVoiceProvider(next), so the swap takes effect immediately without
+// requiring a server restart.
 
 import { Router } from 'express';
 import { z } from 'zod';
@@ -21,6 +28,13 @@ import { requireAuth } from '../auth/middleware.js';
 import { getVoiceClient } from '../systems/voice/voice-client.js';
 import { agentManager } from '../orchestration/agent-manager.js';
 import type { AgentTask } from '../types.js';
+import {
+  getVoiceSettings,
+  setVoiceSettings,
+  applyVoiceProvider,
+  VOICE_PROVIDERS,
+  KOKORO_VOICES,
+} from '../orchestrator/voice-settings.js';
 
 export const voiceRouter = Router();
 
@@ -144,4 +158,67 @@ voiceRouter.get('/health', requireAuth, (_req, res) => {
   res.json({
     voiceClient: { implementation: getVoiceClient().implementation },
   });
+});
+
+// ── Phase E Build 2: Voice provider settings ─────────────────────────────
+// Mirrors routes/orchestrator.ts:280-322. POST both persists AND applies
+// the change at runtime via applyVoiceProvider(next), so the swap takes
+// effect immediately without requiring a server restart.
+
+const voiceSettingsSchema = z.object({
+  provider: z.enum(['zai', 'kokoro']).optional(),
+  kokoroVoice: z.string().optional(),
+  kokoroLangCode: z.string().optional(),
+});
+
+voiceRouter.get('/settings', requireAuth, (_req, res) => {
+  const settings = getVoiceSettings();
+  res.json({
+    settings,
+    voiceProviders: VOICE_PROVIDERS,
+    kokoroVoices: KOKORO_VOICES,
+  });
+});
+
+voiceRouter.post('/settings', requireAuth, async (req, res) => {
+  const parsed = voiceSettingsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
+
+  // Validate provider against the allowed list
+  if (parsed.data.provider && !VOICE_PROVIDERS.find((p) => p.id === parsed.data.provider && p.available)) {
+    res.status(400).json({
+      error: `Invalid or unavailable provider. Allowed: ${VOICE_PROVIDERS.filter((p) => p.available).map((p) => p.id).join(', ')}`,
+    });
+    return;
+  }
+
+  // Validate kokoroVoice against KOKORO_VOICES if provider is 'kokoro' and voice is being set
+  if (parsed.data.kokoroVoice && !KOKORO_VOICES.find((v) => v.name === parsed.data.kokoroVoice)) {
+    res.status(400).json({
+      error: `Invalid kokoroVoice. See KOKORO_VOICES for the full list.`,
+    });
+    return;
+  }
+
+  // Persist the patch
+  const next = setVoiceSettings(parsed.data);
+
+  // Apply the runtime swap immediately. If this throws (e.g. ZaiTTSProvider
+  // construction fails due to missing z-ai SDK), surface as 500 — don't
+  // pretend the swap succeeded.
+  try {
+    await applyVoiceProvider(next);
+  } catch (err: any) {
+    console.error(`[voice:settings] applyVoiceProvider failed after persist: ${err.message}`);
+    res.status(500).json({
+      error: `Settings saved but provider swap failed: ${err.message}. The setting will take effect on next server restart.`,
+      settings: next,
+    });
+    return;
+  }
+
+  res.json({ settings: next });
 });
