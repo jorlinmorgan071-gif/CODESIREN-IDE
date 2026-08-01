@@ -1,0 +1,15 @@
+# GIPHY GIF Search
+# Searches for GIFs by query via the GIPHY API.
+# Requires GIPHY_API_KEY env var — key sent as api_key query param.
+# Input: { "query": "cats" } → returns matching GIFs as JSON
+
+name = "giphy-gif-search"
+version = "0.1.0"
+description = "Search GIFs via GIPHY. Input: { \"query\": \"cats\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.giphy.com/v1/gifs/search?q={{query}}&limit=5", "method": "GET", "api_key_env": "GIPHY_API_KEY", "api_key_placement": "query", "api_key_query_param": "api_key"}'
+output_key = "gifs"

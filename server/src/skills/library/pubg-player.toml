@@ -1,0 +1,17 @@
+# PUBG Player Lookup
+# Fetches player data by in-game name from the PUBG API.
+# Requires PUBG_API_KEY env var — key sent as Authorization: Bearer <key> header.
+# Also requires Accept: application/vnd.api+json header (PUBG API convention).
+# Uses the steam shard (PC platform) by default — most common.
+# Input: { "playerName": "player_name" } → returns player data as JSON
+
+name = "pubg-player-lookup"
+version = "0.1.0"
+description = "Look up PUBG player by name. Input: { \"playerName\": \"player_name\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.pubg.com/shards/steam/players?filter[playerNames]={{playerName}}", "method": "GET", "headers": {"Accept": "application/vnd.api+json"}, "api_key_env": "PUBG_API_KEY", "api_key_placement": "header", "api_key_header_name": "Authorization", "api_key_prefix": "Bearer "}'
+output_key = "player"

@@ -1,0 +1,15 @@
+# OMDb Title Search
+# Searches for movies/series by title via the Open Movie Database.
+# Requires OMDB_API_KEY env var — key sent as apikey query param.
+# Input: { "query": "Inception" } → returns matching titles as JSON
+
+name = "omdb-title-search"
+version = "0.1.0"
+description = "Search titles via OMDb. Input: { \"query\": \"Inception\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "http://www.omdbapi.com/?s={{query}}", "method": "GET", "api_key_env": "OMDB_API_KEY", "api_key_placement": "query", "api_key_query_param": "apikey"}'
+output_key = "results"

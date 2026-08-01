@@ -1,0 +1,15 @@
+# RAWG Game Search
+# Searches for video games by title via the RAWG API.
+# Requires RAWG_API_KEY env var — key sent as key query param.
+# Input: { "query": "Super Mario" } → returns matching games as JSON
+
+name = "rawg-game-search"
+version = "0.1.0"
+description = "Search video games via RAWG. Input: { \"query\": \"Super Mario\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.rawg.io/api/games?search={{query}}&page_size=5", "method": "GET", "api_key_env": "RAWG_API_KEY", "api_key_placement": "query", "api_key_query_param": "key"}'
+output_key = "games"

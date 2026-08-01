@@ -1,0 +1,15 @@
+# TMDb Movie Search
+# Searches for movies by title via The Movie Database API.
+# Requires TMDB_API_KEY env var — key sent as api_key query param (v3 API).
+# Input: { "query": "Inception" } → returns matching movies as JSON
+
+name = "tmdb-movie-search"
+version = "0.1.0"
+description = "Search movies via TMDb. Input: { \"query\": \"Inception\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.themoviedb.org/3/search/movie?api_key={{api_key_placeholder}}&query={{query}}", "method": "GET", "api_key_env": "TMDB_API_KEY", "api_key_placement": "query", "api_key_query_param": "api_key"}'
+output_key = "movies"
