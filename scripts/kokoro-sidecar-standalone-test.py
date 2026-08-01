@@ -46,11 +46,10 @@ def main():
     )
     print(f"Spawned pid={proc.pid}")
 
-    # First line is the "ready" announcement
-    ready_line = proc.stdout.readline()
-    print(f"Ready announcement: {ready_line.strip()}")
+    # No "ready" announcement line — sidecar just enters its stdin read loop
+    # (matches build123d/kasa pattern). We confirm it's alive by sending a ping.
     t1 = time.time()
-    print(f"Sidecar startup took {t1 - t0:.2f}s (model NOT loaded yet — lazy)")
+    print(f"Sidecar spawned in {t1 - t0:.2f}s (entered stdin read loop, model NOT loaded yet — lazy)")
 
     # ─── Test 1: ping (model not loaded yet) ────────────────────────────
     print()

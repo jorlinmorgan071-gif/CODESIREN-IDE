@@ -195,8 +195,11 @@ def main():
     signal.signal(signal.SIGTERM, die_fast)
     signal.signal(signal.SIGINT, die_fast)
 
-    # Mark sidecar as ready (Node reads this line to know we're listening)
-    print(json.dumps({"ok": True, "event": "ready", "implementation": "kokoro"}), flush=True)
+    # NOTE: No "ready" announcement line — matches the build123d and kasa
+    # sidecar pattern. SidecarManager doesn't wait for a ready line; it just
+    # spawns and trusts the process is alive. Emitting an unsolicited JSON
+    # line at startup would be parsed as an orphan response (id=undefined,
+    # no matching pending request) and logged as a warning.
 
     # Read JSON requests line-by-line from stdin
     for line in sys.stdin:
