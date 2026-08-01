@@ -1,0 +1,17 @@
+# OpenRouteService Driving Directions
+# Gets driving directions between two coordinate points.
+# Requires OPENROUTESERVICE_KEY env var — key sent as Authorization header (raw, NO Bearer prefix).
+# Free tier: 2,000 requests/day for routing.
+# Input: { "startLon": "8.681495", "startLat": "49.414599", "endLon": "8.687872", "endLat": "49.420318" }
+# → returns route data as JSON
+
+name = "ors-driving-directions"
+version = "0.1.0"
+description = "Get driving directions between two points via OpenRouteService. Input: { \"startLon\": \"8.68\", \"startLat\": \"49.41\", \"endLon\": \"8.68\", \"endLat\": \"49.42\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.openrouteservice.org/v2/directions/driving-car?start={{startLon}},{{startLat}}&end={{endLon}},{{endLat}}", "method": "GET", "api_key_env": "OPENROUTESERVICE_KEY", "api_key_placement": "header", "api_key_header_name": "Authorization"}'
+output_key = "route"
