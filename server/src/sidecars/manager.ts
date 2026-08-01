@@ -342,3 +342,34 @@ export function ensureBuild123dSidecar(): void {
 }
 
 export const STL_OUTPUT_DIR = join(__dirname, '..', '..', '..', '.stl-out');
+
+// ── Kokoro TTS sidecar helper ────────────────────────────────────────────
+// Phase E Build 1: lazy-spawned on first KokoroTTSProvider.speak() call.
+// Same lifecycle contract as build123d — SidecarManager owns the process,
+// kills it on Node shutdown, surfaces crashes as SidecarCrashedError.
+//
+// The Kokoro sidecar uses a dedicated Python venv at server/sidecars/kokoro/venv/
+// (NOT committed — see .gitignore) because it needs torch + kokoro + transformers,
+// which are NOT in the system Python. The venv path is configurable via
+// KOKORO_VENV env var for non-standard installs.
+
+const KOKORO_SIDECAR_DIR = join(__dirname, '..', '..', 'sidecars', 'kokoro');
+const KOKORO_SIDECAR_SCRIPT = join(KOKORO_SIDECAR_DIR, 'sidecar.py');
+const DEFAULT_KOKORO_VENV_PYTHON = join(KOKORO_SIDECAR_DIR, 'venv', 'bin', 'python');
+
+export function ensureKokoroSidecar(): void {
+  if (sidecarManager.isRunning('kokoro')) return;
+  sidecarManager.removeDead('kokoro');
+  if (!existsSync(KOKORO_SIDECAR_SCRIPT)) {
+    throw new Error(`Kokoro sidecar script not found at ${KOKORO_SIDECAR_SCRIPT}`);
+  }
+  // Use the venv's Python if it exists, else fall back to system Python
+  // (system Python won't have torch/kokoro installed, but the error will
+  // surface honestly on first /tts call rather than at spawn time).
+  const pythonBin = existsSync(DEFAULT_KOKORO_VENV_PYTHON)
+    ? DEFAULT_KOKORO_VENV_PYTHON
+    : (process.env.KOKORO_VENV_PYTHON ?? process.env.PYTHON3 ?? 'python3');
+  sidecarManager.spawn('kokoro', pythonBin, [KOKORO_SIDECAR_SCRIPT], {
+    cwd: KOKORO_SIDECAR_DIR,
+  });
+}

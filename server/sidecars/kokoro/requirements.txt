@@ -1,0 +1,24 @@
+# Kokoro TTS sidecar — Python dependencies
+#
+# Pinned to versions verified working in Phase E Section 0.1.
+# Install into a venv at server/sidecars/kokoro/venv/ (NEVER commit the venv —
+# see .gitignore). The Node-side KokoroTTSProvider spawns this sidecar lazily
+# on first .speak() call and reuses it for subsequent calls.
+#
+# Install:
+#   cd server/sidecars/kokoro
+#   python3 -m venv venv
+#   source venv/bin/activate
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch
+#   pip install -r requirements.txt
+#
+# Total venv size: ~1.4 GB (torch CPU wheel + transformers + kokoro + deps).
+# Model weights (~312 MB) download on first /tts call to model-cache/.
+
+kokoro==0.9.4
+misaki[en]>=0.9.4
+huggingface-hub
+numpy
+loguru
+transformers
+# torch is installed separately from the CPU-only wheel index above

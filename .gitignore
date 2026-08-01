@@ -48,3 +48,16 @@ gcode-out/
 .z-ai-config
 **/.z-ai-config
 server/dist/
+
+# Phase E Kokoro sidecar — Python venv + model cache must NEVER be committed
+# (learned from the accidental 1.4GB venv commit earlier this session).
+# Only source files (sidecar.py + requirements.txt) should be tracked under
+# server/sidecars/kokoro/. Everything else is regenerated on first run.
+server/sidecars/kokoro/venv/
+server/sidecars/kokoro/.venv/
+server/sidecars/kokoro/model-cache/
+server/sidecars/kokoro/__pycache__/
+server/sidecars/kokoro/**/*.pyc
+server/sidecars/kokoro/*.wav
+server/sidecars/kokoro/*.pth
+
