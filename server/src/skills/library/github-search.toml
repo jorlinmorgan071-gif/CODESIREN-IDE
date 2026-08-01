@@ -1,0 +1,16 @@
+# GitHub Repository Search
+# Searches GitHub repositories by query.
+# GITHUB_TOKEN env var is OPTIONAL — public endpoints work without it (60 req/hour rate limit).
+# With a token: 5000 req/hour. Token is sent as Authorization: Bearer <token> header.
+# Input: { "query": "code siren" } → returns matching repositories as JSON
+
+name = "github-repo-search"
+version = "0.1.0"
+description = "Search GitHub repositories by query. Input: { \"query\": \"code siren\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://api.github.com/search/repositories?q={{query}}&per_page=5", "method": "GET", "api_key_env": "GITHUB_TOKEN", "api_key_placement": "header", "api_key_header_name": "Authorization", "api_key_prefix": "Bearer "}'
+output_key = "repos"

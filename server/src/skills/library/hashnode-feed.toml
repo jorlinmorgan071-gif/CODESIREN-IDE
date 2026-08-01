@@ -1,0 +1,18 @@
+# Hashnode Featured Feed
+# Fetches featured posts from Hashnode via their GraphQL API.
+# Requires POST with a GraphQL query body — uses http_request's body parameter.
+# HASHNODE_TOKEN env var is optional — public feed works without it.
+# Note: Hashnode's GraphQL endpoint has been intermittently unavailable (522 timeouts).
+# The skill will work when the endpoint is reachable; failures are reported honestly.
+# Input: {} → returns featured posts as JSON
+
+name = "hashnode-feed"
+version = "0.1.0"
+description = "Fetch featured posts from Hashnode. No input required."
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://gql.hashnode.com/graphql", "method": "POST", "headers": {"Content-Type": "application/json"}, "body": {"query": "query { feed(type: FEATURED, page: 0) { title slug author { name } } }"}}'
+output_key = "feed"

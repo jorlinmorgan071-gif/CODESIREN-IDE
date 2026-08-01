@@ -125,11 +125,13 @@ toolRegistry.register({
 //   api_key_placement: string (optional) — "header" (default) or "query"
 //   api_key_header_name: string (optional) — header name for the key (default "X-Api-Key")
 //   api_key_query_param: string (optional) — query param name for the key (default "apikey")
+//   api_key_prefix: string (optional) — prepended to header value before injection (e.g. "Bearer ")
+//   body:          object (optional) — JSON body for POST requests (JSON-stringified, passed to fetch only when present)
 //   timeout_ms:    number (default 10000) — request timeout in milliseconds
 
 toolRegistry.register({
   name: 'http_request',
-  description: 'Make an HTTP request to an external API. Args: { "url": "...", "method": "GET", "headers": {...}, "api_key_env": "NEWSAPI_KEY", "api_key_placement": "header" } — reads API key from process.env at execution time, never logs the key value.',
+  description: 'Make an HTTP request to an external API. Args: { "url": "...", "method": "GET", "headers": {...}, "api_key_env": "NEWSAPI_KEY", "api_key_placement": "header", "api_key_prefix": "Bearer ", "body": {...} } — reads API key from process.env at execution time, never logs the key value.',
   async execute(args) {
     const url = String(args.url ?? '').trim();
     const method = String(args.method ?? 'GET').toUpperCase();
@@ -138,6 +140,8 @@ toolRegistry.register({
     const apiKeyPlacement = String(args.api_key_placement ?? 'header').toLowerCase();
     const apiKeyHeaderName = String(args.api_key_header_name ?? 'X-Api-Key');
     const apiKeyQueryParam = String(args.api_key_query_param ?? 'apikey');
+    const apiKeyPrefix = String(args.api_key_prefix ?? '');
+    const requestBody = args.body ? JSON.stringify(args.body) : undefined;
     const timeoutMs = Number(args.timeout_ms ?? 10000);
 
     if (!url) {
@@ -164,8 +168,8 @@ toolRegistry.register({
         const separator = finalUrl.includes('?') ? '&' : '?';
         finalUrl = `${finalUrl}${separator}${apiKeyQueryParam}=${encodeURIComponent(keyValue)}`;
       } else {
-        // Default: header
-        finalHeaders[apiKeyHeaderName] = keyValue;
+        // Default: header — prepend prefix if specified (e.g. "Bearer " for GitHub)
+        finalHeaders[apiKeyHeaderName] = apiKeyPrefix + keyValue;
       }
     }
 
@@ -174,11 +178,18 @@ toolRegistry.register({
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const response = await fetch(finalUrl, {
+      const fetchOptions: RequestInit = {
         method,
         headers: finalHeaders,
         signal: controller.signal,
-      });
+      };
+
+      // Only pass body for POST/PUT/PATCH with a body present
+      if (requestBody && ['POST', 'PUT', 'PATCH'].includes(method)) {
+        fetchOptions.body = requestBody;
+      }
+
+      const response = await fetch(finalUrl, fetchOptions);
 
       clearTimeout(timeoutId);
 

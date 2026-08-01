@@ -1,0 +1,16 @@
+# Dev.to Articles
+# Fetches articles from Dev.to. Public listing works without a key.
+# DEVTO_API_KEY env var enables authenticated endpoints (user's own articles).
+# Key is sent as api-key header.
+# Input: { "tag": "javascript" } → returns articles as JSON
+
+name = "devto-articles"
+version = "0.1.0"
+description = "Fetch Dev.to articles by tag. Input: { \"tag\": \"javascript\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "https://dev.to/api/articles?tag={{tag}}&per_page=5", "method": "GET", "api_key_env": "DEVTO_API_KEY", "api_key_placement": "header", "api_key_header_name": "api-key"}'
+output_key = "articles"
