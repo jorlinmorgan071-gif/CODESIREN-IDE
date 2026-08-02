@@ -297,6 +297,29 @@ class VoiceProxy {
   }
 
   /**
+   * Find the most recent active voice session for a given user.
+   *
+   * Used by the WS binary audio handler (Option C fix) to route incoming
+   * audio to the user's active session without requiring a sessionId in the
+   * binary frame header. If a user has multiple sessions (e.g., two browser
+   * tabs), the most recently started one wins — that's the one the user is
+   * actively interacting with.
+   *
+   * Returns undefined if the user has no active voice session.
+   */
+  getSessionByUserId(userId: string): ActiveVoiceSession | undefined {
+    let latest: ActiveVoiceSession | undefined;
+    for (const session of this.sessions.values()) {
+      if (session.userId === userId) {
+        if (!latest || session.startedAt > latest.startedAt) {
+          latest = session;
+        }
+      }
+    }
+    return latest;
+  }
+
+  /**
    * Reset the silence timer — fires auto-disconnect after SILENCE_TIMEOUT_MS.
    */
   private resetSilenceTimer(sessionId: string): void {

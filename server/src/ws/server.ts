@@ -65,18 +65,22 @@ export function attachWsServer(server: HttpServer): void {
 
     ws.on('message', (raw, isBinary) => {
       // ── Binary messages = voice audio chunks ──────────────────────────
-      // The browser sends raw PCM/WAV audio data as binary WS frames.
-      // We route these to the voice proxy for ASR processing.
+      // The browser sends raw audio data as binary WS frames. We route these
+      // to the voice proxy for ASR processing.
+      //
+      // Option C fix (Phase E final proof): the binary frame is now PURE audio
+      // data — no sessionId header. We look up the user's active voice session
+      // via their WS auth state (state.claims.sub). This fixes the bug where
+      // the old 16-byte sessionId header truncated the 42-char session IDs
+      // (voice-${uuid} format), causing all binary audio to be silently dropped.
+      //
+      // If the user has multiple active sessions (e.g., two browser tabs), the
+      // most recently started one wins (see voiceProxy.getSessionByUserId).
       if (isBinary && raw instanceof Buffer) {
-        // Extract session ID from the first few bytes (custom header)
-        // Format: [16 bytes sessionId UTF-8][rest = audio data]
-        if (raw.length < 16) return;
-        const sessionId = raw.subarray(0, 16).toString('utf8').replace(/\0/g, '');
-        const audioData = raw.subarray(16);
-
-        const session = voiceProxy.getSession(sessionId);
-        if (session && session.userId === state.claims.sub) {
-          voiceProxy.receiveAudioChunk(sessionId, audioData.buffer as ArrayBuffer);
+        if (raw.length === 0) return;
+        const session = voiceProxy.getSessionByUserId(state.claims.sub);
+        if (session) {
+          voiceProxy.receiveAudioChunk(session.id, raw.buffer as ArrayBuffer);
         }
         return;
       }

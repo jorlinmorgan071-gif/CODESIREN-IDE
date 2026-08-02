@@ -359,15 +359,12 @@ export default function FaceView() {
         const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         audioChunksRef.current = [];
 
-        // Convert to ArrayBuffer and send via WS as binary
+        // Convert to ArrayBuffer and send via WS as binary.
+        // Option C fix: pure audio data, no sessionId header. The server
+        // routes the audio to the user's active voice session via their WS
+        // auth state (state.claims.sub).
         const arrayBuffer = await blob.arrayBuffer();
-        // Pad session ID to 16 bytes
-        const sessionIdPadded = (sessionId ?? '').padEnd(16, '\0').slice(0, 16);
-        const combined = new Uint8Array(16 + arrayBuffer.byteLength);
-        combined.set(new TextEncoder().encode(sessionIdPadded), 0);
-        combined.set(new Uint8Array(arrayBuffer), 16);
-
-        wsClient.send('voice:audio', combined.buffer);
+        wsClient.send('voice:audio', arrayBuffer);
       };
 
       // Start recording in 1-second chunks
