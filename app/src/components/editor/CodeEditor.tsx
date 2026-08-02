@@ -2,7 +2,6 @@ import { useCallback, useState, useRef, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import type * as MonacoType from 'monaco-editor';
 import { useApp } from '@/store/AppContext';
-import { api } from '@/lib/api';
 import { X, FilePlus2, Files, Keyboard, Wand2 } from 'lucide-react';
 
 const languageMap: Record<string, string> = {
@@ -21,6 +20,7 @@ const languageMap: Record<string, string> = {
 // previous one resolves, the previous fetch's result is dropped.
 let aiCompletionToken = 0;
 let aiCompletionTimer: ReturnType<typeof setTimeout> | null = null;
+let aiCompletionAbort: AbortController | null = null;
 
 export function CodeEditor() {
   const { state, closeTab, setActiveFile, updateProblems } = useApp();
@@ -212,12 +212,14 @@ export function CodeEditor() {
       // Tier 1 chat API (api.orchestratorChat) with a completion-focused
       // prompt. The user's directive specified calling the orchestrator
       // with a messages array — the actual API takes a single user
-      // message string, so we serialize the system+user prompts into one
-      // combined message.
+      // AI completion provider — calls POST /api/orchestrator/complete
+      // (a lightweight, non-agent endpoint that calls modelRouter.stream()
+      // directly — no agent dispatch, no context bundle, no trace).
       //
-      // 300ms debounce + cancel-token pattern: if a new completion
-      // request comes in before the previous one resolves, the previous
-      // fetch's result is dropped (token mismatch).
+      // 300ms debounce + real AbortController: if a new completion request
+      // comes in before the previous one resolves, the previous fetch is
+      // actually aborted (not just discarded client-side), saving server
+      // resources.
       const buildAiCompletions = (
         model: MonacoType.editor.ITextModel,
         position: MonacoType.Position
@@ -246,45 +248,99 @@ export function CodeEditor() {
           if (aiCompletionTimer) {
             clearTimeout(aiCompletionTimer);
           }
+          // Abort the previous fetch if one is in-flight
+          if (aiCompletionAbort) {
+            aiCompletionAbort.abort();
+          }
           const myToken = ++aiCompletionToken;
+          const myAbort = new AbortController();
+          aiCompletionAbort = myAbort;
 
           const fireRequest = async () => {
-            const sessionId = state.activeChatId;
-            if (!sessionId) {
-              resolve({ suggestions: [] });
-              return;
-            }
             const prompt =
-              'You are a code completion engine. Given code context, ' +
-              'return ONLY a JSON array of completion strings. No explanation. ' +
-              'Max 5 items. Example: ["console.log", "console.error"]\n\n' +
               `Complete at cursor position in this code:\n\`\`\`\n${context}\n\`\`\`\n` +
               `Word so far: "${wordUntil.word}" (line content: "${lineContent}")`;
 
             try {
-              // Fire the chat request — the response streams back over WS
-              // as orchestrator:chunk events. For completions we want the
-              // FULL response synchronously, so we poll the WS for the
-              // complete message. The simplest approach: use the
-              // orchestratorChat endpoint's 202-accepted shape and then
-              // wait for the orchestrator:complete event via a one-time
-              // WS listener.
-              await api.orchestratorChat(sessionId, prompt);
-              // The response streams via WS — for the completion use case
-              // we can't easily await the streamed chunks here without
-              // refactoring the WS client. For now, return empty
-              // suggestions; a future iteration can collect the streamed
-              // chunks and resolve them. The Monaco built-in TS worker
-              // suggestions still work — this provider is purely additive.
+              const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+              const { getToken } = await import('@/lib/auth');
+              const token = getToken() ?? '';
+              const tStart = Date.now();
+              const res = await fetch(`${API_BASE}/orchestrator/complete`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({ prompt }),
+                signal: myAbort.signal,
+              });
+
+              if (!res.ok) {
+                if (myToken === aiCompletionToken) {
+                  resolve({ suggestions: [] });
+                }
+                return;
+              }
+
+              const data = await res.json() as { text: string };
+              const elapsed = Date.now() - tStart;
+
+              // Superseded by a newer request — drop our result
               if (myToken !== aiCompletionToken) {
-                // A newer request superseded us — drop our result.
+                return;
+              }
+
+              if (!data.text || data.text.length === 0) {
                 resolve({ suggestions: [] });
                 return;
               }
-              resolve({ suggestions: [] });
-            } catch (err) {
-              console.warn('[editor] AI completion failed:', err);
-              resolve({ suggestions: [] });
+
+              // Build a proper Monaco completion item
+              const word = model.getWordUntilPosition(position);
+              const range = {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: word.startColumn,
+                endColumn: word.endColumn,
+              };
+
+              // The model returns completion text — use it as the insertText.
+              // Filter out any markdown fences or backticks the model might add
+              // despite the system prompt telling it not to.
+              const cleanText = data.text
+                .replace(/^```[\w]*\n?/g, '')
+                .replace(/\n?```$/g, '')
+                .trim();
+
+              if (!cleanText) {
+                resolve({ suggestions: [] });
+                return;
+              }
+
+              console.log(`[editor] AI completion: "${cleanText.slice(0, 60)}..." (${elapsed}ms)`);
+
+              resolve({
+                suggestions: [{
+                  label: cleanText.slice(0, 50),
+                  kind: monaco.languages.CompletionItemKind.Text,
+                  insertText: cleanText,
+                  range,
+                  detail: 'AI completion',
+                  sortText: '0', // sort before built-in suggestions
+                }],
+              });
+            } catch (err: unknown) {
+              // AbortError = superseded by a newer request — not an error
+              const errName = err instanceof Error ? err.name : '';
+              if (errName === 'AbortError') {
+                return; // don't resolve — the newer request will
+              }
+              const errMsg = err instanceof Error ? err.message : String(err);
+              console.warn('[editor] AI completion failed:', errMsg);
+              if (myToken === aiCompletionToken) {
+                resolve({ suggestions: [] });
+              }
             }
           };
 

@@ -2,6 +2,7 @@
 // All Orchestrator + Agent Relay REST endpoints — directive Section 1.7.
 //
 //   POST /api/orchestrator/chat          Tier 1 chat (streams via WS)
+//   POST /api/orchestrator/complete      Lightweight code completion (HTTP, non-streaming)
 //   POST /api/orchestrator/plan          Generate plan from session history
 //   POST /api/orchestrator/plan/:id/approve    Approve + start relay
 //   POST /api/orchestrator/plan/:id/advance    Advance to next milestone
@@ -23,6 +24,7 @@ import { listAvailableEngines, setActiveOrchestratorEngine } from '../orchestrat
 import { generatePlan, runRelayPlan, signalAdvance, stopPlan, isPlanRunning } from '../orchestrator/relay-loop.js';
 import { getPlan, listPlans, listPlansBySession, listMilestoneLogs, updatePlan } from '../orchestrator/plans-repo.js';
 import { streamTier1Chat } from '../orchestrator/tier1-chat.js';
+import { modelRouter } from '../orchestration/model-router.js';
 
 export const orchestratorRouter = Router();
 
@@ -319,4 +321,90 @@ orchestratorRouter.get('/settings', requireAuth, (_req, res) => {
     availableEngines: listAvailableEngines(),
     tier1Models: TIER1_MODELS,
   });
+});
+
+// ── POST /api/orchestrator/complete ──────────────────────────────────────
+// Lightweight code completion endpoint for Monaco's AI completion provider.
+//
+// Deliberately bypasses the full agent pipeline (no send(), no executeAndWait(),
+// no dispatchStrategy(), no context bundle, no trace, no trust score, no WS
+// broadcast). Calls modelRouter.stream() directly — the same engine selection
+// (Ollama → OpenRouter → stub) but with minimal overhead.
+//
+// Returns { text: string } in the HTTP response body (non-streaming from the
+// client's perspective — the server collects the stream internally and returns
+// the full result). This is what Monaco's provideCompletionItems needs: a
+// simple fetch → await → return suggestions, no WS listener required.
+//
+// Hard 3s timeout — if the model hasn't finished by then, returns whatever's
+// collected so far. Completions should feel instant while typing.
+
+const completeSchema = z.object({
+  prompt: z.string().min(1).max(8000),
+});
+
+const COMPLETION_SYSTEM_PROMPT =
+  'You are a code completion engine. Given code context and a cursor position, ' +
+  'return ONLY the completion text that should be inserted at the cursor. ' +
+  'No explanation, no markdown fences, no backticks. Just the raw code to insert. ' +
+  'Keep it short — a single line or statement, not a full function. ' +
+  'Maximum 100 characters.';
+
+const COMPLETION_TIMEOUT_MS = 3000;
+const COMPLETION_MAX_CHARS = 200;
+
+orchestratorRouter.post('/complete', requireAuth, async (req, res) => {
+  const parsed = completeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
+
+  // AbortController for hard timeout — if the model is slow, return what we have.
+  const abort = new AbortController();
+  const timeoutId = setTimeout(() => abort.abort(), COMPLETION_TIMEOUT_MS);
+
+  try {
+    const chunks: string[] = [];
+    let totalChars = 0;
+
+    // Call modelRouter.stream() DIRECTLY — no agent dispatch, no context bundle,
+    // no trace, no trust score, no WS broadcast. This is the entire point of
+    // this endpoint: a fast, lightweight model call for inline completions.
+    const generator = modelRouter.stream({
+      domain: 'ARCHITECT',
+      executionMode: 'single-shot',
+      agentId: 'completion',
+      messages: [
+        { role: 'system', content: COMPLETION_SYSTEM_PROMPT },
+        { role: 'user', content: parsed.data.prompt },
+      ],
+    } as any);
+
+    for await (const chunk of generator) {
+      if (abort.signal.aborted) break;
+
+      if (chunk.delta) {
+        chunks.push(chunk.delta);
+        totalChars += chunk.delta.length;
+
+        // Stop collecting after max chars — completions should be short
+        if (totalChars >= COMPLETION_MAX_CHARS) break;
+      }
+    }
+
+    clearTimeout(timeoutId);
+
+    const text = chunks.join('').trim();
+    res.json({ text });
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    // Don't 500 on abort — return empty text (client treats it as no suggestion)
+    if (abort.signal.aborted) {
+      res.json({ text: '' });
+      return;
+    }
+    console.error('[orchestrator:complete] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
