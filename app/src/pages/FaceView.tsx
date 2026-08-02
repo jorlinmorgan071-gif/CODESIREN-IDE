@@ -18,6 +18,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMUtils, VRMLoaderPlugin } from '@pixiv/three-vrm';
 import type { VRM } from '@pixiv/three-vrm';
+import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { useApp } from '@/store/AppContext';
 import { wsClient } from '@/lib/ws';
@@ -61,9 +62,20 @@ interface VRMModelProps {
   visemeHint: string;
   isActive: boolean;
   currentEmotion: EmotionId;
+  audioSource: AudioNode | null;
+  audioContext: AudioContext | null;
 }
 
-function VRMModel({ amplitude, currentEmotion }: VRMModelProps) {
+// Vowel → VRM blendshape mapping (per VRM spec + Section 0 findings)
+const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
+  A: 'aa',
+  E: 'ee',
+  I: 'ih',
+  O: 'oh',
+  U: 'ou',
+};
+
+function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMModelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
@@ -73,6 +85,9 @@ function VRMModel({ amplitude, currentEmotion }: VRMModelProps) {
   const currentBlendValues = useRef<Record<string, number>>({});
   const targetBlendValues = useRef<Record<string, number>>({});
   const lookAtTarget = useRef(new THREE.Vector3(0, 0, 3));
+  const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
+  const lipSyncProfileRef = useRef<Profile | null>(null);
+  const lipSyncLogTimer = useRef(0);
 
   // Load VRM model via GLTFLoader with VRMLoaderPlugin
   const gltf = useLoader(GLTFLoader, '/models/sample.vrm', (loader: GLTFLoader) => {
@@ -106,7 +121,40 @@ function VRMModel({ amplitude, currentEmotion }: VRMModelProps) {
         child.receiveShadow = true;
       }
     });
+
+    // Load wlipsync profile (async, non-blocking)
+    fetch('/models/lip-sync-profile.json')
+      .then(res => res.json() as Promise<Profile>)
+      .then(profile => {
+        lipSyncProfileRef.current = profile;
+        console.log('[face] wlipsync profile loaded:', profile.mfccs?.length, 'phonemes');
+      })
+      .catch(err => console.warn('[face] Failed to load lip-sync profile:', err));
   }, [gltf]);
+
+  // Create/connect lip sync node when audio source changes
+  useEffect(() => {
+    if (!audioSource || !audioContext || !lipSyncProfileRef.current) return;
+    if (lipSyncNodeRef.current) {
+      // Disconnect old source from previous lip sync node
+      try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
+    }
+
+    createWLipSyncNode(audioContext, lipSyncProfileRef.current)
+      .then(node => {
+        lipSyncNodeRef.current = node;
+        audioSource.connect(node);
+        // Don't connect node to destination — we only read weights, don't need audio output
+        console.log('[face] wlipsync node created and connected to audio source');
+      })
+      .catch(err => console.warn('[face] Failed to create wlipsync node:', err));
+
+    return () => {
+      if (lipSyncNodeRef.current && audioSource) {
+        try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
+      }
+    };
+  }, [audioSource, audioContext]);
 
   // Animation loop — drives expressions, blink, breathing, lip sync, eye tracking
   useFrame((state) => {
@@ -163,9 +211,42 @@ function VRMModel({ amplitude, currentEmotion }: VRMModelProps) {
       // Add blink
       targetBlendValues.current['blink'] = blinkValueRef.current;
 
-      // Add lip-sync mouth open from amplitude
-      if (amplitude > 0.01) {
-        targetBlendValues.current['aa'] = Math.max(targetBlendValues.current['aa'] ?? 0, amplitude * 0.7);
+      // ── Real lip sync via wlipsync MFCC vowel analysis ──
+      const lipSyncNode = lipSyncNodeRef.current;
+      if (lipSyncNode && lipSyncNode.weights) {
+        // Read vowel weights from wlipsync (A, E, I, O, U, S)
+        const weights = lipSyncNode.weights;
+        const volume = lipSyncNode.volume;
+
+        // Map vowel weights to VRM blendshapes with volume scaling
+        for (const [vowel, blendshape] of Object.entries(VOWEL_TO_BLENDSHAPE)) {
+          const weight = weights[vowel] ?? 0;
+          // Scale by volume (0-1) and apply a cap to prevent over-articulation
+          const scaled = Math.min(1, weight * volume * 1.5);
+          if (scaled > 0.01) {
+            targetBlendValues.current[blendshape] = Math.max(
+              targetBlendValues.current[blendshape] ?? 0,
+              scaled
+            );
+          }
+        }
+
+        // Log vowel weights periodically (every ~500ms) for proof
+        lipSyncLogTimer.current += delta;
+        if (lipSyncLogTimer.current > 0.5 && volume > 0.05) {
+          lipSyncLogTimer.current = 0;
+          const topVowel = Object.entries(weights)
+            .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
+            .sort((a, b) => b[1] - a[1])[0];
+          if (topVowel && topVowel[1] > 0.1) {
+            console.log(`[face] lip sync: ${topVowel[0]}=${topVowel[1].toFixed(2)} vol=${volume.toFixed(2)} → ${VOWEL_TO_BLENDSHAPE[topVowel[0]]}=${(topVowel[1] * volume * 1.5).toFixed(2)}`);
+          }
+        }
+      } else {
+        // Fallback: amplitude-based mouth open if wlipsync not ready
+        if (amplitude > 0.01) {
+          targetBlendValues.current['aa'] = Math.max(targetBlendValues.current['aa'] ?? 0, amplitude * 0.7);
+        }
       }
 
       // Lerp current values toward targets
@@ -198,6 +279,7 @@ export default function FaceView() {
     isActive, isMuted, amplitude, sessionId, captions, visemeHint,
     startSession, endSession, toggleMute,
     setCaption, setVisemeHint, setAudioSource, clearAudioSource,
+    currentAudioSource, audioContext,
   } = useVoiceSession();
   // Auth-gate fix (Bug A): the WS listeners effect below subscribes to
   // voice:* events which carry auth-context. Don't attach them until
@@ -552,7 +634,7 @@ export default function FaceView() {
                 setError(`3D model failed to load: ${msg}`);
               }}
             >
-              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} />
+              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} />
             </FaceErrorBoundary>
           </Suspense>
 

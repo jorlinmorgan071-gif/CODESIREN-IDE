@@ -41,6 +41,8 @@ interface VoiceSessionContextValue extends VoiceSessionState {
   setVisemeHint: (hint: string) => void;
   setAudioSource: (source: AudioNode) => void;
   clearAudioSource: () => void;
+  currentAudioSource: AudioNode | null;
+  audioContext: AudioContext | null;
 }
 
 const VoiceSessionContext = createContext<VoiceSessionContextValue | null>(null);
@@ -53,6 +55,8 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [captions, setCaptions] = useState<Caption>({ user: '', agent: '' });
   const [visemeHint, setVisemeHint] = useState('rest');
+  const [currentAudioSource, setCurrentAudioSource] = useState<AudioNode | null>(null);
+  const [audioContextState, setAudioContextState] = useState<AudioContext | null>(null);
 
   // Web Audio API — AnalyserNode for real amplitude extraction
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -150,6 +154,8 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
     source.connect(analyser);
     analyser.connect(ctx.destination);
     currentSourceRef.current = source;
+    setCurrentAudioSource(source);
+    setAudioContextState(ctx);
   }, [ensureAudioContext]);
 
   const clearAudioSource = useCallback(() => {
@@ -157,15 +163,18 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
       try { currentSourceRef.current.disconnect(); } catch { /* */ }
       currentSourceRef.current = null;
     }
+    setCurrentAudioSource(null);
   }, []);
 
   const value = useMemo(() => ({
     isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint,
     startSession, endSession, toggleMute, setCaption, setVisemeHint,
     setAudioSource, clearAudioSource,
+    currentAudioSource,
+    audioContext: audioContextState,
   }), [isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint,
     startSession, endSession, toggleMute, setCaption, setVisemeHint,
-    setAudioSource, clearAudioSource]);
+    setAudioSource, clearAudioSource, currentAudioSource, audioContextState]);
 
   return (
     <VoiceSessionContext.Provider value={value}>
