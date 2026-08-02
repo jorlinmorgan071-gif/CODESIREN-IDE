@@ -232,13 +232,14 @@ async function main() {
     // 20-char alphanumeric but not a real voice_id
     const fakeValidFormatProvider = new ElevenLabsTTSProvider({ voiceId: 'AAAAAAAAAAAAAAAAAAAA' });
     try {
-      await fakeValidFormatProvider.speak('This should fail with invalid_uid from the API.');
+      await fakeValidFormatProvider.speak('This should fail with invalid_uid or voice_not_found from the API.');
       console.error('FAIL: speak() with nonexistent voice_id did not throw');
       process.exit(1);
     } catch (err: any) {
       console.log(`Threw: ${err.message}`);
-      if (!err.message.includes('invalid voice_id') && !err.message.includes('invalid_uid')) {
-        console.error(`FAIL: expected 'invalid voice_id' or 'invalid_uid' in error, got: ${err.message}`);
+      // API may return either invalid_uid (format-like rejection) or voice_not_found (valid format, no such voice)
+      if (!err.message.includes('invalid voice_id') && !err.message.includes('invalid_uid') && !err.message.includes('voice not found') && !err.message.includes('voice_not_found')) {
+        console.error(`FAIL: expected 'invalid voice_id', 'invalid_uid', or 'voice not found' in error, got: ${err.message}`);
         process.exit(1);
       }
       console.log('✓ PASS — nonexistent voice_id throws specific honest error from API');

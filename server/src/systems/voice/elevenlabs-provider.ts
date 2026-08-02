@@ -54,6 +54,8 @@ const ERROR_MESSAGES: Record<string, (detail: any) => string> = {
     'ElevenLabs: invalid API key — check ELEVENLABS_API_KEY in server/.env.',
   invalid_uid: (detail) =>
     `ElevenLabs: invalid voice_id — ${detail?.message ?? 'unknown voice_id'}. Pick a valid voice in Settings → Voice.`,
+  voice_not_found: (detail) =>
+    `ElevenLabs: voice not found — ${detail?.message ?? 'no such voice_id'}. Pick a valid voice in Settings → Voice.`,
   quota_exceeded: (_detail) =>
     'ElevenLabs: monthly quota exceeded — upgrade your plan at https://elevenlabs.io/pricing or switch to a different provider in Settings → Voice.',
   rate_limit_exceeded: (_detail) =>
