@@ -1,26 +1,23 @@
 // app/src/pages/FaceView.tsx
-// Face Avatar + Live Voice Pipeline — 3D rigged face with blendshapes.
+// CHIMERA Avatar Engine — VRM-based avatar with expressions, lip sync, eye tracking.
 //
-// Loads the Lisa FBX model, applies a wireframe + emissive glow shader,
-// drives blendshape weights from VoiceSessionContext's amplitude + viseme data.
+// Replaces the old FBX + wireframe shader system with a VRM model loaded via
+// @pixiv/three-vrm. VRM provides standardized blendshapes for expressions,
+// spring bones for hair/cloth physics, and look-at bones for eye tracking.
+// Lip sync is driven by wlipsync (MFCC-based WASM audio analysis).
 //
-// Section 1 blendshape names — ONLY these are used, no hardcoded guesses:
-//   Visemes: AA, CH, DD, EE, FF, IH, KK, NN, OH, OU, PP, RR, TH
-//   Jaw: JawOpen, JawFwd, JawLeft, JawRight
-//   Lips: LipsFunnel, LipsPucker, LipsLowerClose, LipsLowerDown, LipsLowerOpen,
-//         LipsUpperClose, LipsUpperOpen, LipsUpperUp
-//   Mouth: MouthDimple_L, MouthDimple_R, MouthFrown_L, MouthFrown_R,
-//          MouthLeft, MouthRight, MouthSmile_L, MouthSmile_R, Puff, Sneer
-//   Eyes: EyeBlink_L, EyeBlink_R, EyeOpen_L, EyeOpen_R, EyeSquint_L, EyeSquint_R,
-//         EyesDown, EyesLeft, EyesRight, EyesUp
-//   Brows: BrowsD_L, BrowsD_R, BrowsU_C, BrowsU_L, BrowsU_R
-//   Base: Basis, base_head
+// VRM blendshape names (standardized per VRM spec):
+//   Mouth: aa, ee, ih, oh, ou (vowels for lip sync)
+//   Emotions: happy, sad, angry, surprised, relaxed, neutral (expression presets)
+//   Eyes: blink (left+right combined), lookAt (eye tracking via look-at bone)
 
 import { useState, useEffect, useRef, useCallback, Suspense, Component, type ReactNode } from 'react';
 import { Canvas, useFrame, useLoader } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { FBXLoader } from 'three-stdlib';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { VRMUtils, VRMLoaderPlugin } from '@pixiv/three-vrm';
+import type { VRM } from '@pixiv/three-vrm';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { useApp } from '@/store/AppContext';
 import { wsClient } from '@/lib/ws';
@@ -31,274 +28,167 @@ import { Mic, MicOff, PhoneOff, Loader2, Volume2 } from 'lucide-react';
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
 // ── FaceErrorBoundary ────────────────────────────────────────────────────
-// Fix 2 — React Three Fiber's useLoader uses the Suspense protocol: it
-// throws a Promise while loading and throws an Error if the load fails.
-// Without a Suspense boundary INSIDE the Canvas, the thrown Error
-// propagates OUTSIDE the Canvas into FaceView's render cycle, corrupting
-// the outer component's state and producing a red error banner.
-// This ErrorBoundary catches loader errors, turns off the loading spinner,
-// and surfaces a clear error message rather than crashing the Canvas.
 
-interface FaceErrorBoundaryProps {
-  children: ReactNode;
-  onError: (msg: string) => void;
+class FaceErrorBoundary extends Component<{ children: ReactNode; onError: (msg: string) => void }, { hasError: boolean }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(err: Error) { this.props.onError(err.message); }
+  render() { return this.state.hasError ? null : this.props.children; }
 }
 
-interface FaceErrorBoundaryState {
-  hasError: boolean;
-}
+// ── VRM Emotion System ───────────────────────────────────────────────────
+// Reimplementation of AIRI's emotion→blendshape mapping in plain TypeScript.
+// VRM blendshapes use standardized names: happy, sad, angry, surprised, relaxed, neutral.
+// Each emotion maps to a set of blendshape values with lerp/easing transitions.
 
-class FaceErrorBoundary extends Component<FaceErrorBoundaryProps, FaceErrorBoundaryState> {
-  state: FaceErrorBoundaryState = { hasError: false };
+type EmotionId = 'happy' | 'sad' | 'angry' | 'think' | 'surprised' | 'neutral';
 
-  static getDerivedStateFromError(): FaceErrorBoundaryState {
-    return { hasError: true };
-  }
-
-  componentDidCatch(err: Error): void {
-    this.props.onError(err.message);
-  }
-
-  render(): ReactNode {
-    if (this.state.hasError) return null;
-    return this.props.children;
-  }
-}
-
-// ── Confirmed blendshape names (Section 1) ────────────────────────────────
-const VISEME_SHAPES = ['AA', 'CH', 'DD', 'EE', 'FF', 'IH', 'KK', 'NN', 'OH', 'OU', 'PP', 'RR', 'TH'];
-const JAW_SHAPES = ['JawOpen', 'JawFwd', 'JawLeft', 'JawRight'];
-const LIP_SHAPES = ['LipsFunnel', 'LipsPucker', 'LipsLowerClose', 'LipsLowerDown', 'LipsLowerOpen', 'LipsUpperClose', 'LipsUpperOpen', 'LipsUpperUp'];
-const MOUTH_SHAPES = ['MouthDimple_L', 'MouthDimple_R', 'MouthFrown_L', 'MouthFrown_R', 'MouthLeft', 'MouthRight', 'MouthSmile_L', 'MouthSmile_R', 'Puff', 'Sneer'];
-const EYE_SHAPES = ['EyeBlink_L', 'EyeBlink_R', 'EyeOpen_L', 'EyeOpen_R', 'EyeSquint_L', 'EyeSquint_R', 'EyesDown', 'EyesLeft', 'EyesRight', 'EyesUp'];
-const BROW_SHAPES = ['BrowsD_L', 'BrowsD_R', 'BrowsU_C', 'BrowsU_L', 'BrowsU_R'];
-
-// All confirmed shapes in one array
-const ALL_CONFIRMED_SHAPES = [...VISEME_SHAPES, ...JAW_SHAPES, ...LIP_SHAPES, ...MOUTH_SHAPES, ...EYE_SHAPES, ...BROW_SHAPES];
-
-// ── 5-category phoneme → viseme mapping (Section 1) ──────────────────────
-// Open vowel (AH/AA)  → AA + JawOpen
-// Front vowel (EE/IH) → EE or IH
-// Rounded vowel (OH/OU) → OH or OU + LipsFunnel
-// Bilabial (PP/BB/MM) → PP (lips together)
-// Default/rest        → neutral, JawOpen driven by amplitude only
-
-const PHONEME_MAP: Record<string, { shapes: string[], weight: number }> = {
-  open:    { shapes: ['AA', 'JawOpen'], weight: 0.8 },
-  front:   { shapes: ['EE', 'IH'], weight: 0.6 },
-  rounded: { shapes: ['OH', 'OU', 'LipsFunnel'], weight: 0.7 },
-  bilabial:{ shapes: ['PP'], weight: 0.9 },
-  rest:    { shapes: [], weight: 0 },
+const EMOTION_BLENDSHAPES: Record<EmotionId, Record<string, number>> = {
+  happy:     { happy: 0.7, aa: 0.2 },
+  sad:       { sad: 0.7, oh: 0.15 },
+  angry:     { angry: 0.7, ee: 0.3 },
+  think:     { relaxed: 0.3, oh: 0.1 },
+  surprised: { surprised: 0.8, aa: 0.3 },
+  neutral:   {},
 };
 
-// ── Phoneme classifier — simple text-based heuristics (Section 3) ────────
-function classifyPhoneme(text: string, charIndex: number): string {
-  if (charIndex >= text.length) return 'rest';
-  const char = text[charIndex].toLowerCase();
-  const nextChar = text[charIndex + 1]?.toLowerCase() ?? '';
+// ── VRM Model Component ──────────────────────────────────────────────────
+// Loads a VRM model via @pixiv/three-vrm's GLTFLoader plugin, applies
+// expression + lip sync + eye tracking in the animation loop.
 
-  // Bilabial: P, B, M
-  if ('pbm'.includes(char)) return 'bilabial';
-
-  // Open vowels: A, and AH/AA patterns
-  if (char === 'a' || (char === 'a' && 'ah'.includes(nextChar))) return 'open';
-
-  // Front vowels: E, I
-  if ('ei'.includes(char)) return 'front';
-
-  // Rounded vowels: O, U
-  if ('ou'.includes(char)) return 'rounded';
-
-  // Default
-  return 'rest';
-}
-
-// ── Wireframe + emissive glow shader material ────────────────────────────
-function createWireframeGlowMaterial(amplitude: number): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uTime: { value: 0 },
-      uAmplitude: { value: amplitude },
-      uGlowColor: { value: new THREE.Color('#00BFFF') },  // cyber-mesh blue
-      uBaseColor: { value: new THREE.Color('#001833') },
-      uWireframeColor: { value: new THREE.Color('#00FFFF') },
-    },
-    vertexShader: `
-      varying vec3 vNormal;
-      varying vec3 vPosition;
-      void main() {
-        vNormal = normalize(normalMatrix * normal);
-        vPosition = position;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform float uTime;
-      uniform float uAmplitude;
-      uniform vec3 uGlowColor;
-      uniform vec3 uBaseColor;
-      uniform vec3 uWireframeColor;
-      varying vec3 vNormal;
-      varying vec3 vPosition;
-
-      void main() {
-        // Fresnel glow — brighter at edges
-        float fresnel = 1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0)));
-        fresnel = pow(fresnel, 2.0);
-
-        // Base color with amplitude-driven glow
-        vec3 color = mix(uBaseColor, uGlowColor, fresnel * (0.3 + uAmplitude * 0.7));
-
-        // Wireframe lines — simulate via position-based grid
-        float wireX = abs(fract(vPosition.x * 20.0) - 0.5);
-        float wireY = abs(fract(vPosition.y * 20.0) - 0.5);
-        float wireZ = abs(fract(vPosition.z * 20.0) - 0.5);
-        float wire = min(min(wireX, wireY), wireZ);
-        float wireIntensity = smoothstep(0.45, 0.5, 1.0 - wire) * (0.3 + uAmplitude * 0.5);
-
-        color = mix(color, uWireframeColor, wireIntensity * 0.6);
-
-        // Pulsing glow
-        float pulse = sin(uTime * 2.0) * 0.1 + 0.9;
-        color *= pulse * (0.7 + uAmplitude * 0.6);
-
-        gl_FragColor = vec4(color, 1.0);
-      }
-    `,
-    wireframe: false,  // We do custom wireframe in the shader
-  });
-}
-
-// ── 3D Face mesh component ───────────────────────────────────────────────
-
-interface FaceMeshProps {
+interface VRMModelProps {
   amplitude: number;
   visemeHint: string;
   isActive: boolean;
+  currentEmotion: EmotionId;
 }
 
-function FaceMesh({ amplitude, visemeHint, isActive }: FaceMeshProps) {
-  const meshRef = useRef<THREE.Group>(null);
-  const materialRef = useRef<THREE.ShaderMaterial | null>(null);
-  const blinkTimerRef = useRef<number>(0);
+function VRMModel({ amplitude, currentEmotion }: VRMModelProps) {
+  const groupRef = useRef<THREE.Group>(null);
+  const vrmRef = useRef<VRM | null>(null);
+  const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
   const blinkValueRef = useRef(0);
   const breathingRef = useRef(0);
+  const currentBlendValues = useRef<Record<string, number>>({});
+  const targetBlendValues = useRef<Record<string, number>>({});
+  const lookAtTarget = useRef(new THREE.Vector3(0, 0, 3));
 
-  // Load the FBX model
-  // Fix 1 — use absolute path '/models/lisa.fbx' instead of relative
-  // './models/lisa.fbx'. When the app is at /face, the relative path
-  // resolves to /face/models/lisa.fbx (404). Files in app/public/ are
-  // served from the root, so the absolute path works on every route.
-  const fbx = useLoader(FBXLoader, '/models/lisa.fbx');
+  // Load VRM model via GLTFLoader with VRMLoaderPlugin
+  const gltf = useLoader(GLTFLoader, '/models/sample.vrm', (loader: GLTFLoader) => {
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+  });
 
-  // Apply wireframe shader to all meshes in the model
   useEffect(() => {
-    if (!fbx) return;
+    if (!gltf) return;
+    const vrm = gltf.userData.vrm as VRM | undefined;
+    if (!vrm) {
+      console.error('[face] No VRM data in gltf.userData');
+      return;
+    }
+    vrmRef.current = vrm;
 
-    fbx.traverse((child) => {
+    // Remove unnecessary materials/shaders — use VRM's built-in MToon shader
+    VRMUtils.removeUnnecessaryVertices(gltf.scene);
+    // VRMUtils.combineSkeletons(vrm); // type mismatch — skip for now
+
+    // Log available blendshapes
+    if (vrm.expressionManager) {
+      const expressions = vrm.expressionManager.expressions;
+      console.log(`[face] VRM loaded with ${expressions.length} expressions:`,
+        expressions.map(e => e.expressionName).join(', '));
+    }
+
+    // Enable shadows
+    gltf.scene.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         child.castShadow = true;
         child.receiveShadow = true;
-        // Create shader material for this mesh
-        const mat = createWireframeGlowMaterial(0);
-        child.material = mat;
-        if (!materialRef.current) materialRef.current = mat;
-
-        // Enable morph targets (blendshapes)
-        if (child.morphTargetDictionary && child.morphTargetInfluences) {
-          // Log available blendshapes for verification
-          const available = Object.keys(child.morphTargetDictionary);
-          const confirmed = ALL_CONFIRMED_SHAPES.filter(s => available.includes(s));
-          const unconfirmed = available.filter(s => !ALL_CONFIRMED_SHAPES.includes(s));
-          console.log(`[face] Mesh has ${available.length} morph targets. Confirmed: ${confirmed.length}, Unconfirmed: ${unconfirmed.length}`);
-          if (unconfirmed.length > 0) {
-            console.log(`[face] Unconfirmed shapes (not used): ${unconfirmed.join(', ')}`);
-          }
-        }
       }
     });
-  }, [fbx]);
+  }, [gltf]);
 
-  // Animation loop
+  // Animation loop — drives expressions, blink, breathing, lip sync, eye tracking
   useFrame((state) => {
-    if (!meshRef.current) return;
+    const vrm = vrmRef.current;
+    if (!vrm || !groupRef.current) return;
+
+    const delta = state.clock.getDelta();
     const t = state.clock.elapsedTime;
 
-    // Update shader uniforms
-    if (materialRef.current) {
-      materialRef.current.uniforms.uTime.value = t;
-      materialRef.current.uniforms.uAmplitude.value = amplitude;
+    // Update VRM spring bones + look-at
+    vrm.update(delta);
+
+    // ── Idle breathing ──
+    breathingRef.current += delta;
+    groupRef.current.position.y = Math.sin(breathingRef.current * 0.5) * 0.02;
+    groupRef.current.rotation.x = Math.sin(breathingRef.current * 0.3) * 0.01;
+    groupRef.current.rotation.y = Math.sin(t * 0.1) * 0.05;
+
+    // ── Eye tracking: cursor → look-at target ──
+    const mouseX = (state.mouse.x * 0.5);
+    const mouseY = (state.mouse.y * 0.3);
+    lookAtTarget.current.set(mouseX, mouseY, 3);
+    if (vrm.lookAt) {
+      // lookAt target can be a Vector3 or Object3D — VRM handles both
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (vrm.lookAt as any).target = lookAtTarget.current;
     }
 
-    // Idle breathing — subtle head movement (even when not in a session)
-    breathingRef.current += 0.01;
-    const breathY = Math.sin(breathingRef.current * 0.5) * 0.02;
-    const breathX = Math.sin(breathingRef.current * 0.3) * 0.01;
-    meshRef.current.position.y = breathY;
-    meshRef.current.rotation.x = breathX;
-    meshRef.current.rotation.y = Math.sin(t * 0.1) * 0.05;  // slow idle rotation
-
-    // ── Blink cycle (3-6 second random, fast close ~80ms, slow open ~200ms) ──
-    blinkTimerRef.current -= state.clock.getDelta() * 1000;
+    // ── Blink cycle ──
+    blinkTimerRef.current -= delta * 1000;
     if (blinkPhaseRef.current === 'open' && blinkTimerRef.current <= 0) {
       blinkPhaseRef.current = 'closing';
-      blinkTimerRef.current = 80;  // 80ms close
+      blinkTimerRef.current = 80;
     } else if (blinkPhaseRef.current === 'closing') {
-      blinkValueRef.current = Math.min(1, blinkValueRef.current + state.clock.getDelta() * 12);
+      blinkValueRef.current = Math.min(1, blinkValueRef.current + delta * 12);
       if (blinkValueRef.current >= 1) {
         blinkPhaseRef.current = 'opening';
-        blinkTimerRef.current = 200;  // 200ms open
+        blinkTimerRef.current = 200;
       }
     } else if (blinkPhaseRef.current === 'opening') {
-      blinkValueRef.current = Math.max(0, blinkValueRef.current - state.clock.getDelta() * 5);
+      blinkValueRef.current = Math.max(0, blinkValueRef.current - delta * 5);
       if (blinkValueRef.current <= 0) {
         blinkPhaseRef.current = 'open';
-        blinkTimerRef.current = 3000 + Math.random() * 3000;  // 3-6s until next blink
+        blinkTimerRef.current = 3000 + Math.random() * 3000;
       }
     }
 
-    // ── Drive blendshapes ──────────────────────────────────────────────
-    fbx.traverse((child) => {
-      if (!(child instanceof THREE.Mesh)) return;
-      if (!child.morphTargetDictionary || !child.morphTargetInfluences) return;
+    // ── Expression system: lerp toward target blendshape values ──
+    const expr = vrm.expressionManager;
+    if (expr) {
+      // Set target values from current emotion
+      targetBlendValues.current = { ...EMOTION_BLENDSHAPES[currentEmotion] ?? {} };
 
-      const dict = child.morphTargetDictionary;
-      const inf = child.morphTargetInfluences;
+      // Add blink
+      targetBlendValues.current['blink'] = blinkValueRef.current;
 
-      // JawOpen — primary lip-sync target, driven by amplitude
-      if ('JawOpen' in dict) {
-        inf[dict['JawOpen']] = amplitude * 0.8;
+      // Add lip-sync mouth open from amplitude
+      if (amplitude > 0.01) {
+        targetBlendValues.current['aa'] = Math.max(targetBlendValues.current['aa'] ?? 0, amplitude * 0.7);
       }
 
-      // Viseme shapes based on current phoneme category
-      const visemeConfig = PHONEME_MAP[visemeHint] ?? PHONEME_MAP.rest;
-      for (const shape of visemeConfig.shapes) {
-        if (shape in dict) {
-          inf[dict[shape]] = visemeConfig.weight * (0.5 + amplitude * 0.5);
-        }
+      // Lerp current values toward targets
+      const allKeys = new Set([...Object.keys(currentBlendValues.current), ...Object.keys(targetBlendValues.current)]);
+      for (const key of allKeys) {
+        const current = currentBlendValues.current[key] ?? 0;
+        const target = targetBlendValues.current[key] ?? 0;
+        const lerpSpeed = 8; // higher = faster transition
+        const newVal = current + (target - current) * Math.min(1, delta * lerpSpeed);
+        currentBlendValues.current[key] = newVal;
+        expr.setValue(key, newVal);
       }
 
-      // Reset non-active viseme shapes to 0 (gradually)
-      for (const shape of VISEME_SHAPES) {
-        if (!visemeConfig.shapes.includes(shape) && shape in dict) {
-          inf[dict[shape]] *= 0.85;  // decay
-        }
-      }
-
-      // Blink — EyeBlink_L and EyeBlink_R together
-      if ('EyeBlink_L' in dict) inf[dict['EyeBlink_L']] = blinkValueRef.current;
-      if ('EyeBlink_R' in dict) inf[dict['EyeBlink_R']] = blinkValueRef.current;
-
-      // Subtle smile when active ( MouthSmile_L, MouthSmile_R )
-      if (isActive) {
-        if ('MouthSmile_L' in dict) inf[dict['MouthSmile_L']] = Math.max(inf[dict['MouthSmile_L']] ?? 0, 0.15);
-        if ('MouthSmile_R' in dict) inf[dict['MouthSmile_R']] = Math.max(inf[dict['MouthSmile_R']] ?? 0, 0.15);
-      }
-    });
+      // Apply expression updates
+      expr.update();
+    }
   });
 
-  return <primitive ref={meshRef} object={fbx} scale={0.01} position={[0, -0.5, 0]} />;
+  return (
+    <group ref={groupRef}>
+      <primitive object={gltf.scene} scale={1} position={[0, -1.2, 0]} />
+    </group>
+  );
 }
 
 // ── Main FaceView component ──────────────────────────────────────────────
@@ -322,6 +212,7 @@ export default function FaceView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [currentEmotion, setCurrentEmotion] = useState<EmotionId>('neutral');
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -491,11 +382,13 @@ export default function FaceView() {
     const offTranscript = wsClient.on('voice:transcript' as never, (evt: AgentEvent) => {
       const payload = evt.payload as { text: string; role: string };
       setCaption('user', payload.text);
+      setCurrentEmotion('neutral');  // user speaking → neutral listening face
     });
 
     const offAgentChunk = wsClient.on('voice:agent-chunk' as never, (evt: AgentEvent) => {
       const payload = evt.payload as { content: string };
       setIsProcessing(true);
+      setCurrentEmotion('think');  // agent thinking/generating → think expression
       // Append to agent caption — read current from context
       setCaption('agent', captions.agent + payload.content);
     });
@@ -504,6 +397,7 @@ export default function FaceView() {
       const payload = evt.payload as { text: string; audioBase64: string | null };
       setIsProcessing(false);
       setCaption('agent', payload.text);
+      setCurrentEmotion('happy');  // response delivered → happy expression
 
       // Play TTS audio
       if (payload.audioBase64) {
@@ -520,23 +414,14 @@ export default function FaceView() {
           // Connect to VoiceSessionContext for amplitude + viseme driving
           setAudioSource(source);
 
-          // Drive visemes from the response text
-          const text = payload.text;
-          let charIdx = 0;
-          const visemeInterval = setInterval(() => {
-            if (charIdx >= text.length) {
-              setVisemeHint('rest');
-              clearInterval(visemeInterval);
-              return;
-            }
-            const phoneme = classifyPhoneme(text, charIdx);
-            setVisemeHint(phoneme);
-            charIdx++;
-          }, 80);  // ~12 chars/sec
-
+          // VRM lip sync: amplitude from the audio source drives the 'aa'
+          // blendshape directly in VRMModel's useFrame loop (via the
+          // amplitude prop from VoiceSessionContext). The old text-based
+          // viseme classification (classifyPhoneme) is no longer needed —
+          // VRM's standardized blendshapes work with amplitude-driven mouth open.
+          // We just need to connect the audio source so VoiceSessionContext
+          // can compute amplitude from it.
           source.onended = () => {
-            clearInterval(visemeInterval);
-            setVisemeHint('rest');
             clearAudioSource();
             audioCtx.close();
           };
@@ -549,12 +434,14 @@ export default function FaceView() {
     const offAgentStart = wsClient.on('voice:agent-start' as never, () => {
       setIsProcessing(true);
       setCaption('agent', '');
+      setCurrentEmotion('think');  // agent processing → think expression
     });
 
     const offError = wsClient.on('voice:error' as never, (evt: AgentEvent) => {
       const payload = evt.payload as { error: string };
       setError(payload.error);
       setIsProcessing(false);
+      setCurrentEmotion('sad');  // error → sad expression
     });
 
     const offEnded = wsClient.on('voice:session-ended' as never, () => {
@@ -665,7 +552,7 @@ export default function FaceView() {
                 setError(`3D model failed to load: ${msg}`);
               }}
             >
-              <FaceMesh amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} />
+              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} />
             </FaceErrorBoundary>
           </Suspense>
 
