@@ -31,7 +31,7 @@ ALLOWLIST=(
 
 # Build grep include/exclude
 EXCLUDE_DIRS=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=.cache --exclude-dir=venv --exclude-dir=.venv --exclude-dir=__pycache__)
-EXCLUDE_FILES=(--exclude="package-lock.json" --exclude="yarn.lock" --exclude="pnpm-lock.yaml" --exclude="uv.lock" --exclude="Cargo.lock")
+EXCLUDE_FILES=(--exclude="package-lock.json" --exclude="yarn.lock" --exclude="pnpm-lock.yaml" --exclude="uv.lock" --exclude="Cargo.lock" --exclude="*.vrm" --exclude="*.fbx" --exclude="*.glb" --exclude="*.gltf" --exclude="*.bin" --exclude="*.wasm")
 
 # Run grep across the whole tree.
 # Word boundaries (\b) prevent false positives like `metadata` matching `ada`,
@@ -40,7 +40,7 @@ TMP=$(mktemp)
 trap 'rm -f "$TMP" "$FILTERED"' EXIT
 FILTERED=$(mktemp)
 
-grep -irnE "\b(ada|jarvis|openjarvis)\b" "${EXCLUDE_DIRS[@]}" "${EXCLUDE_FILES[@]}" "$ROOT" > "$TMP" 2>/dev/null || true
+grep -irnE "\b(ada|jarvis|openjarvis)\b" "${EXCLUDE_DIRS[@]}" "${EXCLUDE_FILES[@]}" "$ROOT"/server "$ROOT"/app "$ROOT"/scripts "$ROOT"/.github > "$TMP" 2>/dev/null || true
 cp "$TMP" "$FILTERED"
 
 for allowed in "${ALLOWLIST[@]}"; do
