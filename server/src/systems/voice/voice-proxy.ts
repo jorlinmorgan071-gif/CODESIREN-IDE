@@ -18,7 +18,6 @@ import { v4 as uuid } from 'uuid';
 import { agentManager } from '../../orchestration/agent-manager.js';
 import { makeEvent, broadcast } from '../../ws/events.js';
 import type { AgentTask } from '../../types.js';
-import { addStep } from '../../observability/traces.js';
 import { getTTSProvider } from './tts-provider.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -155,30 +154,76 @@ class VoiceProxy {
       createdAt: Date.now(),
     };
 
-    // Step 3: Send through AgentManager.send() — the real pipeline
+    // Step 3: Send through AgentManager.executeAndWait() — the real pipeline.
+    //
+    // WS-BYPASS FIX (Phase E, post-Build 3): replaced the direct
+    // `agentManager.get('architect-agent')!.execute(task, ...)` call with
+    // `agentManager.executeAndWait(task)`. This gains all 14 previously-skipped
+    // side effects that send()/executeAndWait() provide:
+    //   - Context bundle assembly (Phase B — agent now sees open files, history, memory, project graph)
+    //   - Trust-score governance (success → +0.9, failure → 0)
+    //   - Trace persistence (startTrace + completeTrace → .traces/runs.jsonl)
+    //   - Standard WS events: agent:start, agent:chunk, agent:progress, agent:complete, agent:status, agent:error
+    //   - activeTasks tracking
+    //   - Unknown-agent guard
+    //
+    // executeAndWait() returns { text, filesTouched, error } — the `text` field
+    // replaces the old inline `agentResponse += chunk.content` accumulation.
+    //
+    // LIVE CAPTIONS: executeAndWait() broadcasts standard `agent:chunk` WS events
+    // during iteration. However, FaceView.tsx (the voice UI) listens for the
+    // voice-specific `voice:agent-chunk` event, NOT `agent:chunk`. To preserve
+    // live captions without a frontend change, we register a temporary sink that
+    // forwards `agent:chunk` events for THIS task as `voice:agent-chunk` events.
+    // The sink is unregistered when executeAndWait() resolves.
+    // TODO (follow-up cleanup): FaceView.tsx should listen for `agent:chunk`
+    // filtered by sessionId/taskId instead of the voice-specific event — then
+    // this forwarding sink can be removed.
     broadcast(makeEvent('voice:agent-start' as any, {
       sessionId, taskId, ts: Date.now(),
     }));
 
-    // Collect the agent's response
-    let agentResponse = '';
-    try {
-      for await (const chunk of agentManager.get('architect-agent')!.execute(task, new AbortController().signal)) {
-        if (chunk.type === 'text') {
-          agentResponse += chunk.content;
+    // Register a temporary sink to forward agent:chunk → voice:agent-chunk
+    // for FaceView's live captions. Filter by taskId so we only forward this
+    // task's chunks, not other concurrent tasks'.
+    const { registerSink } = await import('../../ws/events.js');
+    const unsubscribeSink = registerSink((event) => {
+      if (event.event === 'agent:chunk') {
+        const payload = event.payload as { taskId?: string; content?: string; type?: string };
+        if (payload.taskId === taskId) {
+          broadcast(makeEvent('voice:agent-chunk' as any, {
+            sessionId,
+            taskId,
+            content: payload.content ?? '',
+            type: payload.type ?? 'text',
+            ts: Date.now(),
+          }));
         }
-        // Broadcast chunks for live caption updates
-        broadcast(makeEvent('voice:agent-chunk' as any, {
-          sessionId, taskId, content: chunk.content, type: chunk.type, ts: Date.now(),
-        }));
+      }
+    });
+
+    let agentResponse: string;
+    let agentError: string | null;
+    try {
+      const result = await agentManager.executeAndWait(task);
+      agentResponse = result.text;
+      agentError = result.error;
+      if (agentError) {
+        console.error(`[voice-proxy] agent execution failed: ${agentError}`);
+        agentResponse = `I encountered an error: ${agentError}`;
       }
     } catch (err: any) {
-      console.error('[voice-proxy] agent execution failed:', err.message);
+      console.error('[voice-proxy] executeAndWait threw:', err.message);
       agentResponse = `I encountered an error: ${err.message}`;
+      agentError = err.message;
+    } finally {
+      // Always unsubscribe the sink — even on error — to avoid leaks
+      unsubscribeSink();
     }
 
     // Step 4: TTS — text to speech via TTSProvider interface
-    // (ZaiTTSProvider for this phase; KokoroTTSProvider in a later phase)
+    // (ZaiTTSProvider by default; KokoroTTSProvider or ElevenLabsTTSProvider
+    // if the user switched via Settings → Voice)
     let audioBase64: string | null = null;
     let ttsDurationMs = 0;
     try {
@@ -200,17 +245,9 @@ class VoiceProxy {
       ts: Date.now(),
     }));
 
-    // Record in trace
-    addStep(taskId, {
-      kind: 'done',
-      label: `voice turn complete — ASR: "${transcript.slice(0, 60)}" → agent response: ${agentResponse.length} chars → TTS: ${audioBase64 ? 'ok' : 'failed'}`,
-      meta: {
-        voiceTurn: true,
-        transcriptLength: transcript.length,
-        responseLength: agentResponse.length,
-        ttsSuccess: !!audioBase64,
-      },
-    });
+    // Voice-turn summary log (trace is already persisted by executeAndWait —
+    // no need for a separate addStep call that would no-op on the completed trace)
+    console.log(`[voice-proxy] turn complete — ASR: "${transcript.slice(0, 60)}" → agent: ${agentResponse.length} chars → TTS: ${audioBase64 ? 'ok' : 'failed'}${agentError ? ` (agent error: ${agentError})` : ''}`);
 
     this.resetSilenceTimer(sessionId);
   }
