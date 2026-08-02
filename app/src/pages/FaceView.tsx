@@ -426,7 +426,7 @@ export default function FaceView() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [startSession, sessionId, isActive, setAudioSource]);
+  }, [startSession, isActive, setAudioSource]);
 
   // ── End voice session ─────────────────────────────────────────────────
   const handleEnd = useCallback(async () => {
