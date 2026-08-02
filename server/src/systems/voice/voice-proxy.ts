@@ -72,7 +72,61 @@ class VoiceProxy {
     this.resetSilenceTimer(sessionId);
 
     console.log(`[voice-proxy] session started: ${sessionId} for user ${userId}`);
+
+    // Fire wake greeting — non-blocking, fire-and-forget. If TTS fails,
+    // the session still works normally (user just doesn't hear a greeting).
+    this.fireGreeting(sessionId).catch((err) => {
+      console.warn(`[voice-proxy] greeting failed: ${err.message}`);
+    });
+
     return sessionId;
+  }
+
+  /**
+   * Wake greeting — a short, time-of-day-aware greeting spoken via the
+   * active TTS provider when a voice session starts. Fires once per session
+   * (not per turn). No LLM call — static/templated text only.
+   *
+   * Broadcasts a voice:greeting WS event with the greeting text + audio
+   * (audio is null if TTS fails). The client can display the text as a
+   * caption and/or play the audio.
+   */
+  private async fireGreeting(sessionId: string): Promise<void> {
+    const hour = new Date().getHours();
+    let greeting: string;
+    if (hour < 12) {
+      greeting = 'Good morning. Code Siren voice is active. How can I help?';
+    } else if (hour < 18) {
+      greeting = 'Good afternoon. Code Siren voice is active. How can I help?';
+    } else {
+      greeting = 'Good evening. Code Siren voice is active. How can I help?';
+    }
+
+    // Broadcast the greeting text immediately (for live caption)
+    broadcast(makeEvent('voice:greeting' as any, {
+      sessionId,
+      text: greeting,
+      audioBase64: null,  // filled in after TTS completes
+      ts: Date.now(),
+    }));
+
+    // Generate audio via the active TTS provider
+    try {
+      const tts = getTTSProvider();
+      const result = await tts.speak(greeting);
+      console.log(`[voice-proxy] greeting TTS via ${tts.implementation}: ${result.audioBase64.length} chars base64, ~${result.durationMs}ms`);
+
+      // Broadcast the greeting again WITH audio (client replaces the first event)
+      broadcast(makeEvent('voice:greeting' as any, {
+        sessionId,
+        text: greeting,
+        audioBase64: result.audioBase64,
+        ts: Date.now(),
+      }));
+    } catch (err: any) {
+      console.warn(`[voice-proxy] greeting TTS failed: ${err.message}`);
+      // Text-only greeting already broadcast above — audio stays null
+    }
   }
 
   /**

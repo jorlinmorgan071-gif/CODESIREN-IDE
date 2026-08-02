@@ -566,6 +566,33 @@ export default function FaceView() {
       handleEnd();
     });
 
+    // Wake greeting — fires once on session start. Shows greeting text as
+    // caption and plays TTS audio if available.
+    const offGreeting = wsClient.on('voice:greeting' as never, async (evt: AgentEvent) => {
+      const payload = evt.payload as { text: string; audioBase64: string | null };
+      setCaption('agent', payload.text);
+
+      if (payload.audioBase64) {
+        try {
+          const audioCtx = new AudioContext();
+          const audioBuffer = await audioCtx.decodeAudioData(
+            Uint8Array.from(atob(payload.audioBase64), c => c.charCodeAt(0)).buffer
+          );
+          const source = audioCtx.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(audioCtx.destination);
+          source.start();
+          setAudioSource(source);
+          source.onended = () => {
+            clearAudioSource();
+            audioCtx.close();
+          };
+        } catch (err) {
+          console.error('[face] greeting audio playback failed:', err);
+        }
+      }
+    });
+
     return () => {
       offTranscript();
       offAgentChunk();
@@ -574,6 +601,7 @@ export default function FaceView() {
       offError();
       offEnded();
       offAutoDisconnect();
+      offGreeting();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setCaption, setVisemeHint, setAudioSource, clearAudioSource, handleEnd, authReady]);
