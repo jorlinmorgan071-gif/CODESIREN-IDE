@@ -25,6 +25,7 @@
 //     American English female)
 
 import { sidecarManager, ensureKokoroSidecar, SidecarCrashedError } from '../../sidecars/manager.js';
+import { wrapPcmInWav, pcmDurationMs } from './audio-wav.js';
 import type { TTSProvider, TTSResult } from './tts-provider.js';
 
 // Default voice per Section 0.1 grading — af_heart is the A-grade American
@@ -89,17 +90,28 @@ export class KokoroTTSProvider implements TTSProvider {
       throw new Error(`Kokoro TTS failed: ${resp.error ?? 'unknown error'}`);
     }
 
-    // Map sidecar response → TTSResult
-    const audioBase64 = String(resp.audioBase64 ?? '');
-    if (!audioBase64) {
+    // Map sidecar response → TTSResult.
+    //
+    // The sidecar returns raw int16 PCM bytes (base64-encoded) — NOT WAV-wrapped,
+    // despite the sidecar's "format": "wav" field (which is a historical lie).
+    // We wrap the PCM in a proper WAV header here on the Node side using the
+    // shared wrapPcmInWav() util — same pattern as ElevenLabsTTSProvider and
+    // StubTTSProvider. This ensures every TTSResult.audioBase64 across all
+    // providers contains a valid RIFF/WAVE file that browsers can decode.
+    const pcmBase64 = String(resp.audioBase64 ?? '');
+    if (!pcmBase64) {
       throw new Error('Kokoro TTS returned ok=true but no audioBase64');
     }
 
+    const sampleRate = Number(resp.sampleRate ?? 24000);
+    const pcmBytes = Buffer.from(pcmBase64, 'base64');
+    const wavBuffer = wrapPcmInWav(pcmBytes, sampleRate, 1);
+
     return {
-      audioBase64,
-      format: String(resp.format ?? 'wav'),
-      sampleRate: Number(resp.sampleRate ?? 24000),
-      durationMs: Number(resp.durationMs ?? 0),
+      audioBase64: wavBuffer.toString('base64'),
+      format: 'wav',
+      sampleRate,
+      durationMs: pcmDurationMs(pcmBytes, sampleRate, 1),
     };
   }
 }

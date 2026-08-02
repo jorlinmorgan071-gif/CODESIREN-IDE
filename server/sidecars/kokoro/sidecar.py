@@ -154,7 +154,12 @@ def synthesize(text: str, voice: str, lang_code: str) -> dict:
         "audioBase64": audio_base64,
         "sampleRate": SAMPLE_RATE,
         "durationMs": duration_ms,
-        "format": "wav",
+        # Raw int16 PCM, NOT WAV. The Node-side KokoroTTSProvider wraps it
+        # in a WAV header using the shared wrapPcmInWav() util before
+        # returning TTSResult. Keeping the sidecar output as raw PCM is
+        # simpler (no Python wave module needed) and consistent with how
+        # ElevenLabsTTSProvider handles its raw pcm_24000 API response.
+        "format": "pcm",
         "phonemes": chunks[0].phonemes if chunks else "",
     }
 
