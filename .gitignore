@@ -32,6 +32,8 @@ server/.biometric-templates/
 # Phase E: voice-settings.json + orchestrator-settings.json live here
 # (user preferences, not source code — regenerated on first use)
 server/.runtime/
+# Agent run traces — runtime-generated JSONL, regenerated on every server boot
+server/.traces/
 server/.env.local
 server/.env.*.local
 server/traces-export-*.json

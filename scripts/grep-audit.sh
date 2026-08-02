@@ -6,7 +6,7 @@
 #   - this script itself
 #   - CHANGELOG.md / acknowledgments (the directive explicitly allows these)
 #   - the inventory doc (which references them by name as the donor projects)
-#   - .git/ node_modules/ dist/ build artifacts
+#   - .git/ node_modules/ dist/ build venv .venv artifacts
 #
 # Exit non-zero if any unexpected match is found.
 
@@ -30,7 +30,7 @@ ALLOWLIST=(
 )
 
 # Build grep include/exclude
-EXCLUDE_DIRS=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=.cache)
+EXCLUDE_DIRS=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=.cache --exclude-dir=venv --exclude-dir=.venv --exclude-dir=__pycache__)
 EXCLUDE_FILES=(--exclude="package-lock.json" --exclude="yarn.lock" --exclude="pnpm-lock.yaml" --exclude="uv.lock" --exclude="Cargo.lock")
 
 # Run grep across the whole tree.
