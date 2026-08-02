@@ -41,6 +41,7 @@ interface VoiceSessionContextValue extends VoiceSessionState {
   setVisemeHint: (hint: string) => void;
   setAudioSource: (source: AudioNode) => void;
   clearAudioSource: () => void;
+  ensureAudioContext: () => AudioContext;
   currentAudioSource: AudioNode | null;
   audioContext: AudioContext | null;
 }
@@ -169,12 +170,12 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
   const value = useMemo(() => ({
     isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint,
     startSession, endSession, toggleMute, setCaption, setVisemeHint,
-    setAudioSource, clearAudioSource,
+    setAudioSource, clearAudioSource, ensureAudioContext,
     currentAudioSource,
     audioContext: audioContextState,
   }), [isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint,
     startSession, endSession, toggleMute, setCaption, setVisemeHint,
-    setAudioSource, clearAudioSource, currentAudioSource, audioContextState]);
+    setAudioSource, clearAudioSource, ensureAudioContext, currentAudioSource, audioContextState]);
 
   return (
     <VoiceSessionContext.Provider value={value}>

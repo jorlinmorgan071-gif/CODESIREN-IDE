@@ -84,7 +84,7 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
   const breathingRef = useRef(0);
   const currentBlendValues = useRef<Record<string, number>>({});
   const targetBlendValues = useRef<Record<string, number>>({});
-  const lookAtTarget = useRef(new THREE.Vector3(0, 0, 3));
+  const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
   const lipSyncLogTimer = useRef(0);
@@ -176,9 +176,8 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
     // ── Eye tracking: cursor → look-at target ──
     const mouseX = (state.mouse.x * 0.5);
     const mouseY = (state.mouse.y * 0.3);
-    lookAtTarget.current.set(mouseX, mouseY, 3);
+    lookAtTarget.current.position.set(mouseX, mouseY + 1, 3);
     if (vrm.lookAt) {
-      // lookAt target can be a Vector3 or Object3D — VRM handles both
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (vrm.lookAt as any).target = lookAtTarget.current;
     }
@@ -213,10 +212,34 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
 
       // ── Real lip sync via wlipsync MFCC vowel analysis ──
       const lipSyncNode = lipSyncNodeRef.current;
+      // Debug: log whether lip sync node exists
+      if (lipSyncLogTimer.current > 0.2) {
+        lipSyncLogTimer.current = 0;
+        if (lipSyncNode) {
+          const w = lipSyncNode.weights || {};
+          const vol = lipSyncNode.volume || 0;
+          const vowelWeights = Object.entries(w)
+            .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
+            .map(([k, v]) => `${k}=${(v as number).toFixed(3)}`)
+            .join(' ');
+          console.log(`[face] lip sync: ${vowelWeights} vol=${vol.toFixed(3)}`);
+        }
+      }
       if (lipSyncNode && lipSyncNode.weights) {
         // Read vowel weights from wlipsync (A, E, I, O, U, S)
         const weights = lipSyncNode.weights;
         const volume = lipSyncNode.volume;
+
+        // Debug: log raw weights every 200ms regardless of volume
+        lipSyncLogTimer.current += delta;
+        if (lipSyncLogTimer.current > 0.2) {
+          lipSyncLogTimer.current = 0;
+          const vowelWeights = Object.entries(weights)
+            .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
+            .map(([k, v]) => `${k}=${(v as number).toFixed(3)}`)
+            .join(' ');
+          console.log(`[face] lip sync weights: ${vowelWeights} vol=${volume.toFixed(3)}`);
+        }
 
         // Map vowel weights to VRM blendshapes with volume scaling
         for (const [vowel, blendshape] of Object.entries(VOWEL_TO_BLENDSHAPE)) {
@@ -233,12 +256,12 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
 
         // Log vowel weights periodically (every ~500ms) for proof
         lipSyncLogTimer.current += delta;
-        if (lipSyncLogTimer.current > 0.5 && volume > 0.05) {
+        if (lipSyncLogTimer.current > 0.2 && volume > 0.01) {
           lipSyncLogTimer.current = 0;
           const topVowel = Object.entries(weights)
             .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
             .sort((a, b) => b[1] - a[1])[0];
-          if (topVowel && topVowel[1] > 0.1) {
+          if (topVowel && topVowel[1] > 0.01) {
             console.log(`[face] lip sync: ${topVowel[0]}=${topVowel[1].toFixed(2)} vol=${volume.toFixed(2)} → ${VOWEL_TO_BLENDSHAPE[topVowel[0]]}=${(topVowel[1] * volume * 1.5).toFixed(2)}`);
           }
         }
@@ -279,7 +302,7 @@ export default function FaceView() {
     isActive, isMuted, amplitude, sessionId, captions, visemeHint,
     startSession, endSession, toggleMute,
     setCaption, setVisemeHint, setAudioSource, clearAudioSource,
-    currentAudioSource, audioContext,
+    currentAudioSource, audioContext, ensureAudioContext,
   } = useVoiceSession();
   // Auth-gate fix (Bug A): the WS listeners effect below subscribes to
   // voice:* events which carry auth-context. Don't attach them until
@@ -484,7 +507,11 @@ export default function FaceView() {
       // Play TTS audio
       if (payload.audioBase64) {
         try {
-          const audioCtx = new AudioContext();
+          // Reuse the VoiceSessionContext's AudioContext — AudioNodes can
+          // only connect within the same context. ensureAudioContext() creates
+          // one if it doesn't exist yet (e.g., greeting arrives before
+          // startSession() has run).
+          const audioCtx = audioContext ?? ensureAudioContext();
           const audioBuffer = await audioCtx.decodeAudioData(
             Uint8Array.from(atob(payload.audioBase64), c => c.charCodeAt(0)).buffer
           );
@@ -493,7 +520,7 @@ export default function FaceView() {
           source.connect(audioCtx.destination);
           source.start();
 
-          // Connect to VoiceSessionContext for amplitude + viseme driving
+          // Connect to VoiceSessionContext for amplitude + lip sync driving
           setAudioSource(source);
 
           // VRM lip sync: amplitude from the audio source drives the 'aa'
@@ -505,7 +532,10 @@ export default function FaceView() {
           // can compute amplitude from it.
           source.onended = () => {
             clearAudioSource();
-            audioCtx.close();
+            // Don't close audioCtx if it belongs to VoiceSessionContext
+            if (!audioContext) {
+              try { audioCtx.close(); } catch { /* already closed */ }
+            }
           };
         } catch (err) {
           console.error('[face] TTS audio playback failed:', err);
@@ -543,7 +573,10 @@ export default function FaceView() {
 
       if (payload.audioBase64) {
         try {
-          const audioCtx = new AudioContext();
+          // Reuse the VoiceSessionContext's AudioContext — AudioNodes can
+          // only connect within the same context. ensureAudioContext() creates
+          // one if it doesn't exist yet.
+          const audioCtx = audioContext ?? ensureAudioContext();
           const audioBuffer = await audioCtx.decodeAudioData(
             Uint8Array.from(atob(payload.audioBase64), c => c.charCodeAt(0)).buffer
           );
@@ -554,7 +587,9 @@ export default function FaceView() {
           setAudioSource(source);
           source.onended = () => {
             clearAudioSource();
-            audioCtx.close();
+            if (!audioContext) {
+              try { audioCtx.close(); } catch { /* already closed */ }
+            }
           };
         } catch (err) {
           console.error('[face] greeting audio playback failed:', err);
