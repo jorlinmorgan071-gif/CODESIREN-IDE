@@ -381,7 +381,18 @@ class GhostModeMachine {
         // Verification failed — honest rollback. The fix didn't actually
         // reduce the vuln count, so we transition to rolled_back (NOT complete).
         // This is the "verify" step doing real work, not assuming success.
+        //
+        // Broadcast ghost:rollback (matching the existing rollback() method's
+        // pattern) so the UI + any waiting agents see the rollback signal.
+        // Without this broadcast, the only observable signal would be the
+        // state transition — which cycles to 'scanning' immediately.
         console.warn(`[ghost] applyFix: verification failed — rolling back. ${result.reason ?? ''}`);
+        broadcast(makeEvent('ghost:rollback', {
+          detectionId: plan.findingId,
+          reason: `verification failed: ${result.reason ?? 'vuln count did not decrease'}`,
+          vulnsBefore: result.vulnsBefore,
+          vulnsAfter: result.vulnsAfter,
+        }));
         this.transition('rolled_back');
       }
       this.transition('scanning');

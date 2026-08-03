@@ -44,6 +44,18 @@ export interface DryRunResult {
   raw: string;
 }
 
+// ── Internal function holder (for testability) ─────────────────────────
+//
+// countVulnerabilities is called internally by applyNpmAuditFix. To allow
+// tests to spy on it (vi.spyOn replaces the property on this object, and
+// internal calls go through this object too), we route internal calls
+// through `internals.countVulnerabilities` instead of the bare function.
+// This is the standard pattern for making ESM module-internal calls
+// spyable without changing the public API.
+const internals = {
+  countVulnerabilities: (cwd: string): number => countVulnerabilitiesImpl(cwd),
+};
+
 /**
  * Run `npm audit fix --dry-run --json` to determine if an in-range fix exists.
  *
@@ -231,7 +243,7 @@ export function applyNpmAuditFix(cwd: string): ApplyFixResult {
   }
 
   // Capture vuln count BEFORE the fix
-  const vulnsBefore = countVulnerabilities(cwd);
+  const vulnsBefore = internals.countVulnerabilities(cwd);
 
   // Run `npm audit fix` (NO --force, ever)
   let fixOutput = '';
@@ -262,7 +274,7 @@ export function applyNpmAuditFix(cwd: string): ApplyFixResult {
   }
 
   // Verify: re-audit and compare vuln count
-  const vulnsAfter = countVulnerabilities(cwd);
+  const vulnsAfter = internals.countVulnerabilities(cwd);
 
   if (vulnsAfter < vulnsBefore) {
     // Vuln count decreased — success
@@ -293,6 +305,21 @@ export function applyNpmAuditFix(cwd: string): ApplyFixResult {
  * field is the canonical count.
  */
 export function countVulnerabilities(cwd: string): number {
+  return internals.countVulnerabilities(cwd);
+}
+
+/**
+ * The real implementation of countVulnerabilities. Called via
+ * `internals.countVulnerabilities` so tests can spy on it.
+ *
+ * Run `npm audit --json` and return the total vulnerability count.
+ * Returns -1 if the audit fails entirely (can't parse JSON, timeout, etc.).
+ *
+ * Per Section 0 testing: npm audit exits 0 if no vulns, non-zero if vulns
+ * exist. Either way, stdout has the JSON. The metadata.vulnerabilities.total
+ * field is the canonical count.
+ */
+function countVulnerabilitiesImpl(cwd: string): number {
   if (!existsSync(join(cwd, 'node_modules')) || !existsSync(join(cwd, 'package-lock.json'))) {
     return -1;
   }
@@ -350,11 +377,13 @@ export function buildPerformanceSuggestionPlan(finding: GhostFinding): GhostPlan
 }
 
 // ── Test exports ────────────────────────────────────────────────────────
-
+// `internals` is exported so tests can vi.spyOn(internals, 'countVulnerabilities')
+// to simulate verification failure without mocking the real npm audit fix command.
 export const __test__ = {
   dryRunNpmAuditFix,
   applyNpmAuditFix,
   countVulnerabilities,
   buildDependencyFixPlan,
   buildPerformanceSuggestionPlan,
+  internals,
 };

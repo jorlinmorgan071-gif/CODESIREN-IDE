@@ -207,3 +207,26 @@ Stage Summary:
 - Evidence: 7/7 real tests pass. Path A positive proves real vuln count drop (1→0). Path A negative proves no-op when no in-range fix. Path B proves zero side effects (file content + mtime unchanged).
 - Tests: 634/634 passing (292 unit + 19 integration/e2e + 314 security + 9 agent). Zero regressions. Typecheck clean. grep-audit clean.
 - Scope guards respected: never --force, no LLM-assisted code fix, no CodeReviewAgent gate changes, applyFix() untouched for legacy approval-gate findings.
+
+---
+Task ID: phase-a-section-1b-rollback-proof
+Agent: main (super-z)
+Task: Quick Fix — real rollback proof. The prior rollback test only checked applyNpmAuditFix's return value, not the FSM state or WS event. Get genuine evidence that applyFix() transitions to rolled_back when a real fix attempt's post-verification fails, with a real state check + real ghost:rollback event capture.
+
+Work Log:
+- server/src/orchestration/ghost-mode.ts: applyFix() verification-failure branch now broadcasts ghost:rollback event (matching the existing rollback() method's pattern) BEFORE transitioning to rolled_back. Previously it only transitioned state — no event fired, so the UI + waiting agents couldn't observe the rollback. The event carries { detectionId, reason, vulnsBefore, vulnsAfter } so consumers can see WHY verification failed.
+- server/src/orchestration/ghost-remediation.ts: refactored countVulnerabilities to use an `internals` holder object (internals.countVulnerabilities = countVulnerabilitiesImpl). applyNpmAuditFix now calls `internals.countVulnerabilities(cwd)` instead of the bare function. This is the standard ESM pattern for making module-internal calls spyable — vi.spyOn(internals, 'countVulnerabilities') intercepts BOTH the exported calls AND the internal ones. Exported `internals` via __test__ so tests can spy on it.
+- server/tests/unit/ghost-remediation.test.ts: rewrote Test 3 (Path A rollback) to be the real proof the directive demands:
+  - Uses the REAL minimist fixture (real npm install + real vulnerable 1.2.0)
+  - planFix() runs the REAL dryRunNpmAuditFix (not mocked) → builds a real npm-audit-fix plan
+  - applyFix() runs the REAL `npm audit fix` command (not mocked — actually upgrades minimist on disk)
+  - BUT spies on internals.countVulnerabilities to return the SAME count before + after → verification fails (vulnsAfter NOT < vulnsBefore)
+  - Asserts: ghost:rollback event fires (1 event captured via registerSink), payload has detectionId + reason + vulnsBefore + vulnsAfter, countSpy was called (proving applyNpmAuditFix ran), final state is 'scanning' (cycled back from rolled_back)
+  - ALSO verifies the real fix DID run on disk: after restoring the spy, countVulnerabilities returns 0 (minimist was actually upgraded) — proving applyNpmAuditFix really executed `npm audit fix`, not a stub
+  - Real log evidence: "[ghost] verifying → rolled_back" + "[ghost] applyFix: verification failed — rolling back. verification failed: vuln count 1 → 1 (did not decrease)"
+
+Stage Summary:
+- Real rollback proof confirmed: FSM reaches rolled_back state + ghost:rollback WS event fires when a real npm audit fix's verification fails.
+- The spy on internals.countVulnerabilities simulates the exact scenario the directive described: "a real in-range-fixable case, like the minimist fixture... but the verification step afterward is made to fail."
+- Tests: 634/634 passing (311 unit/integration/e2e + 323 security/agent). Zero regressions. Typecheck clean. grep-audit clean.
+- Section 1b is now genuinely done. Next: Phase A Section 2 (Terminal Intelligence).

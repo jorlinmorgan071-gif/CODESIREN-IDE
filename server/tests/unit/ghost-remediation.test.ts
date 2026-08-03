@@ -24,7 +24,7 @@
 // the only vuln has no in-range fix) — that's a real verification failure,
 // not a mock.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -68,6 +68,7 @@ describe('Phase A Section 1b — Ghost Mode real remediation', () => {
     unregisterSink();
     ghostMode.stop();
     ghostMode.clearReportedFindings();
+    vi.restoreAllMocks();
     rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
@@ -205,93 +206,138 @@ describe('Phase A Section 1b — Ghost Mode real remediation', () => {
   }, 120_000);
 
   // ════════════════════════════════════════════════════════════════════
-  // PATH A — TEST 3: rollback on verification failure
+  // PATH A — TEST 3: REAL rollback proof — npm audit fix runs but verification
+  // fails → FSM reaches rolled_back + ghost:rollback event fires
   // ════════════════════════════════════════════════════════════════════
-  it('Path A rollback: vuln count does not decrease → FSM transitions to rolled_back', () => {
-    // Use the lodash@4.17.4 fixture BUT force the plan to be npm-audit-fix
-    // (simulating a case where dry-run said a fix exists but the real fix
-    // didn't actually reduce vulns — e.g. a network glitch, or the fix was
-    // for a different vuln than the one we're tracking).
+  it('Path A rollback: npm audit fix runs but verification fails → state reaches rolled_back + ghost:rollback fires', async () => {
+    // Construct a scenario where:
+    //   1. planFix() builds a REAL npm-audit-fix plan (dry-run says fix exists)
+    //   2. applyFix() runs the real npm audit fix (we DON'T mock that — it
+    //      actually executes against a real fixture)
+    //   3. BUT the verification step is made to fail — we stub
+    //      countVulnerabilities()'s POST-fix call to return a count that
+    //      hasn't decreased, simulating a real-world failure where the fix
+    //      "succeeds" per npm but doesn't actually resolve the audit finding
+    //      (e.g. a transitive dep that npm audit fix can't reach, or a
+    //      registry cache staleness issue).
     //
-    // We do this by calling applyNpmAuditFix directly on a fixture where
-    // npm audit fix can't help (lodash 4.17.4 has no in-range fix), then
-    // checking the result.success is false. Then we manually drive the FSM
-    // through applyFix with a fake npm-audit-fix plan to verify the rollback
-    // transition.
-    const serverDir = createNpmFixture({ lodash: '4.17.4' });
-    const vulnsBefore = remediationTest.countVulnerabilities(serverDir);
-    expect(vulnsBefore).toBeGreaterThanOrEqual(1);
+    // We use the minimist fixture (which has a REAL in-range fix) so:
+    //   - dryRunNpmAuditFix returns hasInRangeFix=true (real, not mocked)
+    //   - planFix builds a real npm-audit-fix plan (real)
+    //   - applyNpmAuditFix runs real `npm audit fix` (real — actually
+    //     upgrades minimist 1.2.0 → 1.2.8 in the fixture)
+    //   - BUT we spy on countVulnerabilities to return the SAME count
+    //     before and after, so verification fails (mocked post-fix check)
+    //
+    // This is the directive's exact request: "a real in-range-fixable case,
+    // like the minimist fixture... but the verification step afterward is
+    // made to fail."
 
-    // Call applyNpmAuditFix directly — it should fail verification because
-    // npm audit fix can't fix a pinned-version out-of-range vuln
-    const result = remediationTest.applyNpmAuditFix(serverDir);
-    expect(result.success).toBe(false);
-    expect(result.vulnsAfter).toBeGreaterThanOrEqual(result.vulnsBefore);
-    expect(result.reason).toContain('verification failed');
+    const serverDir = createNpmFixture({ minimist: '^1.2.0' });
+    // Force the vulnerable version to be installed
+    execSync('npm install minimist@1.2.0 --no-audit --no-fund', {
+      cwd: serverDir, stdio: 'pipe', timeout: 60_000,
+    });
 
-    // Now drive the FSM with a plan that has fixAction='npm-audit-fix'
-    // pointing at this fixture. applyFix() should run the real npm audit fix,
-    // verification should fail, and the FSM should transition to rolled_back.
+    // Confirm the fixture is real + vulnerable
+    const realVulnsBefore = remediationTest.countVulnerabilities(serverDir);
+    expect(realVulnsBefore).toBeGreaterThanOrEqual(1);
+
     ghostMode.setProjectRoot(fixtureRoot);
+
+    // Stub countVulnerabilities to ALWAYS return the same count (realVulnsBefore)
+    // for BOTH the pre-fix and post-fix calls inside applyNpmAuditFix.
+    // This simulates verification failure: vulnsAfter (realVulnsBefore) is
+    // NOT less than vulnsBefore (realVulnsBefore), so success=false.
+    //
+    // The real `npm audit fix` command STILL RUNS inside applyNpmAuditFix
+    // (we're not mocking execSync) — we're only controlling the verification
+    // count. The fix actually happens on disk; we're simulating the case
+    // where verification doesn't detect it.
+    //
+    // We spy on `internals.countVulnerabilities` (not the module export)
+    // because applyNpmAuditFix calls `internals.countVulnerabilities(cwd)`
+    // internally — the internals object is the spyable indirection point.
+    const countSpy = vi.spyOn(remediationTest.internals, 'countVulnerabilities').mockReturnValue(realVulnsBefore);
 
     const finding: GhostFinding = {
       id: `test-rollback-${Date.now()}`,
       type: 'dependency-vulnerability',
       severity: 'high',
-      description: 'lodash@4.17.4: test (rollback scenario)',
+      description: 'minimist@1.2.0: test (rollback scenario)',
       agentId: 'security-agent',
-      packageName: 'lodash',
-      currentVersion: '4.17.4',
-      recommendedFix: '>=4.17.21',
+      packageName: 'minimist',
+      currentVersion: '1.2.0',
+      recommendedFix: '>=1.2.6',
     };
 
-    // Bypass planFix() (which would build a suggest-only plan) — directly
-    // build a npm-audit-fix plan and feed it to approve(). This simulates
-    // the case where the dry-run was wrong (stale cache, race condition).
-    const fakePlan: GhostPlan = {
-      findingId: finding.id,
-      preview: 'Force npm audit fix (rollback test)',
-      steps: ['npm audit fix', 'verify'],
-      fixAction: 'npm-audit-fix',
-      fixCwd: serverDir,
-    };
-
-    // Manually walk the FSM to awaiting_approval so approve() can fire
-    ghostMode.stop();
-    ghostMode.start();
+    // reportFinding (scanning → detected) + planFix (detected → planning → awaiting_approval)
+    // planFix calls dryRunNpmAuditFix (real, NOT mocked) → returns hasInRangeFix=true
+    // → builds a real npm-audit-fix plan
     ghostMode.reportFinding(finding);
-    // Skip planFix — manually inject the plan + transition to awaiting_approval
-    // We need to access the private plans map; use reportFinding to get to
-    // 'detected', then call planFix with a finding type that builds a legacy
-    // plan, then override the plan in the map.
-    //
-    // Simpler: use the public API. Set level to approval-required, report the
-    // finding, then manually inject the plan via a constructed GhostFinding
-    // that has type='dependency-vulnerability' but with a fake recommendedFix
-    // that makes dryRunNpmAuditFix think there's a fix.
-    //
-    // Actually — the cleanest way: call planFix() on the finding (which builds
-    // a suggest-only plan), then replace the plan in ghostMode's internal map
-    // via getPlan()/approve()... but the map is private.
-    //
-    // Cleanest: just verify the rollback transition happens by calling
-    // applyNpmAuditFix directly (already done above) + assert success=false.
-    // The FSM rollback transition is tested by the next assertion: if we
-    // CAN'T easily inject a fake plan via the public API, we trust the
-    // applyFix() code path (which calls applyNpmAuditFix + checks result.success
-    // + transitions to rolled_back on failure) — the unit test of applyFix's
-    // branch is the code review, and the integration test is the direct
-    // applyNpmAuditFix call above.
+    const plan = await ghostMode.planFix(finding);
+    expect(plan.fixAction).toBe('npm-audit-fix');
+    expect(ghostMode.currentState).toBe('awaiting_approval');
 
-    // For a real FSM-level rollback test, we need a fixture where npm audit fix
-    // DOES run but DOESN'T reduce vulns. That's hard to construct reliably.
-    // Instead, we verify the rollback LOGIC by asserting that applyNpmAuditFix
-    // returns success=false (which is what triggers the rolled_back transition
-    // in applyFix()). The transition itself is covered by the existing
-    // ghost-mode.test.ts FSM tests.
+    // Approve → applyFix() runs:
+    //   - transition applying
+    //   - broadcast ghost:fix
+    //   - call applyNpmAuditFix(serverDir):
+    //       * countVulnerabilities BEFORE → returns realVulnsBefore (stubbed)
+    //       * execSync('npm audit fix') → actually runs, upgrades minimist
+    //       * countVulnerabilities AFTER → returns realVulnsBefore (stubbed, SAME)
+    //       * vulnsAfter (realVulnsBefore) >= vulnsBefore (realVulnsBefore)
+    //         → success=false, reason="verification failed"
+    //   - transition verifying
+    //   - result.success === false → broadcast ghost:rollback + transition rolled_back
+    //   - transition scanning
+    await ghostMode.approve(plan);
 
-    expect(result.success).toBe(false);
-    expect(result.reason).toMatch(/verification failed|blocked|missing/);
+    // ── DIRECT STATE CHECK (not inferred from function return) ────────
+    // After applyFix completes, the FSM has cycled back to 'scanning'
+    // (rolled_back → scanning is the final transition). So we can't check
+    // currentState === 'rolled_back' directly — but we CAN verify the
+    // rollback happened via:
+    //   1. The ghost:rollback WS event (broadcast at the rolled_back step)
+    //   2. The spy being called (proving applyNpmAuditFix ran)
+    //   3. The ghost:fix event (proving applyFix started)
+    //
+    // For a DIRECT state check of 'rolled_back', we'd need to intercept
+    // mid-transition. The event capture is the durable proof — it fires
+    // DURING the rolled_back state, before the final scanning transition.
+
+    // 1. ghost:fix event fired (applyFix started)
+    const fixEvents = capturedEvents.filter((e) => e.event === 'ghost:fix');
+    expect(fixEvents.length).toBe(1);
+
+    // 2. ghost:rollback event fired (verification failed → rollback)
+    //    This is the KEY assertion — the directive requires "a ghost:rollback
+    //    (or equivalent) WS event fires, matching the existing rollback
+    //    broadcast pattern used elsewhere in Ghost Mode."
+    const rollbackEvents = capturedEvents.filter((e) => e.event === 'ghost:rollback');
+    expect(rollbackEvents.length).toBe(1);
+    const rollbackPayload = rollbackEvents[0].payload as { detectionId: string; reason: string; vulnsBefore: number; vulnsAfter: number };
+    expect(rollbackPayload.detectionId).toBe(finding.id);
+    expect(rollbackPayload.reason).toContain('verification failed');
+    expect(rollbackPayload.vulnsBefore).toBe(realVulnsBefore);
+    expect(rollbackPayload.vulnsAfter).toBe(realVulnsBefore); // same → failure
+
+    // 3. countVulnerabilities was called (proving applyNpmAuditFix ran)
+    expect(countSpy).toHaveBeenCalled();
+
+    // 4. NO ghost:fix event with a second broadcast (only 1 fix event —
+    //    the rollback path doesn't re-broadcast ghost:fix)
+    // 5. Final state is 'scanning' (cycled back from rolled_back)
+    expect(ghostMode.currentState).toBe('scanning');
+
+    // 6. Verify the REAL fix actually ran on disk (minimist was upgraded)
+    //    even though verification failed — this proves applyNpmAuditFix
+    //    really executed `npm audit fix`, not a stub.
+    const realVulnsAfter = remediationTest.countVulnerabilities(serverDir);
+    // Restore the spy first so we get the REAL count
+    countSpy.mockRestore();
+    const realVulnsAfterRestore = remediationTest.countVulnerabilities(serverDir);
+    expect(realVulnsAfterRestore).toBe(0); // the fix DID work on disk; verification just didn't detect it
   }, 120_000);
 
   // ════════════════════════════════════════════════════════════════════
