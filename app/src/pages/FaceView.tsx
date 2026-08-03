@@ -87,7 +87,6 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
-  const lipSyncLogTimer = useRef(0);
 
   // Load VRM model via GLTFLoader with VRMLoaderPlugin
   const gltf = useLoader(GLTFLoader, '/models/sample.vrm', (loader: GLTFLoader) => {
@@ -136,7 +135,6 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
   useEffect(() => {
     if (!audioSource || !audioContext || !lipSyncProfileRef.current) return;
     if (lipSyncNodeRef.current) {
-      // Disconnect old source from previous lip sync node
       try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
     }
 
@@ -144,8 +142,25 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
       .then(node => {
         lipSyncNodeRef.current = node;
         audioSource.connect(node);
-        // Don't connect node to destination — we only read weights, don't need audio output
         console.log('[face] wlipsync node created and connected to audio source');
+
+        // Decoupled logging: setInterval reads weights every 200ms, independent
+        // of requestAnimationFrame / useFrame frame rate. This ensures we capture
+        // vowel weight values even in headless browsers where rAF runs at 1-5 FPS.
+        const logInterval = setInterval(() => {
+          const lsNode = lipSyncNodeRef.current;
+          if (!lsNode || !lsNode.weights) return;
+          const w = lsNode.weights;
+          const vol = lsNode.volume || 0;
+          const vowelStr = Object.entries(w)
+            .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
+            .map(([k, v]) => `${k}=${(v as number).toFixed(3)}`)
+            .join(' ');
+          console.log(`[face] lip sync: ${vowelStr} vol=${vol.toFixed(3)}`);
+        }, 200);
+
+        // Clear interval when audio source changes or component unmounts
+        return () => clearInterval(logInterval);
       })
       .catch(err => console.warn('[face] Failed to create wlipsync node:', err));
 
@@ -211,58 +226,22 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
       targetBlendValues.current['blink'] = blinkValueRef.current;
 
       // ── Real lip sync via wlipsync MFCC vowel analysis ──
+      // Note: logging is done via setInterval in the useEffect above (decoupled
+      // from useFrame frame rate). Here we just read weights and apply blendshapes.
       const lipSyncNode = lipSyncNodeRef.current;
-      // Debug: log whether lip sync node exists
-      if (lipSyncLogTimer.current > 0.2) {
-        lipSyncLogTimer.current = 0;
-        if (lipSyncNode) {
-          const w = lipSyncNode.weights || {};
-          const vol = lipSyncNode.volume || 0;
-          const vowelWeights = Object.entries(w)
-            .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
-            .map(([k, v]) => `${k}=${(v as number).toFixed(3)}`)
-            .join(' ');
-          console.log(`[face] lip sync: ${vowelWeights} vol=${vol.toFixed(3)}`);
-        }
-      }
       if (lipSyncNode && lipSyncNode.weights) {
-        // Read vowel weights from wlipsync (A, E, I, O, U, S)
         const weights = lipSyncNode.weights;
         const volume = lipSyncNode.volume;
-
-        // Debug: log raw weights every 200ms regardless of volume
-        lipSyncLogTimer.current += delta;
-        if (lipSyncLogTimer.current > 0.2) {
-          lipSyncLogTimer.current = 0;
-          const vowelWeights = Object.entries(weights)
-            .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
-            .map(([k, v]) => `${k}=${(v as number).toFixed(3)}`)
-            .join(' ');
-          console.log(`[face] lip sync weights: ${vowelWeights} vol=${volume.toFixed(3)}`);
-        }
 
         // Map vowel weights to VRM blendshapes with volume scaling
         for (const [vowel, blendshape] of Object.entries(VOWEL_TO_BLENDSHAPE)) {
           const weight = weights[vowel] ?? 0;
-          // Scale by volume (0-1) and apply a cap to prevent over-articulation
           const scaled = Math.min(1, weight * volume * 1.5);
           if (scaled > 0.01) {
             targetBlendValues.current[blendshape] = Math.max(
               targetBlendValues.current[blendshape] ?? 0,
               scaled
             );
-          }
-        }
-
-        // Log vowel weights periodically (every ~500ms) for proof
-        lipSyncLogTimer.current += delta;
-        if (lipSyncLogTimer.current > 0.2 && volume > 0.01) {
-          lipSyncLogTimer.current = 0;
-          const topVowel = Object.entries(weights)
-            .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
-            .sort((a, b) => b[1] - a[1])[0];
-          if (topVowel && topVowel[1] > 0.01) {
-            console.log(`[face] lip sync: ${topVowel[0]}=${topVowel[1].toFixed(2)} vol=${volume.toFixed(2)} → ${VOWEL_TO_BLENDSHAPE[topVowel[0]]}=${(topVowel[1] * volume * 1.5).toFixed(2)}`);
           }
         }
       } else {
