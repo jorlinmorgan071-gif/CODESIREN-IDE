@@ -230,3 +230,42 @@ Stage Summary:
 - The spy on internals.countVulnerabilities simulates the exact scenario the directive described: "a real in-range-fixable case, like the minimist fixture... but the verification step afterward is made to fail."
 - Tests: 634/634 passing (311 unit/integration/e2e + 323 security/agent). Zero regressions. Typecheck clean. grep-audit clean.
 - Section 1b is now genuinely done. Next: Phase A Section 2 (Terminal Intelligence).
+
+---
+Task ID: phase-a-section-2-terminal-intelligence
+Agent: main (super-z)
+Task: Phase A Section 2 — Terminal Intelligence. Three pieces: (1) event-driven terminal error reporting to Ghost Mode, (2) package install capability (separate from Terminal Agent, correct cwd), (3) classifyCommand() lookup table for instant deterministic previews.
+
+Work Log:
+- server/src/orchestration/ghost-remediation.ts: added buildTerminalErrorSuggestionPlan() — suggest-only plan for terminal:error findings (same reasoning as performance anti-patterns: no safe generic auto-fix for "a command failed"). Exported via __test__.
+- server/src/orchestration/ghost-mode.ts: planFix() now dispatches terminal:error → buildTerminalErrorSuggestionPlan (suggest-only). Imported the new function.
+- server/src/agents/terminal/index.ts: catch block (non-zero exit) now calls ghostMode.reportFinding({ type: 'terminal:error', severity: 'high', description: <real stderr + exit code>, ... }). Real data, not placeholder. Logs the FSM state honestly — if Ghost Mode is mid-flow, the transition to 'detected' is blocked but the finding IS stored + the ghost:detection event IS broadcast (not silently dropped). The addStep trace records whether the FSM accepted or blocked the finding.
+- server/src/orchestration/package-install.ts (NEW): separate module for npm install. installPackage(projectRoot, { packageName, targetDir, dev }) runs `npm install <pkg>` in the user-chosen target dir (server/ or app/ — no inference), behind validateShellCommand() + existsSync(package.json) pre-checks. Verifies with `npm ls <pkg> --json` — parses the JSON to confirm the package is installed at the expected version. Returns { success, installedSpec, installedVersion, installOutput, verifyOutput, reason }. NEVER uses --force. No version-conflict auto-resolution. npm-only. buildInstallCommand() + extractBarePackageName() helpers.
+- server/src/orchestration/classify-command.ts (NEW): ~25-entry lookup table (npm/git/ls/cat/mkdir/rm/cd/cp/mv/echo/touch/chmod/curl/wget/pwd). classifyCommand(command) checks validateShellCommand() first (blocked → blocklist reason as explanation, risk='blocked'), then matches against the table (matched → real explanation + risk), then honest fallback for unrecognized (risk='moderate', no fabricated explanation). --save-dev pattern ordered before bare `npm install <pkg>` to avoid false match.
+- server/tests/unit/terminal-intelligence.test.ts (NEW, 14 tests):
+  Group 1 — terminal error reporting (3 tests):
+    1. Real failing command (`ls /nonexistent/...`) through Terminal Agent → ghostMode.reportFinding fires with type='terminal:error', real stderr content ("No such file or directory"), exit code, agentId, taskId. Verified via ghost:detection WS event capture.
+    2. terminal:error finding plans as suggest-only (fixAction='suggest-only', "NOT auto-fixable" text)
+    3. FSM single-in-flight: reportFinding stores + broadcasts regardless of FSM state (finding is NOT dropped)
+  Group 2 — package install (4 tests):
+    4. Real npm install minimist@1.2.8 in real fixture → success, installedVersion='1.2.8', package.json updated, npm ls verification passed
+    5. Target dir without package.json → honest failure ("no package.json")
+    6. buildInstallCommand: correct command for regular + dev deps
+    7. extractBarePackageName: handles scoped + versioned specs
+  Group 3 — classifyCommand (7 tests):
+    8. npm commands (8 subcases): all matched with real explanations
+    9. git commands (6 subcases): all matched
+    10. file system commands (6 subcases): all matched
+    11. blocked commands (rm -rf /): blocklist reason as explanation, risk='blocked'
+    12. sudo: blocked
+    13. Unrecognized (awk pipeline): honest "Custom command — review before executing", no fabricated explanation
+    14. rm somefile.txt: matched, risk='dangerous'
+
+Stage Summary:
+- Three pieces built + tested with real evidence:
+  - Terminal errors report to Ghost Mode event-driven (not periodic), plan as suggest-only
+  - Package install works in real fixture with real npm ls verification
+  - classifyCommand gives instant deterministic previews for ~25 common patterns + honest fallback
+- FSM single-in-flight limitation confirmed honestly: findings are stored + broadcast even when transition is blocked — not silently dropped
+- Tests: 648/648 passing (325 unit/integration/e2e + 323 security/agent). Zero regressions. Typecheck clean. grep-audit clean.
+- Scope guards respected: Terminal Agent cwd:'/tmp' NOT fixed (deferred), FSM single-in-flight NOT fixed, no version-conflict auto-resolution, no target-dir inference, npm-only.

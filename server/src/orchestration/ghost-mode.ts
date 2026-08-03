@@ -26,6 +26,7 @@ import { makeEvent, broadcast } from '../ws/events.js';
 import {
   buildDependencyFixPlan,
   buildPerformanceSuggestionPlan,
+  buildTerminalErrorSuggestionPlan,
   applyNpmAuditFix,
 } from './ghost-remediation.js';
 
@@ -293,6 +294,8 @@ class GhostModeMachine {
     //   - dependency-vulnerability → run npm audit fix --dry-run, build real
     //     or suggest-only plan based on whether an in-range fix exists
     //   - performance:*            → suggest-only (NOT auto-fixable per Section 0)
+    //   - terminal:error            → suggest-only (Phase A Section 2 — no safe
+    //     generic auto-fix for "a command failed")
     //   - terminal:command / operative:action / fabrication:print → legacy
     //     stub plan (these are approval-gate findings from agents that wait
     //     on the FSM transition, not on applyFix(); the plan content doesn't
@@ -302,6 +305,8 @@ class GhostModeMachine {
       plan = buildDependencyFixPlan(finding, this.serverCwd);
     } else if (finding.type.startsWith('performance:')) {
       plan = buildPerformanceSuggestionPlan(finding);
+    } else if (finding.type === 'terminal:error') {
+      plan = buildTerminalErrorSuggestionPlan(finding);
     } else {
       // Legacy approval-gate findings (terminal:command, operative:action, etc.)
       // These don't go through applyFix() for real work — the calling agent

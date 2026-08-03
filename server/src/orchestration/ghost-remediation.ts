@@ -376,6 +376,31 @@ export function buildPerformanceSuggestionPlan(finding: GhostFinding): GhostPlan
   };
 }
 
+/**
+ * Build a suggest-only plan for a terminal:error finding.
+ *
+ * Phase A Section 2: when a command fails (non-zero exit), Terminal Agent
+ * reports the error to Ghost Mode via reportFinding({ type: 'terminal:error' }).
+ * There is no safe generic auto-fix for "a command failed" — the failure
+ * could mean anything (missing dep, syntax error, permission, network).
+ * Same reasoning as performance anti-patterns: honest suggest-only.
+ *
+ * The plan surfaces the real stderr + exit code so the human can diagnose.
+ */
+export function buildTerminalErrorSuggestionPlan(finding: GhostFinding): GhostPlan {
+  return {
+    findingId: finding.id,
+    preview: `Terminal command failed — ${finding.description}`,
+    steps: [
+      `Manual review required — terminal errors are NOT auto-fixable`,
+      `Error details: ${finding.description}`,
+      `Check the command syntax, dependencies, and permissions`,
+      `No automated action will be taken — diagnose + fix manually`,
+    ],
+    fixAction: 'suggest-only',
+  };
+}
+
 // ── Test exports ────────────────────────────────────────────────────────
 // `internals` is exported so tests can vi.spyOn(internals, 'countVulnerabilities')
 // to simulate verification failure without mocking the real npm audit fix command.
@@ -385,5 +410,6 @@ export const __test__ = {
   countVulnerabilities,
   buildDependencyFixPlan,
   buildPerformanceSuggestionPlan,
+  buildTerminalErrorSuggestionPlan,
   internals,
 };
