@@ -208,41 +208,52 @@ export function CodeEditor() {
       _editor.onDidDispose(() => onMarkersChanged.dispose());
 
       // ── Phase A Step 6: AI inline completion provider ────────────────
-      // Register a custom completion provider that calls the existing
-      // Tier 1 chat API (api.orchestratorChat) with a completion-focused
-      // prompt. The user's directive specified calling the orchestrator
-      // with a messages array — the actual API takes a single user
-      // AI completion provider — calls POST /api/orchestrator/complete
-      // (a lightweight, non-agent endpoint that calls modelRouter.stream()
-      // directly — no agent dispatch, no context bundle, no trace).
+      // CHIMERA Inline Completion — switched from registerCompletionItemProvider
+      // (dropdown widget) to registerInlineCompletionsProvider (Copilot-style
+      // ghost text). The server endpoint now takes { prefix, suffix } and uses
+      // FIM prompting (labeled prefix/suffix + <CURSOR/> marker) instead of a
+      // single blended context string.
       //
       // 300ms debounce + real AbortController: if a new completion request
       // comes in before the previous one resolves, the previous fetch is
       // actually aborted (not just discarded client-side), saving server
-      // resources.
-      const buildAiCompletions = (
+      // resources. Monaco's own CancellationToken is ALSO wired — if Monaco
+      // decides to cancel (user typed more, scrolled, etc.), we abort too.
+      const buildInlineCompletions = (
         model: MonacoType.editor.ITextModel,
-        position: MonacoType.Position
-      ): Promise<MonacoType.languages.CompletionList> => {
+        position: MonacoType.Position,
+        monacoToken: MonacoType.CancellationToken
+      ): Promise<MonacoType.languages.InlineCompletions | undefined> => {
         return new Promise((resolve) => {
-          const lineContent = model.getLineContent(position.lineNumber);
-          const wordUntil = model.getWordUntilPosition(position);
-          // Only fire if the cursor is in the middle of a word — don't
-          // waste an API call at the start of an empty line.
-          if (wordUntil.word.length < 2) {
-            resolve({ suggestions: [] });
+          // Build prefix/suffix from the actual cursor position.
+          //   prefix = 10 lines above cursor + current line up to cursor column
+          //   suffix = current line after cursor column + 5 lines below
+          // Same line-count windows as the previous build (10 above / 5 below).
+          const prefixStartLine = Math.max(1, position.lineNumber - 10);
+          const prefix = model.getValueInRange({
+            startLineNumber: prefixStartLine,
+            startColumn: 1,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column,
+          });
+          const suffixEndLine = Math.min(
+            model.getLineCount(),
+            position.lineNumber + 5
+          );
+          const suffix = model.getValueInRange({
+            startLineNumber: position.lineNumber,
+            startColumn: position.column,
+            endLineNumber: suffixEndLine,
+            endColumn: model.getLineMaxColumn(suffixEndLine),
+          });
+
+          // Skip if there's nothing to complete on (brand-new empty file).
+          // Unlike the old dropdown provider, we DON'T bail on short words —
+          // ghost text is useful even at the start of an empty line.
+          if (!prefix.trim() && !suffix.trim()) {
+            resolve(undefined);
             return;
           }
-
-          // Get surrounding context (10 lines above, 5 below).
-          const startLine = Math.max(1, position.lineNumber - 10);
-          const endLine = Math.min(model.getLineCount(), position.lineNumber + 5);
-          const context = model.getValueInRange({
-            startLineNumber: startLine,
-            startColumn: 1,
-            endLineNumber: endLine,
-            endColumn: model.getLineMaxColumn(endLine),
-          });
 
           // Cancel any pending request + clear its debounce timer.
           if (aiCompletionTimer) {
@@ -256,11 +267,20 @@ export function CodeEditor() {
           const myAbort = new AbortController();
           aiCompletionAbort = myAbort;
 
-          const fireRequest = async () => {
-            const prompt =
-              `Complete at cursor position in this code:\n\`\`\`\n${context}\n\`\`\`\n` +
-              `Word so far: "${wordUntil.word}" (line content: "${lineContent}")`;
+          // Also wire Monaco's CancellationToken — if Monaco cancels (user
+          // typed more, scrolled, position changed), abort our fetch too.
+          // This is in addition to our own supersede pattern.
+          const monacoCancelSub = monacoToken.onCancellationRequested(() => {
+            myAbort.abort();
+          });
 
+          const fireRequest = async () => {
+            // If Monaco already cancelled during the debounce window, bail.
+            if (monacoToken.isCancellationRequested) {
+              monacoCancelSub.dispose();
+              resolve(undefined);
+              return;
+            }
             try {
               const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
               const { getToken } = await import('@/lib/auth');
@@ -272,13 +292,13 @@ export function CodeEditor() {
                   'Content-Type': 'application/json',
                   'Authorization': `Bearer ${token}`,
                 },
-                body: JSON.stringify({ prompt }),
+                body: JSON.stringify({ prefix, suffix }),
                 signal: myAbort.signal,
               });
 
               if (!res.ok) {
                 if (myToken === aiCompletionToken) {
-                  resolve({ suggestions: [] });
+                  resolve(undefined);
                 }
                 return;
               }
@@ -292,20 +312,10 @@ export function CodeEditor() {
               }
 
               if (!data.text || data.text.length === 0) {
-                resolve({ suggestions: [] });
+                resolve(undefined);
                 return;
               }
 
-              // Build a proper Monaco completion item
-              const word = model.getWordUntilPosition(position);
-              const range = {
-                startLineNumber: position.lineNumber,
-                endLineNumber: position.lineNumber,
-                startColumn: word.startColumn,
-                endColumn: word.endColumn,
-              };
-
-              // The model returns completion text — use it as the insertText.
               // Filter out any markdown fences or backticks the model might add
               // despite the system prompt telling it not to.
               const cleanText = data.text
@@ -314,32 +324,47 @@ export function CodeEditor() {
                 .trim();
 
               if (!cleanText) {
-                resolve({ suggestions: [] });
+                resolve(undefined);
                 return;
               }
 
-              console.log(`[editor] AI completion: "${cleanText.slice(0, 60)}..." (${elapsed}ms)`);
+              console.log(
+                `[editor] AI inline completion: "${cleanText.slice(0, 60)}..." (${elapsed}ms)`
+              );
+
+              // InlineCompletions response shape — different from the old
+              // CompletionList. Each item has insertText + range. The range
+              // is a zero-width range at the cursor position so Monaco
+              // inserts the text exactly where the cursor is (ghost text).
+              // Per Monaco docs: range must begin and end on the same line.
+              const range = {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: position.column,
+                endColumn: position.column,
+              };
 
               resolve({
-                suggestions: [{
-                  label: cleanText.slice(0, 50),
-                  kind: monaco.languages.CompletionItemKind.Text,
+                items: [{
                   insertText: cleanText,
                   range,
-                  detail: 'AI completion',
-                  sortText: '0', // sort before built-in suggestions
+                  completeBracketPairs: true,
                 }],
               });
             } catch (err: unknown) {
-              // AbortError = superseded by a newer request — not an error
+              // AbortError = superseded by a newer request, OR Monaco cancel —
+              // not an error, just resolve undefined.
               const errName = err instanceof Error ? err.name : '';
               if (errName === 'AbortError') {
-                return; // don't resolve — the newer request will
+                if (myToken === aiCompletionToken) {
+                  resolve(undefined);
+                }
+                return;
               }
               const errMsg = err instanceof Error ? err.message : String(err);
-              console.warn('[editor] AI completion failed:', errMsg);
+              console.warn('[editor] AI inline completion failed:', errMsg);
               if (myToken === aiCompletionToken) {
-                resolve({ suggestions: [] });
+                resolve(undefined);
               }
             }
           };
@@ -349,17 +374,25 @@ export function CodeEditor() {
         });
       };
 
-      const completionProvider = {
-        triggerCharacters: ['.', '(', '<', '"', "'", '/', '@'],
-        provideCompletionItems: (
+      const inlineCompletionProvider: MonacoType.languages.InlineCompletionsProvider = {
+        provideInlineCompletions: (
           model: MonacoType.editor.ITextModel,
-          position: MonacoType.Position
-        ): Promise<MonacoType.languages.CompletionList> => {
-          return buildAiCompletions(model, position);
+          position: MonacoType.Position,
+          context: MonacoType.languages.InlineCompletionContext,
+          token: MonacoType.CancellationToken
+        ): Promise<MonacoType.languages.InlineCompletions | undefined> => {
+          // context is currently unused — we always trigger regardless of
+          // InlineCompletionTriggerKind (Automatic vs Invoke). The debounce
+          // + cancellation pattern handles over-firing.
+          void context;
+          return buildInlineCompletions(model, position, token);
         },
+        // Required by the interface — no resources to free, the abort
+        // controller + timer are module-scoped and self-managing.
+        disposeInlineCompletions: () => {},
       };
-      monaco.languages.registerCompletionItemProvider('typescript', completionProvider);
-      monaco.languages.registerCompletionItemProvider('javascript', completionProvider);
+      monaco.languages.registerInlineCompletionsProvider('typescript', inlineCompletionProvider);
+      monaco.languages.registerInlineCompletionsProvider('javascript', inlineCompletionProvider);
 
       // ── Phase A Step 7: Format on demand (Ctrl+Shift+F) ─────────────
       _editor.addCommand(

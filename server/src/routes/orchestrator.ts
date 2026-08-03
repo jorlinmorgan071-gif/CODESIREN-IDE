@@ -324,31 +324,46 @@ orchestratorRouter.get('/settings', requireAuth, (_req, res) => {
 });
 
 // ── POST /api/orchestrator/complete ──────────────────────────────────────
-// Lightweight code completion endpoint for Monaco's AI completion provider.
+// Lightweight code completion endpoint for Monaco's INLINE completion provider
+// (ghost text, Copilot-style). FIM (Fill-In-the-Middle) prompted.
 //
 // Deliberately bypasses the full agent pipeline (no send(), no executeAndWait(),
 // no dispatchStrategy(), no context bundle, no trace, no trust score, no WS
 // broadcast). Calls modelRouter.stream() directly — the same engine selection
 // (Ollama → OpenRouter → stub) but with minimal overhead.
 //
+// Request shape (CHIMERA Inline Completion):
+//   { prefix: string, suffix: string }
+//   prefix = code BEFORE the cursor (10-line window, sent by client)
+//   suffix = code AFTER  the cursor (5-line window,  sent by client)
+//
+// The user prompt uses labeled prefix/suffix sections with a <CURSOR/> marker
+// between them — the format identified in Section 0's FIM-prompting findings.
+// The system prompt instructs the model to return ONLY the insertion text
+// (no markdown, no explanation, no fences).
+//
 // Returns { text: string } in the HTTP response body (non-streaming from the
 // client's perspective — the server collects the stream internally and returns
-// the full result). This is what Monaco's provideCompletionItems needs: a
-// simple fetch → await → return suggestions, no WS listener required.
+// the full result). This is what Monaco's provideInlineCompletions needs: a
+// simple fetch → await → return items, no WS listener required.
 //
 // Hard 3s timeout — if the model hasn't finished by then, returns whatever's
 // collected so far. Completions should feel instant while typing.
 
 const completeSchema = z.object({
-  prompt: z.string().min(1).max(8000),
+  prefix: z.string().max(8000),
+  suffix: z.string().max(8000),
 });
 
 const COMPLETION_SYSTEM_PROMPT =
-  'You are a code completion engine. Given code context and a cursor position, ' +
-  'return ONLY the completion text that should be inserted at the cursor. ' +
-  'No explanation, no markdown fences, no backticks. Just the raw code to insert. ' +
-  'Keep it short — a single line or statement, not a full function. ' +
-  'Maximum 100 characters.';
+  'You are a code completion engine. The user provides code with a <CURSOR/> ' +
+  'marker indicating the cursor position. The text BEFORE <CURSOR/> is the ' +
+  'prefix (code already written); the text AFTER <CURSOR/> is the suffix ' +
+  '(code that comes after the cursor). Return ONLY the text that should be ' +
+  'inserted at the <CURSOR/> position — no explanation, no markdown fences, ' +
+  'no backticks, no leading/trailing whitespace beyond what the code needs. ' +
+  'Just the raw insertion text. Keep it short: a single line or statement, ' +
+  'not a full function. Maximum 100 characters.';
 
 const COMPLETION_TIMEOUT_MS = 3000;
 const COMPLETION_MAX_CHARS = 200;
@@ -368,6 +383,13 @@ orchestratorRouter.post('/complete', requireAuth, async (req, res) => {
     const chunks: string[] = [];
     let totalChars = 0;
 
+    // Build FIM user prompt — labeled prefix/suffix with <CURSOR/> marker.
+    // The labels make the structure unambiguous to the model; the <CURSOR/>
+    // marker is the explicit "fill here" signal.
+    const userPrompt =
+      `CODE BEFORE CURSOR:\n${parsed.data.prefix}\n\n<CURSOR/>\n\n` +
+      `CODE AFTER CURSOR:\n${parsed.data.suffix}`;
+
     // Call modelRouter.stream() DIRECTLY — no agent dispatch, no context bundle,
     // no trace, no trust score, no WS broadcast. This is the entire point of
     // this endpoint: a fast, lightweight model call for inline completions.
@@ -377,7 +399,7 @@ orchestratorRouter.post('/complete', requireAuth, async (req, res) => {
       agentId: 'completion',
       messages: [
         { role: 'system', content: COMPLETION_SYSTEM_PROMPT },
-        { role: 'user', content: parsed.data.prompt },
+        { role: 'user', content: userPrompt },
       ],
     } as any);
 
