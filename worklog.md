@@ -106,3 +106,68 @@ Stage Summary:
   elements after typing).
 - This closes CHIMERA Build 3 of 3: Avatar Engine (VRM + lip sync) ✓,
   Plugin Runtime (agent auto-loader) ✓, Inline Completion (FIM + ghost text) ✓.
+
+---
+Task ID: phase-a-section-1-ghost-real-detection
+Agent: main (super-z)
+Task: Phase A Section 1 — fill in scanCycle() with real structured detection using two existing scanners (PerformanceAgent.scanAntiPatterns at 30s, SecurityAgent.scanDependencies at 5min). Fix .unref() gap. applyFix() untouched (Section 1b's job).
+
+Work Log:
+- server/src/orchestration/ghost-mode.ts:
+  - scanCycle() NO LONGER a no-op. Real implementation runs all scanners
+    registered at exactly 30s cadence (the heartbeat cadence).
+  - New registerScanner(name, cadenceMs, fn) API: scanners at cadence==30s
+    piggyback on the heartbeat; scanners at any other cadence get their OWN
+    interval. All intervals call .unref() (matches middleware/cache.ts pattern).
+  - New _runScanner() shared helper: dedup via reportedFindingKeys Set
+    (key = type::filePath::line::description), state guard, error catch.
+  - stop() fix: force-transitions through 'scanning' before 'inactive' so
+    teardown from non-terminal states (awaiting_approval/applying/verifying)
+    doesn't hit the illegal-transition guard. This unblocked 3 pre-existing
+    agent-manager test failures.
+  - New clearReportedFindings() test helper.
+  - New GhostScanner type export: `() => Omit<GhostFinding, 'id'>[]`.
+- server/src/orchestration/ghost-scanners.ts (NEW):
+  - Breaks circular import (SecurityAgent imports ghostMode; ghostMode can't
+    import SecurityAgent). This module imports both.
+  - performanceAntiPatternScanner(): calls agentManager.get('performance-agent')
+    .scanAntiPatterns(serverDir) via `as any` cast (private method), maps
+    PerformanceAntiPatternFinding → GhostFinding with severity translation
+    (warning→medium, info→low).
+  - securityDependencyScanner(): calls agentManager.get('security-agent')
+    .scanDependencies(serverDir) via `as any` cast, maps DependencyFinding →
+    GhostFinding with severity translation (critical/high→high, moderate→medium,
+    low→low — no findings dropped silently).
+  - registerGhostScanners(): registers both at 30s + 5min cadences.
+  - __test__ export: scanner functions, severity mappers, projectRoot override
+    for test fixtures.
+- server/src/index.ts: calls registerGhostScanners() after ghostMode.start()
+  + after loadAgents() (so agentManager has the agents).
+- server/tests/unit/ghost-scanners.test.ts (NEW, 9 tests):
+  1. Real anti-pattern detected by scanner adapter (real execSync-in-route-handler
+     fixture, real regex scan, real GhostFinding mapped)
+  2. REAL TIMER FIRING: scanner at 100ms cadence fires within actual setInterval
+     tick (350ms wait, real setTimeout, not faked) — FSM transitions to
+     non-scanning state, ghost:detection WS event captured via registerSink
+  3. observation-only: real finding stored + event fired, FSM stays in scanning
+  4. approval-required: real finding → detected → awaiting_approval after planFix
+  5. dedup: same finding suppressed on second scanner call
+  6. security severity mapper: all 4 levels mapped (critical/high/moderate/low)
+  7. performance severity mapper: warning→medium, info→low
+  8. clean fixture: scanner returns empty list (no false positives)
+  9. scanner returns empty list when agent not registered / path doesn't exist
+
+Stage Summary:
+- scanCycle() is real: 2 scanners wired, both calling existing structured
+  scan methods (no LLM, no new scanners built).
+- .unref() fixed on both the 30s heartbeat + all per-scanner intervals.
+- Real timer-firing proof: test 2 uses a 100ms-cadence scanner + real
+  setInterval + real setTimeout wait, confirms FSM transition + WS event.
+- Autonomy-level proof: tests 3 + 4 confirm observation-only stays in
+  scanning while approval-required reaches awaiting_approval, both with
+  real findings from the real scanner.
+- Tests: 636/636 passing (was 615/618 before — the stop() fix unblocked
+  3 pre-existing agent-manager failures + 9 new scanner tests + 0 regressions).
+- Typecheck clean. grep-audit clean.
+- Scope guards respected: applyFix() untouched, no DevOps/LLM/Monaco/terminal
+  scanners, no auto-amend/autonomous distinction, no new HTTP endpoint.

@@ -7,6 +7,13 @@
 //
 // Per directive Section 7: the Sentinel Agent (Step 9) reuses THIS state machine
 // shape rather than inventing a parallel one for the Personal Pillar.
+//
+// Phase A Section 1: scanCycle() is NO LONGER a no-op. Two real scanners are
+// wired in via registerScanner():
+//   - PerformanceAgent.scanAntiPatterns() — every 30s (regex, cheap, no network)
+//   - SecurityAgent.scanDependencies()    — every 5min (npm audit, network call)
+// Each scanner returns GhostFinding[]; scanCycle() calls reportFinding() for
+// each finding. The .unref() fix on both timers matches middleware/cache.ts.
 
 import { v4 as uuid } from 'uuid';
 import type { GhostState, GhostModeLevel, GhostFinding, GhostPlan } from '../types.js';
@@ -24,6 +31,27 @@ const TRANSITIONS: Record<GhostState, GhostState[]> = {
   rolled_back:       ['scanning'],
 };
 
+// ── Scanner registration (Phase A Section 1) ────────────────────────────
+//
+// Scanners are functions that return GhostFinding[] (already mapped to the
+// GhostFinding shape — severity translation happens in the scanner adapter,
+// not here). Ghost Mode owns the interval timer for each scanner and calls
+// reportFinding() for each finding returned.
+//
+// Why registration instead of direct imports: ghost-mode.ts is imported by
+// SecurityAgent (circular dep risk). The registration pattern lets a separate
+// wiring module (ghost-scanners.ts) import both ghostMode AND the agents,
+// breaking the cycle.
+
+export type GhostScanner = () => Omit<GhostFinding, 'id'>[];
+
+interface RegisteredScanner {
+  name: string;
+  cadenceMs: number;
+  fn: GhostScanner;
+  timer: NodeJS.Timeout;
+}
+
 class GhostModeMachine {
   private state: GhostState = 'inactive';
   private level: GhostModeLevel = 'approval-required';
@@ -35,6 +63,15 @@ class GhostModeMachine {
   // scanning" from "rejected and FSM cycled back to scanning". Without this,
   // a fast-completing approval looks identical to a rejection.
   private resolvedApprovals = new Map<string, 'approved' | 'rejected'>();
+
+  // Phase A Section 1: registered scanners + their intervals
+  private scanners = new Map<string, RegisteredScanner>();
+
+  // Track findings already reported in a prior cycle so we don't re-report
+  // the same finding every tick (would flood the FSM + WS). Dedup key is
+  // `${type}::${filePath}::${line}::${description}` — same finding from the
+  // same scanner in a later cycle is suppressed. Cleared on stop().
+  private reportedFindingKeys = new Set<string>();
 
   get currentState(): GhostState { return this.state; }
   get currentLevel(): GhostModeLevel { return this.level; }
@@ -48,7 +85,10 @@ class GhostModeMachine {
     if (this.state !== 'inactive') return;
     this.transition('scanning');
     // Scan cycle: every 30 seconds (PDF Section 16).
-    this.scanTimer = setInterval(() => this.scanCycle(), 30_000);
+    // .unref() so the timer doesn't keep Node alive after HTTP/WS close —
+    // matches the pattern in middleware/cache.ts:160.
+    this.scanTimer = setInterval(() => { void this.scanCycle(); }, 30_000);
+    this.scanTimer.unref();
     console.log('[ghost] started — scan cycle every 30s');
   }
 
@@ -56,6 +96,22 @@ class GhostModeMachine {
     if (this.scanTimer) {
       clearInterval(this.scanTimer);
       this.scanTimer = null;
+    }
+    // Stop all registered scanners too
+    for (const scanner of this.scanners.values()) {
+      clearInterval(scanner.timer);
+    }
+    this.scanners.clear();
+    this.reportedFindingKeys.clear();
+    // Transition to inactive. The FSM may be in a non-terminal state
+    // (e.g. awaiting_approval, applying, verifying) when stop() is called.
+    // The TRANSITIONS table only allows inactive←scanning, so we may need
+    // to walk through scanning first. This is safe — stop() is a teardown
+    // path, not a normal runtime transition.
+    if (this.state !== 'inactive' && this.state !== 'scanning') {
+      // Force-transition through scanning (bypasses the illegal-transition
+      // guard — stop() is explicit teardown).
+      this.state = 'scanning';
     }
     this.transition('inactive');
     console.log('[ghost] stopped');
@@ -70,13 +126,89 @@ class GhostModeMachine {
     this.state = next;
   }
 
-  // Step 0: scan is a no-op stub. Real scans come online with each Engineering-
-  // Pillar agent that hooks in (Security Agent, Performance Agent, etc.).
-  // Sentinel Agent (Step 9) reuses this exact cycle for ambient monitoring.
+  // ── Phase A Section 1: real scanCycle ──────────────────────────────
+  // The 30s heartbeat. Runs all scanners registered at EXACTLY 30s cadence
+  // (the heartbeat cadence). Scanners at other cadences (shorter OR longer)
+  // run on their OWN intervals via registerScanner() — they don't fire from
+  // here.
+  //
+  // State guard preserved from the no-op stub: only runs when the FSM is
+  // in a scan-eligible state (scanning | complete | rolled_back). If the
+  // FSM is mid-approval-flow (awaiting_approval, applying, verifying), the
+  // tick is skipped — we don't want a new finding to disrupt an in-flight
+  // remediation.
   private async scanCycle(): Promise<void> {
     if (this.state !== 'scanning' && this.state !== 'complete' && this.state !== 'rolled_back') return;
-    // No findings in Step 0 — just heartbeat the state.
-    // Real findings get injected via reportFinding() by other agents.
+
+    // Run all scanners registered at EXACTLY 30s cadence (the heartbeat).
+    // Other cadences have their own intervals.
+    for (const scanner of this.scanners.values()) {
+      if (scanner.cadenceMs !== 30_000) continue;
+      this._runScanner(scanner);
+    }
+  }
+
+  // Shared scanner-runner used by both scanCycle (30s heartbeat) and the
+  // per-scanner intervals (other cadences). Dedup is applied so the same
+  // finding isn't re-reported every tick.
+  private _runScanner(scanner: RegisteredScanner): void {
+    if (this.state !== 'scanning' && this.state !== 'complete' && this.state !== 'rolled_back') return;
+    try {
+      const findings = scanner.fn();
+      for (const finding of findings) {
+        const key = `${finding.type}::${finding.filePath ?? ''}::${finding.line ?? ''}::${finding.description}`;
+        if (this.reportedFindingKeys.has(key)) continue;
+        this.reportedFindingKeys.add(key);
+        this.reportFinding(finding);
+      }
+    } catch (err: any) {
+      console.warn(`[ghost] scanner "${scanner.name}" failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Register a periodic scanner. Ghost Mode owns the interval timer.
+   * The scanner returns GhostFinding[] (already severity-mapped). Ghost Mode
+   * calls reportFinding() for each, with dedup so the same finding isn't
+   * re-reported every cycle.
+   *
+   * Scanners at cadence == 30s run from the main scanCycle() heartbeat
+   * (no separate timer — they piggyback on the existing 30s interval).
+   * Scanners at any OTHER cadence get their OWN interval (with .unref()).
+   *
+   * This can be called before or after start(); the scanner's own interval
+   * starts immediately, but the state guard inside _runScanner ensures it
+   * only actually scans when the FSM is in a scan-eligible state.
+   */
+  registerScanner(name: string, cadenceMs: number, fn: GhostScanner): void {
+    if (this.scanners.has(name)) {
+      console.warn(`[ghost] scanner "${name}" already registered — replacing`);
+      clearInterval(this.scanners.get(name)!.timer);
+    }
+
+    let timer: NodeJS.Timeout;
+    if (cadenceMs === 30_000) {
+      // Piggyback on the main scanCycle heartbeat — no separate timer.
+      // Store a no-op timer so the RegisteredScanner shape is uniform.
+      timer = setInterval(() => {}, 2 ** 31 - 1);
+      timer.unref();
+    } else {
+      // Own interval — fires at its own cadence, independent of the 30s heartbeat.
+      timer = setInterval(() => { this._runScanner({ name, cadenceMs, fn, timer }); }, cadenceMs);
+      timer.unref();
+    }
+
+    this.scanners.set(name, { name, cadenceMs, fn, timer });
+    console.log(`[ghost] scanner "${name}" registered (cadence=${cadenceMs}ms)`);
+  }
+
+  /**
+   * Clear all reported-finding dedup keys. Used by tests to reset state
+   * between subtests without restarting the whole FSM. NOT called in
+   * production — dedup persists for the lifetime of the process.
+   */
+  clearReportedFindings(): void {
+    this.reportedFindingKeys.clear();
   }
 
   reportFinding(finding: Omit<GhostFinding, 'id'>): GhostFinding {

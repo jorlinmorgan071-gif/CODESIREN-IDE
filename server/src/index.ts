@@ -93,6 +93,22 @@ async function main() {
   }
   ghostMode.start();
 
+  // 3c. Phase A Section 1: register real Ghost Mode scanners.
+  //
+  // Two scanners wired in:
+  //   - performance-anti-patterns (30s cadence, runs from scanCycle heartbeat)
+  //   - security-dependencies    (5min cadence, own interval)
+  //
+  // MUST come after ghostMode.start() (so the FSM is in 'scanning' state
+  // when scanners register) AND after loadAgents() (so agentManager.get()
+  // can find the Performance + Security agents).
+  try {
+    const { registerGhostScanners } = await import('./orchestration/ghost-scanners.js');
+    registerGhostScanners();
+  } catch (err: any) {
+    console.warn(`[server] ghost scanner registration failed: ${err.message}`);
+  }
+
   // 4. Express app
   const app = express();
   app.use(express.json({ limit: '2mb' }));
