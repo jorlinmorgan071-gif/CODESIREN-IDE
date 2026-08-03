@@ -39,27 +39,7 @@ import { agentManager } from './orchestration/agent-manager.js';
 import { ghostMode } from './orchestration/ghost-mode.js';
 import { sidecarManager } from './sidecars/manager.js';
 import { stopOllamaServe } from './orchestration/engines/ollama.js';
-import { ArchitectAgent } from './agents/architect/index.js';
-import { QaTesterAgent } from './agents/qa-tester/index.js';
-import { ExtensionAgent } from './agents/extension/index.js';
-import { FrontendAgent } from './agents/frontend/index.js';
-import { FabricationAgent } from './agents/fabrication/index.js';
-import { OperativeAgent } from './agents/operative/index.js';
-import { SentinelAgent } from './agents/sentinel/index.js';
-// Engineering-Pillar agents (remaining 13 — converted from static demoData)
-import { BackendAgent } from './agents/backend/index.js';
-import { DatabaseAgent } from './agents/database/index.js';
-import { SecurityAgent } from './agents/security/index.js';
-import { DevOpsAgent } from './agents/devops/index.js';
-import { DocumentationAgent } from './agents/documentation/index.js';
-import { PerformanceAgent } from './agents/performance/index.js';
-import { TerminalAgent } from './agents/terminal/index.js';
-import { MemoryAgent } from './agents/memory/index.js';
-import { UIDesignerAgent } from './agents/ui-designer/index.js';
-import { ResearchAgent } from './agents/research/index.js';
-import { DeploymentAgent } from './agents/deployment/index.js';
-import { PromptEngineerAgent } from './agents/prompt-engineer/index.js';
-import { CodeReviewAgent } from './agents/code-review/index.js';
+import { loadAgents } from './agents/loader.js';
 import { getPrinterClient } from './agents/fabrication/printer-client.js';
 import { getBrowserClient } from './agents/operative/browser-client.js';
 
@@ -76,30 +56,15 @@ async function main() {
   // 1. Database (graceful fallback)
   await initDb();
 
-  // 2. Register agents — Architect, QA Tester, Extension, Frontend, Fabrication.
-  //    Fabrication is the FIRST Personal-Pillar agent. Its sidecar (build123d)
-  //    is spawned on first use, not at startup — keeps cold-start fast.
-  agentManager.register(new ArchitectAgent());
-  agentManager.register(new QaTesterAgent());
-  agentManager.register(new ExtensionAgent());
-  agentManager.register(new FrontendAgent());
-  agentManager.register(new FabricationAgent());
-  agentManager.register(new OperativeAgent());
-  agentManager.register(new SentinelAgent());
-  // Engineering-Pillar agents (remaining 13)
-  agentManager.register(new BackendAgent());
-  agentManager.register(new DatabaseAgent());
-  agentManager.register(new SecurityAgent());
-  agentManager.register(new DevOpsAgent());
-  agentManager.register(new DocumentationAgent());
-  agentManager.register(new PerformanceAgent());
-  agentManager.register(new TerminalAgent());
-  agentManager.register(new MemoryAgent());
-  agentManager.register(new UIDesignerAgent());
-  agentManager.register(new ResearchAgent());
-  agentManager.register(new DeploymentAgent());
-  agentManager.register(new PromptEngineerAgent());
-  agentManager.register(new CodeReviewAgent());
+  // 2. Register agents via auto-loader.
+  //    Scans server/src/agents/ for subdirectories, dynamically imports each
+  //    one's index.ts, finds the IAgent implementation, and registers it.
+  //    To add a new agent: create server/src/agents/my-agent/index.ts that
+  //    exports a class extending IAgent. No need to touch this file.
+  const loadedAgents = await loadAgents();
+  for (const { agent } of loadedAgents) {
+    agentManager.register(agent);
+  }
 
   // Phase D — Load built-in skill library (TOML files in src/skills/library/)
   const { loadLibrarySkills } = await import('./skills/library/index.js');
