@@ -12,6 +12,16 @@ build/
 .env.local
 .env.*.local
 
+# GitHub token (used by setup-git.sh for credential restoration — must stay
+# on disk but NEVER in git)
+.github-token
+
+# IM gateway file attachments (user-uploaded via chat — not source code)
+upload/
+
+# Tool results (captured bash/command outputs — not source code)
+tool-results/
+
 # Logs
 *.log
 npm-debug.log*
