@@ -244,12 +244,29 @@ export interface GhostFinding {
   // The task that triggered this finding, so the waiting agent can be
   // notified when the approval decision arrives.
   taskId?: string;
+  // Phase A Section 1b: dependency-vulnerability findings carry the package
+  // metadata needed by planFix() to build a real remediation plan + by
+  // applyFix() to run `npm audit fix` targeting the right project dir.
+  // Optional — only set for `type: 'dependency-vulnerability'` findings.
+  packageName?: string;
+  currentVersion?: string;
+  recommendedFix?: string;  // semver range from npm audit advisory, e.g. ">=1.2.8"
 }
 
 export interface GhostPlan {
   findingId: string;
   steps: string[];
   preview: string;
+  // Phase A Section 1b: tells applyFix() what remediation path to run.
+  //   'npm-audit-fix' — run `npm audit fix` (no --force) + verify with re-audit
+  //   'suggest-only'  — no-op: the "fix" is the human having seen the suggestion
+  // Undefined for plans built before Section 1b (backwards compat with the
+  // approval-gate flow used by Terminal/Operative/Fabrication agents, which
+  // don't go through applyFix() — they wait for the FSM transition only).
+  fixAction?: 'npm-audit-fix' | 'suggest-only';
+  // For 'npm-audit-fix': the cwd to run the command in (server/ dir).
+  // For 'suggest-only': undefined.
+  fixCwd?: string;
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────

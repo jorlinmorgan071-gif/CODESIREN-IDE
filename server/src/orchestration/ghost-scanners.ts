@@ -114,6 +114,12 @@ function securityDependencyScanner(): ScannerFinding[] {
       severity: mapSecuritySeverity(f.severity),
       description: `${f.package}@${f.currentVersion}: ${f.advisory}. Fix: ${f.recommendedFix}`,
       agentId: 'security-agent',
+      // Phase A Section 1b: carry the package metadata so planFix() can
+      // build a real remediation plan and applyFix() can run npm audit fix
+      // targeting the right project dir.
+      packageName: f.package,
+      currentVersion: f.currentVersion,
+      recommendedFix: f.recommendedFix,
     }));
   } catch (err: any) {
     // Common in test/dev: no node_modules, no package-lock. Not an error —
@@ -129,8 +135,14 @@ function securityDependencyScanner(): ScannerFinding[] {
 // ── Registration entry point ────────────────────────────────────────────
 
 export function registerGhostScanners(): void {
+  // Sync the project root to ghostMode so planFix()/applyFix() can resolve
+  // the server cwd for `npm audit fix`. This must happen before the scanners
+  // register so the first scan tick (if it produces a finding) can build a
+  // real plan with the right cwd.
+  ghostMode.setProjectRoot(PROJECT_ROOT);
+
   // 30s cadence — runs from scanCycle() heartbeat (the main 30s timer).
-  // Per ghost-mode.ts: scanners at cadence <= 30s are invoked from scanCycle().
+  // Per ghost-mode.ts: scanners at cadence == 30s piggyback on the heartbeat.
   ghostMode.registerScanner('performance-anti-patterns', 30_000, performanceAntiPatternScanner);
 
   // 5min cadence — gets its OWN interval inside ghost-mode.ts.

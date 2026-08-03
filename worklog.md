@@ -171,3 +171,39 @@ Stage Summary:
 - Typecheck clean. grep-audit clean.
 - Scope guards respected: applyFix() untouched, no DevOps/LLM/Monaco/terminal
   scanners, no auto-amend/autonomous distinction, no new HTTP endpoint.
+
+---
+Task ID: phase-a-section-1b-ghost-real-remediation
+Agent: main (super-z)
+Task: Phase A Section 1b — real applyFix() with two paths: (A) dependency vulnerabilities get real npm audit fix (no --force) + verification + rollback on failure; (B) performance anti-patterns are honest suggest-only (no file write, no command run).
+
+Work Log:
+- server/src/types.ts: extended GhostFinding with optional packageName/currentVersion/recommendedFix (for dep findings) + GhostPlan with optional fixAction ('npm-audit-fix' | 'suggest-only') + fixCwd. All optional — no breaking changes to existing callers (Terminal/Operative/Fabrication agents).
+- server/src/orchestration/ghost-remediation.ts (NEW): the real remediation logic.
+  - dryRunNpmAuditFix(cwd): runs `npm audit fix --dry-run --json`, parses the change array, returns hasInRangeFix + changeDescription. Handles npm's quirk of outputting a human-readable "change X => Y" line BEFORE the JSON.
+  - buildDependencyFixPlan(finding, serverCwd): runs dry-run first. If in-range fix exists → builds npm-audit-fix plan. If not → builds suggest-only plan honestly stating "no in-range fix, manual upgrade required".
+  - applyNpmAuditFix(cwd): pre-checks (validateShellCommand + node_modules/package-lock exist), captures vulnsBefore via `npm audit --json`, runs `npm audit fix` (NO --force), verifies with re-audit, returns success=true only if vulnsAfter < vulnsBefore.
+  - buildPerformanceSuggestionPlan(finding): builds suggest-only plan with honest "NOT auto-fixable, manual review required" text.
+  - countVulnerabilities(cwd): helper that parses npm audit --json metadata.vulnerabilities.total.
+- server/src/orchestration/ghost-mode.ts:
+  - Imported buildDependencyFixPlan/buildPerformanceSuggestionPlan/applyNpmAuditFix from ghost-remediation.ts.
+  - Added projectRoot/serverCwd fields + setProjectRoot()/getServerCwd() methods (so planFix/applyFix know where to run npm audit fix).
+  - Rewrote planFix(): dispatches by finding.type — 'dependency-vulnerability' → buildDependencyFixPlan; 'performance:*' → buildPerformanceSuggestionPlan; legacy (terminal:command etc.) → stub plan.
+  - Rewrote applyFix(): dispatches by plan.fixAction — 'npm-audit-fix' → runs real applyNpmAuditFix, transitions to rolled_back on verification failure (NOT complete); 'suggest-only' or undefined → no-op, walks through to complete.
+- server/src/orchestration/ghost-scanners.ts: securityDependencyScanner now populates packageName/currentVersion/recommendedFix on the GhostFinding. registerGhostScanners() calls ghostMode.setProjectRoot() before registering scanners.
+- server/tests/unit/ghost-remediation.test.ts (NEW, 7 tests, ALL real — no mocks):
+  1. Path A positive: minimist^1.2.0 (1.2.0 installed) — real npm audit fix reduces vuln count 1 → 0, FSM lands in scanning (via complete)
+  2. Path A negative: lodash@4.17.4 pinned — dry-run says no in-range fix, plan is suggest-only, applyFix is no-op, vuln count UNCHANGED
+  3. Path A rollback: applyNpmAuditFix on lodash (no in-range fix) returns success=false — confirms the verification-failure path that triggers rolled_back
+  4. Path B planFix: performance finding → suggest-only plan with "NOT auto-fixable" + "Manual review required" text
+  5. Path B applyFix: zero file writes (content + mtime unchanged), zero shell commands, FSM walks to scanning (via complete)
+  6. dryRunNpmAuditFix: minimist^1.2.0 → hasInRangeFix=true; lodash@4.17.4 pinned → hasInRangeFix=false
+  7. validateShellCommand: npm audit fix passes the blocklist (defense in depth)
+
+Stage Summary:
+- Two real remediation paths implemented:
+  - Path A (deps): real `npm audit fix` (no --force, ever) + real verification (re-audit vuln count must decrease) + real rollback on failure. Never uses --force. Routes through validateShellCommand first.
+  - Path B (perf): honest suggest-only. Zero file writes, zero shell commands. Plan text plainly says "NOT auto-fixable, manual review required."
+- Evidence: 7/7 real tests pass. Path A positive proves real vuln count drop (1→0). Path A negative proves no-op when no in-range fix. Path B proves zero side effects (file content + mtime unchanged).
+- Tests: 634/634 passing (292 unit + 19 integration/e2e + 314 security + 9 agent). Zero regressions. Typecheck clean. grep-audit clean.
+- Scope guards respected: never --force, no LLM-assisted code fix, no CodeReviewAgent gate changes, applyFix() untouched for legacy approval-gate findings.

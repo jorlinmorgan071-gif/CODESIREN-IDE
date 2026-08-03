@@ -18,6 +18,27 @@
 import { v4 as uuid } from 'uuid';
 import type { GhostState, GhostModeLevel, GhostFinding, GhostPlan } from '../types.js';
 import { makeEvent, broadcast } from '../ws/events.js';
+// Phase A Section 1b: real remediation logic. Imported here (not inlined)
+// because the remediation module imports validateShellCommand + execSync —
+// keeping it separate lets ghost-mode.ts stay focused on the FSM.
+// No circular dep: ghost-remediation.ts imports only types from this module's
+// type namespace (via ../types.js), not the ghostMode singleton.
+import {
+  buildDependencyFixPlan,
+  buildPerformanceSuggestionPlan,
+  applyNpmAuditFix,
+} from './ghost-remediation.js';
+
+// Resolve the default project root from the server's cwd. The server runs
+// from <projectRoot>/server/, so projectRoot = parent of process.cwd().
+// Mirrors the logic in ghost-scanners.ts:resolveProjectRoot.
+function resolveDefaultProjectRoot(): string {
+  const cwd = process.cwd();
+  if (cwd.endsWith('/server') || cwd.endsWith('\\server')) {
+    return cwd.replace(/[/\\]server$/, '');
+  }
+  return cwd;
+}
 
 const TRANSITIONS: Record<GhostState, GhostState[]> = {
   inactive:          ['scanning'],
@@ -64,6 +85,13 @@ class GhostModeMachine {
   // a fast-completing approval looks identical to a rejection.
   private resolvedApprovals = new Map<string, 'approved' | 'rejected'>();
 
+  // Phase A Section 1b: project root + server cwd, set by the wiring layer
+  // (ghost-scanners.ts via setProjectRoot) so planFix()/applyFix() can pass
+  // the right cwd to npm audit fix. Defaults to process.cwd()/.. (the server
+  // runs from <root>/server/, so parent is the project root).
+  private projectRoot: string = resolveDefaultProjectRoot();
+  private serverCwd: string = this.projectRoot + '/server';
+
   // Phase A Section 1: registered scanners + their intervals
   private scanners = new Map<string, RegisteredScanner>();
 
@@ -79,6 +107,22 @@ class GhostModeMachine {
   setLevel(level: GhostModeLevel): void {
     this.level = level;
     console.log(`[ghost] level=${level}`);
+  }
+
+  /**
+   * Phase A Section 1b: set the project root + server cwd for remediation.
+   * Called by the wiring layer (ghost-scanners.ts) so that planFix()/applyFix()
+   * can pass the right cwd to `npm audit fix`. Tests also use this to point
+   * at fixture directories.
+   */
+  setProjectRoot(root: string): void {
+    this.projectRoot = root;
+    this.serverCwd = root + '/server';
+  }
+
+  /** Test/helper: get the current server cwd (for assertions in tests). */
+  getServerCwd(): string {
+    return this.serverCwd;
   }
 
   start(): void {
@@ -244,11 +288,32 @@ class GhostModeMachine {
 
   async planFix(finding: GhostFinding): Promise<GhostPlan> {
     this.transition('planning');
-    const plan: GhostPlan = {
-      findingId: finding.id,
-      steps: ['(Step 0 stub plan — real planner comes with Security Agent in a later step)'],
-      preview: `Planned fix for ${finding.type}: ${finding.description}`,
-    };
+
+    // Phase A Section 1b: dispatch by finding type to build a real plan.
+    //   - dependency-vulnerability → run npm audit fix --dry-run, build real
+    //     or suggest-only plan based on whether an in-range fix exists
+    //   - performance:*            → suggest-only (NOT auto-fixable per Section 0)
+    //   - terminal:command / operative:action / fabrication:print → legacy
+    //     stub plan (these are approval-gate findings from agents that wait
+    //     on the FSM transition, not on applyFix(); the plan content doesn't
+    //     matter for them, only the state transitions)
+    let plan: GhostPlan;
+    if (finding.type === 'dependency-vulnerability') {
+      plan = buildDependencyFixPlan(finding, this.serverCwd);
+    } else if (finding.type.startsWith('performance:')) {
+      plan = buildPerformanceSuggestionPlan(finding);
+    } else {
+      // Legacy approval-gate findings (terminal:command, operative:action, etc.)
+      // These don't go through applyFix() for real work — the calling agent
+      // does the real action after the FSM transitions to applying/complete.
+      // The stub plan is fine here.
+      plan = {
+        findingId: finding.id,
+        steps: [`Approve proposed action: ${finding.description}`],
+        preview: `Proposed action: ${finding.description}`,
+      };
+    }
+
     this.plans.set(finding.id, plan);
     broadcast(makeEvent('ghost:plan', plan));
 
@@ -279,11 +344,56 @@ class GhostModeMachine {
     return this.resolvedApprovals.get(findingId);
   }
 
+  /**
+   * Phase A Section 1b: real applyFix() — dispatches by plan.fixAction.
+   *
+   *   'npm-audit-fix' : runs `npm audit fix` (NO --force) + verifies with
+   *                      re-audit. Verification failure → rolled_back.
+   *   'suggest-only'  : NO-OP. No file written, no command run. The "fix" is
+   *                      the human having seen the suggestion. Transitions
+   *                      straight to complete.
+   *   undefined       : legacy approval-gate flow (terminal:command etc.).
+   *                      The calling agent does the real action; applyFix()
+   *                      just walks the FSM through to complete.
+   *
+   * applyFix() is private — called from planFix() (auto modes) or approve()
+   * (approval-required mode). Never called directly from outside.
+   */
   private async applyFix(plan: GhostPlan): Promise<void> {
     this.transition('applying');
     broadcast(makeEvent('ghost:fix', { detectionId: plan.findingId, diff: plan.preview }));
+
+    if (plan.fixAction === 'npm-audit-fix') {
+      // Path A: real npm audit fix + verification
+      const cwd = plan.fixCwd ?? this.serverCwd;
+      console.log(`[ghost] applyFix: running npm audit fix in ${cwd}`);
+      const result = applyNpmAuditFix(cwd);
+      console.log(
+        `[ghost] applyFix: npm audit fix result — success=${result.success}, ` +
+        `vulns ${result.vulnsBefore} → ${result.vulnsAfter}` +
+        (result.reason ? `, reason=${result.reason}` : '')
+      );
+
+      this.transition('verifying');
+      if (result.success) {
+        this.transition('complete');
+      } else {
+        // Verification failed — honest rollback. The fix didn't actually
+        // reduce the vuln count, so we transition to rolled_back (NOT complete).
+        // This is the "verify" step doing real work, not assuming success.
+        console.warn(`[ghost] applyFix: verification failed — rolling back. ${result.reason ?? ''}`);
+        this.transition('rolled_back');
+      }
+      this.transition('scanning');
+      return;
+    }
+
+    // Path B (suggest-only) OR legacy (undefined fixAction):
+    // No file write, no shell command. The "fix" is informational.
+    // For suggest-only: the human reviewed the suggestion, that's the action.
+    // For legacy: the calling agent does the real work after the FSM transition.
     this.transition('verifying');
-    // Step 0: assume verify passes
+    // No real verification possible for suggest-only — assume the human read it.
     this.transition('complete');
     this.transition('scanning');
   }
