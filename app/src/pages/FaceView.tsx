@@ -156,7 +156,9 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
             .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
             .map(([k, v]) => `${k}=${(v as number).toFixed(3)}`)
             .join(' ');
-          console.log(`[face] lip sync: ${vowelStr} vol=${vol.toFixed(3)}`);
+          // Mark silence state for debugging
+          const silenceTag = vol <= 0.05 ? ' [SILENCE→blendshapes decaying]' : '';
+          console.log(`[face] lip sync: ${vowelStr} vol=${vol.toFixed(3)}${silenceTag}`);
         }, 200);
 
         // Clear interval when audio source changes or component unmounts
@@ -229,7 +231,8 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
       // Note: logging is done via setInterval in the useEffect above (decoupled
       // from useFrame frame rate). Here we just read weights and apply blendshapes.
       const lipSyncNode = lipSyncNodeRef.current;
-      if (lipSyncNode && lipSyncNode.weights) {
+      const SILENCE_THRESHOLD = 0.05;  // below this volume, treat as silence
+      if (lipSyncNode && lipSyncNode.weights && lipSyncNode.volume > SILENCE_THRESHOLD) {
         const weights = lipSyncNode.weights;
         const volume = lipSyncNode.volume;
 
@@ -245,8 +248,13 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
           }
         }
       } else {
-        // Fallback: amplitude-based mouth open if wlipsync not ready
-        if (amplitude > 0.01) {
+        // Silence or wlipsync not ready: don't set any vowel blendshape targets.
+        // The lerp system below will smoothly decay existing values toward 0
+        // (since targetBlendValues doesn't include vowel keys), returning the
+        // mouth to neutral. This prevents the "frozen last vowel" issue where
+        // wlipsync holds its last non-zero weights after audio ends.
+        // Amplitude fallback for when wlipsync node doesn't exist yet:
+        if (!lipSyncNode && amplitude > 0.01) {
           targetBlendValues.current['aa'] = Math.max(targetBlendValues.current['aa'] ?? 0, amplitude * 0.7);
         }
       }
