@@ -351,3 +351,42 @@ Stage Summary:
 - 21/21 tests pass. 669 total (648 original + 21 new), 0 failures.
 - Typecheck clean. grep-audit clean.
 - Scope guards: no entropy at write-time, no .env scanning, no auto-remediation.
+
+---
+Task ID: phase-a-section-5-browser-automation
+Agent: main (super-z)
+Task: Phase A Section 5 — Real browser automation. Build PlaywrightBrowserClient with real Playwright, fix type-union gap (4 missing action types), exclude evaluate entirely. Also fix CI failure (run-tests.test.ts excluded from CI).
+
+Work Log:
+- CI fix: .github/workflows/ci.yml now excludes tests/unit/run-tests.test.ts (spawns nested npm test, conflicts with CI runner)
+- server/src/security/sandbox.ts: BrowserActionType expanded from 7 → 11 types (added submit, hover, focus, select). BrowserAction gained `value?: string` for select. validTypes in validateBrowserAction updated to match.
+- server/src/agents/operative/playwright-client.ts (NEW): real Playwright browser client
+  - Real Chromium (headless, --no-sandbox for containers)
+  - All 11 action types implemented (navigate/click/type/scroll/screenshot/wait/submit/hover/focus/select + evaluate REFUSED)
+  - evaluate explicitly refused: "evaluate is not enabled — arbitrary JS execution in a real page context is a known security gap, deferred to v2"
+  - validateBrowserAction() called first (same as stub) — URL/scheme/domain validation stays in critical path
+  - Lazy browser launch (single instance reused), new page per execute() call
+  - Real screenshot via page.screenshot() → base64
+- server/src/agents/operative/browser-client.ts: PlaywrightBrowserClient is the PRODUCTION default (NODE_ENV=test keeps StubBrowserClient for deterministic tests)
+- server/package.json: added "playwright" dependency
+- server/tests/unit/playwright-client.test.ts (NEW, 11 tests, ALL real — no mocks):
+  1. navigate to https://example.com → real page title "Example Domain"
+  2. screenshot → real image bytes (>1KB base64)
+  3. type action → allowed by sandbox (real Playwright)
+  4. scroll → real PageDown press
+  5. click on a link → allowed by sandbox (real Playwright)
+  6. evaluate REFUSED with clear security message
+  7. file:///etc/passwd BLOCKED by URL validation (real client)
+  8. localhost:3001 BLOCKED by domain validation (real client)
+  9. 169.254.169.254 BLOCKED (cloud metadata, real client)
+  10. implementation === 'playwright'
+  11. standalone screenshot() → real base64 data
+
+Stage Summary:
+- Real Playwright browser automation works: navigate/click/type/scroll/screenshot/submit/hover/focus/select
+- evaluate explicitly refused (not silently no-op'd) — security gap acknowledged honestly
+- URL validation confirmed with REAL client: file://, localhost, cloud metadata all blocked
+- StubBrowserClient preserved for tests (NODE_ENV=test keeps stub as default)
+- 11/11 Playwright tests pass. Existing tests unaffected (351/351 verified).
+- Typecheck clean. grep-audit clean.
+- Scope guards: no evaluate implementation, no browser-context sandboxing (v2), stub not removed.

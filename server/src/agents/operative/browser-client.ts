@@ -131,8 +131,32 @@ export class StubBrowserClient implements BrowserClient {
 }
 
 // ── Dependency injection ─────────────────────────────────────────────────
+//
+// Phase A Section 5: PlaywrightBrowserClient is the PRODUCTION default.
+// Tests that need deterministic fixture pages should call setBrowserClient(new StubBrowserClient())
+// explicitly in their setup — the stub is still exported + available.
+//
+// In NODE_ENV=test, we keep the stub as the default so existing tests don't
+// break (they expect the stub's hardcoded page content). In production, the
+// real Playwright client is used.
 
-let activeBrowserClient: BrowserClient = new StubBrowserClient();
+let activeBrowserClient: BrowserClient;
+
+if (process.env.NODE_ENV === 'test') {
+  // Test mode — use the stub (deterministic fixture pages, no real browser)
+  activeBrowserClient = new StubBrowserClient();
+} else {
+  // Production mode — use real Playwright (lazy-launched on first use)
+  // Dynamic import to avoid loading playwright in test mode (it's a heavy dep)
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  try {
+    const { PlaywrightBrowserClient } = require('./playwright-client.js');
+    activeBrowserClient = new PlaywrightBrowserClient();
+  } catch (err: any) {
+    console.warn(`[browser-client] Playwright not available (${err.message}), falling back to stub`);
+    activeBrowserClient = new StubBrowserClient();
+  }
+}
 
 export function getBrowserClient(): BrowserClient {
   return activeBrowserClient;

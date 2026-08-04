@@ -211,17 +211,22 @@ export type BrowserActionType =
   | 'scroll'
   | 'screenshot'
   | 'wait'
-  | 'evaluate';
+  | 'evaluate'
+  | 'submit'
+  | 'hover'
+  | 'focus'
+  | 'select';
 
 export interface BrowserAction {
   type: BrowserActionType;
   url?: string;         // for 'navigate'
-  selector?: string;    // for 'click', 'type'
+  selector?: string;    // for 'click', 'type', 'hover', 'focus', 'select', 'submit'
   text?: string;        // for 'type'
   x?: number;           // for 'click' (coordinate-based)
   y?: number;
   code?: string;        // for 'evaluate' — RUNS IN THE SANDBOX
   duration?: number;    // for 'wait' (ms)
+  value?: string;       // for 'select' (option value to select)
 }
 
 export interface ActionValidationResult {
@@ -256,7 +261,7 @@ export async function validateBrowserAction(
   opts: SandboxOpts = {},
 ): Promise<ActionValidationResult> {
   // 1. Validate action type
-  const validTypes: BrowserActionType[] = ['navigate', 'click', 'type', 'scroll', 'screenshot', 'wait', 'evaluate'];
+  const validTypes: BrowserActionType[] = ['navigate', 'click', 'type', 'scroll', 'screenshot', 'wait', 'evaluate', 'submit', 'hover', 'focus', 'select'];
   if (!validTypes.includes(action.type)) {
     return { allowed: false, reason: `Unknown action type: ${action.type}` };
   }
