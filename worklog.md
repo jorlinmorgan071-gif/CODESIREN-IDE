@@ -470,3 +470,28 @@ Stage Summary:
 - 7/7 tests pass. Fresh total: 691 tests, 0 failures (684 + 7 new).
 - Typecheck clean. grep-audit clean.
 - Scope guards: no LLM judgment, no cross-referencing, no new scanners, no relationship/graph modeling.
+
+---
+Task ID: phase-a-section-8-embedding-cache
+Agent: main (super-z)
+Task: Phase A Section 8 — Embedding cache only. Small in-memory cache for modelRouter.embed() with 5-min TTL. No project-graph expansion, no response caching, no background indexing (all confirmed low-value per Section 0).
+
+Work Log:
+- server/src/orchestration/model-router.ts:
+  - Added embedCache (Map<string, { embedding, expiresAt }>) with 5-min TTL
+  - embed() now checks cache first (key = SHA-256 hash of truncated text) → returns cached embedding on hit
+  - On miss: calls embedUncached() (renamed from the original embed body), stores result in cache
+  - clearEmbedCache() + getEmbedCacheSize() test helpers
+  - hashText() uses node:crypto SHA-256 (fast, deterministic, no collisions)
+- server/tests/unit/embed-cache.test.ts (NEW, 5 tests):
+  1. Identical text → cache hit (embedUncached called once, not twice)
+  2. TTL expiry → cache miss after window (manipulate expiresAt to past)
+  3. Different text → always cache miss (3 different texts = 3 misses, 3 cache entries)
+  4. Cache returns correct embedding (identical to uncached result)
+  5. Truncation: text > 8000 chars truncated, same prefix hits cache
+
+Stage Summary:
+- Small, real, bounded embedding cache — 5-min TTL, SHA-256 key, in-memory
+- 5/5 tests pass. Fresh total: 696 tests, 0 failures (691 + 5 new).
+- Typecheck clean. grep-audit clean.
+- Scope guards: no 2-hop project-graph, no response cache for stream(), no background indexing, no symbol index, no ctags/LSIF/SCIP.

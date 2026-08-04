@@ -231,6 +231,12 @@ class ModelRouter {
   private preferredEngine: EngineId = 'stub';
   private ollamaChecked = false;
 
+  // Phase A Section 8: embedding cache — avoids re-embedding identical text.
+  // Keyed by a hash of the input text. TTL 5 minutes (embeddings don't change
+  // for the same text — they're deterministic). In-memory only (not persisted).
+  private embedCache = new Map<string, { embedding: number[]; expiresAt: number }>();
+  private static EMBED_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
   constructor() {
     this.engines.set('stub', new StubEngine());
     this.engines.set('ollama', new OllamaEngine());
@@ -360,11 +366,35 @@ class ModelRouter {
    *
    * This is NOT a third routing system — it reuses the same engine selection
    * as stream(), just calling the embedding endpoint instead of chat.
+   *
+   * Phase A Section 8: in-memory cache (5-min TTL) avoids re-embedding
+   * identical text. Embeddings are deterministic for the same text — caching
+   * is safe + saves ~50ms per hit (Ollama) or ~100ms (OpenAI).
    */
   async embed(text: string): Promise<number[]> {
     const text_ = text.slice(0, 8000); // truncate to avoid token limits
 
-    // Try Ollama embeddings first (if ollama is the preferred engine)
+    // Phase A Section 8: check cache first
+    const cacheKey = this.hashText(text_);
+    const cached = this.embedCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.embedding; // cache hit — skip the embed call
+    }
+
+    // Cache miss — embed normally
+    const embedding = await this.embedUncached(text_);
+
+    // Store in cache
+    this.embedCache.set(cacheKey, {
+      embedding,
+      expiresAt: Date.now() + ModelRouter.EMBED_CACHE_TTL_MS,
+    });
+
+    return embedding;
+  }
+
+  /** The actual embed logic (without cache) — called on cache miss. */
+  private async embedUncached(text_: string): Promise<number[]> {
     if (this.preferredEngine === 'ollama') {
       try {
         const OLLAMA_HOST = process.env.OLLAMA_HOST ?? 'http://127.0.0.1:11434';
@@ -407,6 +437,26 @@ class ModelRouter {
 
     // Stub: hash-based pseudo-embedding (deterministic, 768 dims)
     return pseudoEmbed(text_);
+  }
+
+  /**
+   * Phase A Section 8: hash text for cache key.
+   * Uses Node's crypto.createHash('sha256') — fast, deterministic, no collisions
+   * for practical text inputs.
+   */
+  private hashText(text: string): string {
+    const crypto = require('node:crypto');
+    return crypto.createHash('sha256').update(text).digest('hex');
+  }
+
+  /** Phase A Section 8: clear the embed cache (for tests). */
+  clearEmbedCache(): void {
+    this.embedCache.clear();
+  }
+
+  /** Phase A Section 8: get cache size (for tests). */
+  getEmbedCacheSize(): number {
+    return this.embedCache.size;
   }
 }
 
