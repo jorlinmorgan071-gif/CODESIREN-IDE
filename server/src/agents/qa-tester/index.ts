@@ -5,10 +5,16 @@
 // agent can run in any executionMode: same agent, same system prompt, same
 // Model Router — the strategy dispatcher picks single-shot / react / codeact
 // based purely on task.executionMode.
+//
+// Phase A Section 3: gained a real programmatic capability — runTests().
+// The LLM-chat persona (recommending test cases) is preserved; this ADDS
+// the ability to actually execute the test suite + report real pass/fail
+// counts + real coverage, not just describe what to test.
 
 import type { AgentChunk, AgentTask, AgentDomain } from '../../types.js';
 import { IAgent } from '../base-agent.js';
 import { dispatchStrategy } from '../../orchestration/strategies/dispatcher.js';
+import { runTests, type RunTestsResult } from '../../orchestration/run-tests.js';
 
 const SYSTEM_PROMPT = `You are the QA Tester Agent of Zero Two: Code Siren.
 
@@ -21,6 +27,8 @@ When asked to test something:
 3. List the test cases you would write, with input → expected output.
 4. Recommend the test framework appropriate to the project's stack.
 5. Flag any test coverage gaps in critical paths (auth, payments, etc.).
+6. When asked to RUN tests, use the runTests() capability — report REAL
+   pass/fail counts + real coverage, not guesses.
 
 You have access to tools in react/codeact mode:
 - calculator: for any arithmetic in test cases
@@ -38,6 +46,28 @@ export class QaTesterAgent extends IAgent {
 
   constructor() {
     super(0.79);  // matches demoData.ts row a7
+  }
+
+  // ── Phase A Section 3: real test execution capability ──────────────
+  /**
+   * Run the test suite for the target directory + return real pass/fail
+   * counts + optional coverage summary.
+   *
+   * Uses spawn() (non-blocking) — the Node event loop stays responsive
+   * during the ~94s test run. No Ghost Mode approval gate (test execution
+   * is read-only — only writes gitignored coverage/ + .traces/).
+   *
+   * Fixed command allowlist only (npm test / npm run test:coverage) — no
+   * arbitrary npm run <script> execution.
+   *
+   * @param projectRoot Root of the code_siren project (parent of server/)
+   * @param params { targetDir, coverage?, timeoutMs? }
+   */
+  async runTestsSuite(
+    projectRoot: string,
+    params: { targetDir: 'server' | 'app'; coverage?: boolean; timeoutMs?: number },
+  ): Promise<RunTestsResult> {
+    return runTests(projectRoot, params);
   }
 
   async *execute(task: AgentTask, signal: AbortSignal): AsyncGenerator<AgentChunk> {
