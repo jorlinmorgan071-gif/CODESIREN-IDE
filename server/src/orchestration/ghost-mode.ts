@@ -296,6 +296,10 @@ class GhostModeMachine {
     //   - performance:*            → suggest-only (NOT auto-fixable per Section 0)
     //   - terminal:error            → suggest-only (Phase A Section 2 — no safe
     //     generic auto-fix for "a command failed")
+    //   - security:secret           → suggest-only (Phase A Section 4 — no safe
+    //     auto-fix for "remove a secret from source code"; human reviews +
+    //     rotates. Reuses buildPerformanceSuggestionPlan since the plan shape
+    //     is the same: "manual review required, NOT auto-fixable".)
     //   - terminal:command / operative:action / fabrication:print → legacy
     //     stub plan (these are approval-gate findings from agents that wait
     //     on the FSM transition, not on applyFix(); the plan content doesn't
@@ -303,7 +307,7 @@ class GhostModeMachine {
     let plan: GhostPlan;
     if (finding.type === 'dependency-vulnerability') {
       plan = buildDependencyFixPlan(finding, this.serverCwd);
-    } else if (finding.type.startsWith('performance:')) {
+    } else if (finding.type.startsWith('performance:') || finding.type === 'security:secret') {
       plan = buildPerformanceSuggestionPlan(finding);
     } else if (finding.type === 'terminal:error') {
       plan = buildTerminalErrorSuggestionPlan(finding);

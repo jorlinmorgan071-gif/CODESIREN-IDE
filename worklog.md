@@ -320,3 +320,34 @@ Stage Summary:
   (test execution is read-only — matches DevOps Agent's ungated pattern).
 - NOTE: Push to GitHub pending — session restart wiped .github-token file
   (gitignored, not in git). User needs to re-provide token for push.
+
+---
+Task ID: phase-a-section-4-secret-detection
+Agent: main (super-z)
+Task: Phase A Section 4 — Secret detection. Build detectSecrets() combining 5 existing deterministic patterns with new entropy-based detection, wired as both a periodic Ghost Mode scanner (30s) and an on-demand SecurityAgent method.
+
+Work Log:
+- server/src/security/secret-patterns.ts (NEW): shared secret detection module
+  - KNOWN_PATTERNS: 5 patterns extracted from CodeReviewAgent (keyword-secret, aws-access-key, github-pat, jwt-bearer, private-key-block) — no drift between write-time gate + periodic scanner
+  - detectSecrets(filePath, content): combines known patterns + entropy detection
+  - Entropy: Shannon entropy ≥ 4.5 + length ≥ 20, excludes UUIDs/hex-hashes/data-URIs/file-paths/URLs
+  - Returns SecretFinding[] with matchType: 'known-pattern' (severity high) vs 'entropy' (severity medium)
+  - scanCodebaseForSecrets(projectRoot, targetDir): recursive file-tree scanner, excludes node_modules/dist/.git/tests/coverage/.traces/.runtime + .env files
+- server/src/agents/code-review/index.ts: refactored to import KNOWN_PATTERNS from shared module (no more inline regex drift). Entropy NOT added to write-time gate (per Section 0 — high false-positive risk at write-time).
+- server/src/agents/security/index.ts: new scanSecrets(projectRoot, targetDir) on-demand method
+- server/src/orchestration/ghost-scanners.ts: new secretScanner() registered at 30s cadence, maps to GhostFinding type='security:secret'
+- server/src/orchestration/ghost-mode.ts: planFix() dispatches security:secret → suggest-only (no auto-fix — human reviews + rotates)
+- server/tests/unit/secret-detection.test.ts (NEW, 21 tests):
+  - Known patterns: AWS key, GitHub PAT (ghp_ + github_pat_), JWT, keyword secret, PEM key — all caught with matchType='known-pattern', severity='high'
+  - Entropy: custom high-entropy keys caught with matchType='entropy', severity='medium'
+  - False positives: UUID, SHA-256, data URI, short strings, plain English text — all NOT flagged
+  - SecurityAgent.scanSecrets() on-demand: finds planted secrets in fixture, empty for clean codebase
+  - Ghost Mode periodic scanner: maps to type='security:secret', plans as suggest-only
+  - Entropy helpers: shannonEntropy, isUuid, isHexHash verified
+
+Stage Summary:
+- Secret detection built with both known-pattern + entropy approaches
+- Shared module prevents drift between write-time gate + periodic scanner
+- 21/21 tests pass. 669 total (648 original + 21 new), 0 failures.
+- Typecheck clean. grep-audit clean.
+- Scope guards: no entropy at write-time, no .env scanning, no auto-remediation.

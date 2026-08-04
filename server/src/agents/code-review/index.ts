@@ -4,6 +4,11 @@ import { IAgent } from '../base-agent.js';
 import { dispatchStrategy } from '../../orchestration/strategies/dispatcher.js';
 import { modelRouter } from '../../orchestration/model-router.js';
 import { parseReviewResponse } from '../_shared/review-parse.js';
+// Phase A Section 4: shared secret patterns — imported to avoid drift between
+// the write-time gate (here) and the periodic/on-demand secret scanner.
+// Only the KNOWN_PATTERNS are reused here (NOT entropy detection — per
+// Section 0, entropy at write-time is high-false-positive risk, deferred).
+import { KNOWN_PATTERNS } from '../../security/secret-patterns.js';
 
 const SYSTEM_PROMPT = `You are the Code Review Agent of Zero Two: Code Siren.
 Your role: quality scoring, anti-pattern detection, and reviewing all AI-generated code before it's committed.
@@ -66,30 +71,17 @@ export class CodeReviewAgent extends IAgent {
     // These are auto-rejects — if any pattern matches, score 0, no LLM call.
     const securityIssues: string[] = [];
 
-    // Hardcoded secrets — existing keyword-based check
-    if (/(?:password|secret|api[_-]?key|token|private[_-]?key)\s*[:=]\s*['"][^'"]{8,}['"]/i.test(content)) {
-      securityIssues.push('[CRITICAL] Hardcoded secret/credential detected');
+    // Phase A Section 4: secret detection now uses the SHARED KNOWN_PATTERNS
+    // from security/secret-patterns.ts — same patterns, no drift between the
+    // write-time gate (here) and the periodic/on-demand secret scanner.
+    // Entropy detection is NOT included here (per Section 0 — high false-
+    // positive risk at write-time would block legitimate writes).
+    for (const pattern of KNOWN_PATTERNS) {
+      if (pattern.match(content)) {
+        securityIssues.push(`[CRITICAL] ${pattern.description}`);
+      }
     }
-    // NEW (Phase C): Broadened secret detection — pattern-based, not keyword-based.
-    // Catches credential formats that don't use the `password = "..."` keyword pattern:
-    //   - AWS access key IDs: AKIA followed by 16 uppercase alphanumerics
-    //   - GitHub PATs: ghp_ / github_pat_ prefixes
-    //   - JWTs: eyJ... (base64-encoded JSON header) in Authorization headers
-    //
-    // FALSE-POSITIVE MITIGATION: each pattern requires context to avoid
-    // matching test fixtures, comments, and documentation:
-    //   - AWS/GitHub: must appear in an assignment context (`= "..."` or `: "..."`)
-    //   - JWT: must appear in an Authorization header context
-    //   - All require word-boundary anchors
-    if (/\bAKIA[A-Z0-9]{16}\b/.test(content) && /(?:=|:)\s*['"][^'"]*AKIA[A-Z0-9]{16}[^'"]*['"]/.test(content)) {
-      securityIssues.push('[CRITICAL] Hardcoded AWS access key ID detected');
-    }
-    if (/(?:=|:)\s*['"](?:ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,})['"]/.test(content)) {
-      securityIssues.push('[CRITICAL] Hardcoded GitHub token detected');
-    }
-    if (/Authorization\s*[:=]\s*['"]\s*Bearer\s+eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/i.test(content)) {
-      securityIssues.push('[CRITICAL] Hardcoded JWT in Authorization header detected');
-    }
+
     // SQL injection (string interpolation OR concatenation in query)
     // Existing: catches template-literal ${} interpolation in query() calls.
     // NEW (Phase C): also catches single-quote and double-quote string

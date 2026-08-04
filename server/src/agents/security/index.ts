@@ -26,6 +26,8 @@ import { execSync } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { extractFencedJson } from '../_shared/review-parse.js';
+// Phase A Section 4: shared secret scanner — on-demand method on SecurityAgent
+import { scanCodebaseForSecrets, type SecretFinding } from '../../security/secret-patterns.js';
 
 const SYSTEM_PROMPT = `You are the Security Agent of Zero Two: Code Siren.
 Your role: identify vulnerabilities, audit dependencies, prevent injection attacks, and detect secrets.
@@ -320,6 +322,25 @@ export class SecurityAgent extends IAgent {
    * If no auth-related files are found, returns empty findings (not an error).
    * If the LLM produces no fenced JSON, returns empty findings + a skipped note.
    */
+  // ── Phase A Section 4: on-demand secret scanner ──────────────────────
+  /**
+   * Scan the whole codebase for secrets (known patterns + entropy detection).
+   *
+   * On-demand method — callable directly or from securityScan(). Returns
+   * structured SecretFinding[] distinguishing known-pattern matches (high
+   * severity) from entropy-based detections (medium severity).
+   *
+   * Does NOT scan .env files (they're gitignored + contain intentional real
+   * secrets — per Section 0 scope guard). Does NOT auto-remediate — the human
+   * reviews findings + decides whether to rotate + remove.
+   *
+   * @param projectRoot Root of the code_siren project
+   * @param targetDir 'server' | 'app' | '' (which package to scan)
+   */
+  scanSecrets(projectRoot: string, targetDir: 'server' | 'app' | '' = 'server'): SecretFinding[] {
+    return scanCodebaseForSecrets(projectRoot, targetDir);
+  }
+
   private async scanAuthLogic(projectRoot: string, files: string[]): Promise<AuthFinding[]> {
     // If caller didn't specify files, auto-discover auth-related files
     let authFiles = files;

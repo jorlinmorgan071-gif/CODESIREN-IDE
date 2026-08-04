@@ -26,6 +26,8 @@
 import { ghostMode } from './ghost-mode.js';
 import { agentManager } from './agent-manager.js';
 import type { GhostFinding, PerformanceAntiPatternFinding, DependencyFinding } from '../types.js';
+// Phase A Section 4: shared secret scanner
+import { scanCodebaseForSecrets } from '../security/secret-patterns.js';
 
 // Scanner return type — same as GhostScanner in ghost-mode.ts. Findings omit
 // `id` (assigned by reportFinding()).
@@ -132,6 +134,32 @@ function securityDependencyScanner(): ScannerFinding[] {
   }
 }
 
+// ── Phase A Section 4: secret scanner ───────────────────────────────────
+//
+// Periodic scanner (30s) — scans the server/ source tree for secrets using
+// the shared detectSecrets() (known patterns + entropy). Secrets are static
+// (persist until removed) so periodic scanning catches newly-introduced ones
+// within 30s. Maps to GhostFinding type 'security:secret', plans as
+// suggest-only (no safe auto-fix — human reviews + rotates).
+
+function secretScanner(): ScannerFinding[] {
+  try {
+    const serverDir = PROJECT_ROOT + '/server';
+    const findings = scanCodebaseForSecrets(PROJECT_ROOT, 'server');
+    return findings.map((f) => ({
+      type: 'security:secret',
+      severity: f.severity,  // 'high' for known-pattern, 'medium' for entropy
+      filePath: f.file,
+      line: f.line,
+      description: `${f.matchType} (${f.pattern}): ${f.description}`,
+      agentId: 'security-agent',
+    }));
+  } catch (err: any) {
+    console.warn(`[ghost-scanners] secret scan failed: ${err.message}`);
+    return [];
+  }
+}
+
 // ── Registration entry point ────────────────────────────────────────────
 
 export function registerGhostScanners(): void {
@@ -145,6 +173,10 @@ export function registerGhostScanners(): void {
   // Per ghost-mode.ts: scanners at cadence == 30s piggyback on the heartbeat.
   ghostMode.registerScanner('performance-anti-patterns', 30_000, performanceAntiPatternScanner);
 
+  // 30s cadence — same heartbeat. Secret scanning is cheap (regex + entropy,
+  // ~50-200ms, no network, no LLM). Catches newly-introduced secrets within 30s.
+  ghostMode.registerScanner('security-secrets', 30_000, secretScanner);
+
   // 5min cadence — gets its OWN interval inside ghost-mode.ts.
   // npm audit is a network call (1-3s); running it every 30s would be wasteful
   // and would hit npm's rate limit. 5min is a reasonable ambient-scan cadence.
@@ -156,6 +188,7 @@ export function registerGhostScanners(): void {
 export const __test__ = {
   performanceAntiPatternScanner,
   securityDependencyScanner,
+  secretScanner,
   resolveProjectRoot,
   mapPerformanceSeverity,
   mapSecuritySeverity,
