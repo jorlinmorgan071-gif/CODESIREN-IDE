@@ -25,8 +25,14 @@ jobs:
           # declared engines requirement and resolves the build failure.
           node-version: 22
       - run: npm install
+      # Phase A Section 5: install Chromium binaries for Playwright tests.
+      # playwright-client.test.ts requires real headless Chromium — without
+      # this step, the tests fail with "Executable doesn't exist at
+      # ~/.cache/ms-playwright/". --with-deps installs OS-level shared
+      # libraries Chromium needs (libnss3, libatk1.0, etc.).
+      - run: npx playwright install chromium --with-deps
       - run: npm run typecheck
-      - run: npm run test -- --exclude tests/unit/run-tests.test.ts --exclude tests/unit/playwright-client.test.ts --exclude tests/unit/ghost-remediation.test.ts
+      - run: npm run test -- --exclude tests/unit/run-tests.test.ts --exclude tests/unit/ghost-remediation.test.ts
       - run: npm audit --audit-level=high
       - run: bash ../scripts/grep-audit.sh
 
