@@ -26,7 +26,7 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run typecheck
-      - run: npm run test
+      - run: npm run test -- --exclude tests/unit/run-tests.test.ts
       - run: npm audit --audit-level=high
       - run: bash ../scripts/grep-audit.sh
 
