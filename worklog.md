@@ -437,3 +437,36 @@ Stage Summary:
 - 673 total tests passing (CI-equivalent excludes), 0 failures
 - Typecheck clean. grep-audit clean.
 - Scope guards: no OpenAI-direct/DeepSeek/GLM/Gemini, no priority-chain changes, no health-check-on-register
+
+---
+Task ID: phase-a-section-7-project-brain
+Agent: main (super-z)
+Task: Phase A Section 7 — Project Brain (Finding Ledger). Persist Ghost Mode's scanner output with recurrence tracking + resolution detection.
+
+Work Log:
+- server/src/orchestration/findings-ledger.ts (NEW): persisted finding ledger
+  - JSONL file at server/.runtime/findings-ledger.jsonl (rewrite-on-change, loaded into memory at boot)
+  - recordFinding(finding): increments detectionCount + updates lastSeenAt if key exists, creates new open entry if not
+  - markMissingAsResolved(): after each scan cycle, open entries not seen this cycle get status='resolved'
+  - startCycle(): clears cycleKeys for the next scan cycle
+  - Query surface: getOpenFindings(), getStaleFindings(daysThreshold), getRecurringFindings(minCount), getAllFindings()
+  - reloadFromDisk(): simulates process restart — rebuilds in-memory index from JSONL file
+  - ESM-safe path resolution (fileURLToPath + dirname, not __dirname)
+- server/src/orchestration/ghost-mode.ts: hooked ledger into scan cycle
+  - scanCycle() calls ledgerStartCycle() before scanners run + ledgerMarkResolved() after
+  - _runScanner() calls ledgerRecord(finding) BEFORE Ghost Mode's dedup check — the ledger tracks ALL detections for accurate recurrence counting, even if Ghost Mode's FSM dedup suppresses the re-report
+- server/tests/unit/findings-ledger.test.ts (NEW, 7 tests, ALL real file I/O):
+  1. Recurrence tracking: same finding across 3 cycles → detectionCount=3, lastSeenAt updates
+  2. Resolution detection: stop producing finding → next cycle marks resolved
+  3. Restart persistence: reload from JSONL → state survives (detectionCount, status, timestamps all preserved) + first scan cycle after restart correctly resolves missing findings
+  4. Query surface: getOpenFindings (2 open), getRecurringFindings(5) (both), getStaleFindings(999) (none)
+  5. Reopen: resolved finding reappears → status reverts to open, resolvedAt cleared
+  6. buildKey: matches Ghost Mode's type::filePath::line::description formula
+  7. Multiple findings in one cycle: all tracked independently
+
+Stage Summary:
+- Finding ledger persists Ghost Mode's scanner output with recurrence tracking + resolution detection
+- State survives process restart (JSONL file + reloadFromDisk)
+- 7/7 tests pass. Fresh total: 691 tests, 0 failures (684 + 7 new).
+- Typecheck clean. grep-audit clean.
+- Scope guards: no LLM judgment, no cross-referencing, no new scanners, no relationship/graph modeling.

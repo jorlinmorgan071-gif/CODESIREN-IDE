@@ -29,6 +29,13 @@ import {
   buildTerminalErrorSuggestionPlan,
   applyNpmAuditFix,
 } from './ghost-remediation.js';
+// Phase A Section 7: finding ledger — persists scanner output with recurrence
+// tracking + resolution detection. Hooks into _runScanner + scanCycle.
+import {
+  recordFinding as ledgerRecord,
+  markMissingAsResolved as ledgerMarkResolved,
+  startCycle as ledgerStartCycle,
+} from './findings-ledger.js';
 
 // Resolve the default project root from the server's cwd. The server runs
 // from <projectRoot>/server/, so projectRoot = parent of process.cwd().
@@ -185,22 +192,40 @@ class GhostModeMachine {
   private async scanCycle(): Promise<void> {
     if (this.state !== 'scanning' && this.state !== 'complete' && this.state !== 'rolled_back') return;
 
+    // Phase A Section 7: start a new ledger cycle — tracks which findings
+    // are seen this cycle so markMissingAsResolved can detect resolutions.
+    ledgerStartCycle();
+
     // Run all scanners registered at EXACTLY 30s cadence (the heartbeat).
     // Other cadences have their own intervals.
     for (const scanner of this.scanners.values()) {
       if (scanner.cadenceMs !== 30_000) continue;
       this._runScanner(scanner);
     }
+
+    // Phase A Section 7: after all scanners have run, mark any open ledger
+    // entries that weren't seen this cycle as resolved.
+    ledgerMarkResolved();
   }
 
   // Shared scanner-runner used by both scanCycle (30s heartbeat) and the
   // per-scanner intervals (other cadences). Dedup is applied so the same
   // finding isn't re-reported every tick.
+  //
+  // Phase A Section 7: also records to the finding ledger (BEFORE the dedup
+  // check — the ledger tracks ALL detections for accurate recurrence counting,
+  // even if Ghost Mode's FSM dedup suppresses the re-report).
   private _runScanner(scanner: RegisteredScanner): void {
     if (this.state !== 'scanning' && this.state !== 'complete' && this.state !== 'rolled_back') return;
     try {
       const findings = scanner.fn();
       for (const finding of findings) {
+        // Phase A Section 7: record to ledger BEFORE dedup — the ledger
+        // tracks every detection, not just first-time reports. This gives
+        // accurate recurrence counts (detectionCount increments every cycle
+        // the finding is present, even if Ghost Mode's FSM doesn't re-report it).
+        ledgerRecord(finding);
+
         const key = `${finding.type}::${finding.filePath ?? ''}::${finding.line ?? ''}::${finding.description}`;
         if (this.reportedFindingKeys.has(key)) continue;
         this.reportedFindingKeys.add(key);
