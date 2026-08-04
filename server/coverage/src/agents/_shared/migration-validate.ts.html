@@ -1,0 +1,652 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/agents/_shared/migration-validate.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">src/agents/_shared</a> migration-validate.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">97.82% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>45/46</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">88.23% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>30/34</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>1/1</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>45/45</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// server/src/agents/_shared/migration-validate.ts
+// SQL validation for migration files — parallel to (not reusing) the shell-
+// command validation in Terminal Agent. This is SQL text, not a shell command.
+//
+// Per directive Section 2: hard-blocks dangerous patterns UNCONDITIONALLY
+// (no approval override possible). These blocks happen BEFORE Ghost Mode is
+// even involved — they're independent of the approval gate.
+//
+// Rules:
+//   1. Hard-block DROP DATABASE (always — no IF EXISTS override possible)
+//   2. Hard-block DROP TABLE without IF EXISTS (destructive, irreversible)
+//   3. Hard-block bare TRUNCATE unless an explicit marker comment is present
+//      (marker: -- ALLOW_TRUNCATE on its own line, immediately before the TRUNCATE)
+//   4. Require ALTER TABLE ADD COLUMN to use IF NOT EXISTS
+//   5. Require ALTER TABLE DROP COLUMN to use IF EXISTS
+//
+// Every blocked pattern has a REJECTS test + every allowed pattern has a
+// false-positive test in tests/security/migration-validate.test.ts.
+&nbsp;
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];   // blocking errors — migration refused if non-empty
+  warnings: string[]; // non-blocking warnings — migration proceeds but logged
+}
+&nbsp;
+/**
+ * The marker comment that allows bare TRUNCATE.
+ * Must appear on its own line immediately before the TRUNCATE statement.
+ * This forces the migration author to explicitly acknowledge the destructive
+ * operation rather than burying it in a long SQL script.
+ */
+export const TRUNCATE_MARKER = '-- ALLOW_TRUNCATE';
+&nbsp;
+/**
+ * Validate a SQL migration script before it reaches the Ghost Mode approval gate.
+ *
+ * This is a HARD block — if any error is returned, the migration is refused
+ * regardless of user approval. The approval gate is for "should we apply this
+ * schema change?" — validation is for "is this SQL safe to even propose?".
+ *
+ * @param sql The full SQL content of the migration file
+ * @returns ValidationResult with valid=false if any hard-block pattern matches
+ */
+export function validateMigrationSql(sql: string): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+&nbsp;
+  // Strip SQL comments (-- to end of line) for pattern matching, so that
+  // comments mentioning "DROP DATABASE" don't false-positive. Keep the
+  // original SQL for the TRUNCATE marker check (which IS comment-based).
+  const sqlNoComments = sql.replace(/--[^\n]*/g, '');
+&nbsp;
+  // ── Rule 1: Hard-block DROP DATABASE (always, no exceptions) ────────
+  // DROP DATABASE is catastrophic and irreversible. Even with IF EXISTS,
+  // it destroys an entire database. Migrations should NEVER drop databases.
+  if (/\bDROP\s+DATABASE\b/i.test(sqlNoComments)) {
+    errors.push('[BLOCKED] DROP DATABASE is unconditionally forbidden in migrations — it destroys entire databases');
+  }
+&nbsp;
+  // ── Rule 2: Hard-block DROP TABLE without IF EXISTS ─────────────────
+  // DROP TABLE is destructive. With IF EXISTS it's safe (no-op if table
+  // doesn't exist). Without IF EXISTS, it errors if the table is missing
+  // AND is more likely to be an accidental/typo drop.
+  // Match: DROP TABLE &lt;name&gt; ; (no IF EXISTS between TABLE and the name/semicolon)
+  const dropTableMatches = sqlNoComments.match(/\bDROP\s+TABLE\b[^;]*;/gi) ?? [];
+  for (const match of dropTableMatches) {
+    if (!/\bIF\s+EXISTS\b/i.test(match)) {
+      errors.push(`[BLOCKED] DROP TABLE without IF EXISTS is forbidden — use "DROP TABLE IF EXISTS &lt;name&gt;" instead. Found: ${match.trim().slice(0, 80)}`);
+    }
+  }
+&nbsp;
+  // ── Rule 3: Hard-block bare TRUNCATE unless marker comment present ──
+  // TRUNCATE wipes all rows from a table. It's sometimes legitimate (test
+  // fixtures, reset scripts) but should never appear without explicit
+  // acknowledgment. The marker -- ALLOW_TRUNCATE must be on its own line
+  // immediately before the TRUNCATE statement.
+  //
+  // Use the ORIGINAL sql (with comments) for this check, since the marker
+  // IS a comment.
+  const truncateMatches = sql.match(/\bTRUNCATE\b[^;]*;/gi) ?? [];
+  for (const match of truncateMatches) {
+    // Find the position of this TRUNCATE in the original SQL
+    const truncateIdx = sql.indexOf(match);
+    // Look at the line immediately before this TRUNCATE.
+    // beforeTruncate is everything before the TRUNCATE statement.
+    // The preceding line is the text between the last newline in
+    // beforeTruncate and the end of beforeTruncate.
+    const beforeTruncate = sql.slice(0, truncateIdx);
+    const lastNewline = beforeTruncate.lastIndexOf('\n');
+    // precedingLine = text AFTER the last newline (the line the TRUNCATE
+    // starts on, minus the TRUNCATE itself) — but we want the line BEFORE
+    // that. So: if there are multiple newlines, the preceding line is
+    // between the second-to-last newline and the last newline. If there's
+    // only one newline, the preceding line is from start to that newline.
+    let precedingLine: string;
+    if (lastNewline === -1) {
+      // No newline before TRUNCATE — it's on the first line, no preceding line
+      precedingLine = '';
+    } else {
+      // Find the second-to-last newline (start of the preceding line)
+      const secondLastNewline = beforeTruncate.lastIndexOf('\n', lastNewline - 1);
+      if (secondLastNewline === -1) {
+        // Only one newline — preceding line is from start to that newline
+        precedingLine = beforeTruncate.slice(0, lastNewline).trim();
+      } else {
+        // Preceding line is between secondLastNewline and lastNewline
+        precedingLine = beforeTruncate.slice(secondLastNewline + 1, lastNewline).trim();
+      }
+    }
+&nbsp;
+    if (precedingLine !== TRUNCATE_MARKER) {
+      errors.push(
+        `[BLOCKED] TRUNCATE without explicit marker — bare TRUNCATE is forbidden. ` +
+        `Add "${TRUNCATE_MARKER}" on its own line immediately before the TRUNCATE statement. ` +
+        `Found: ${match.trim().slice(0, 80)}`
+      );
+    }
+  }
+&nbsp;
+  // ── Rule 4: Require ALTER TABLE ADD COLUMN to use IF NOT EXISTS ─────
+  // Without IF NOT EXISTS, re-running the migration errors on the duplicate
+  // column. Since migrations should be idempotent (re-runnable), ADD COLUMN
+  // must use IF NOT EXISTS.
+  //
+  // Match: ALTER TABLE &lt;name&gt; ADD [COLUMN] &lt;colname&gt; &lt;type&gt; ...
+  // The regex needs to handle both "ADD COLUMN col" and "ADD col" forms.
+  // Key: after ADD (and optional COLUMN), if IF NOT EXISTS doesn't appear
+  // before the column name, it's a violation.
+  //
+  // Strategy: find all "ALTER TABLE ... ADD ..." statements, then for each,
+  // check if IF NOT EXISTS appears between ADD and the column name.
+  const alterAddMatches = sqlNoComments.match(/\bALTER\s+TABLE\b[^;]*\bADD\b[^;]*;/gi) ?? [];
+  for (const match of alterAddMatches) {
+    // Extract the part after ADD
+    const addIdx = match.toUpperCase().indexOf('ADD');
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (addIdx === -1) <span class="cstat-no" title="statement not covered" >continue;</span>
+    const afterAdd = match.slice(addIdx);
+&nbsp;
+    // If IF NOT EXISTS appears anywhere in the ADD clause, it's safe
+    if (!/\bIF\s+NOT\s+EXISTS\b/i.test(afterAdd)) {
+      // But only flag if this is actually adding a column (not a constraint)
+      // Check if the next token after ADD (or ADD COLUMN) looks like a column def
+      // Skip "ADD COLUMN" or just "ADD", then check what follows
+      const afterAddNormalized = afterAdd.replace(/^\s*ADD\s+/i, '').replace(/^COLUMN\s+/i, '');
+      // If it starts with a constraint keyword, it's not a column add
+      <span class="missing-if-branch" title="else path not taken" >E</span>if (!/^(CONSTRAINT|PRIMARY|FOREIGN|UNIQUE|CHECK|INDEX)\b/i.test(afterAddNormalized)) {
+        errors.push(
+          `[BLOCKED] ALTER TABLE ADD COLUMN without IF NOT EXISTS is forbidden — migrations must be idempotent. ` +
+          `Use "ALTER TABLE &lt;name&gt; ADD COLUMN IF NOT EXISTS &lt;col&gt; ..." instead. Found: ${match.trim().slice(0, 80)}`
+        );
+      }
+    }
+  }
+&nbsp;
+  // ── Rule 5: Require ALTER TABLE DROP COLUMN to use IF EXISTS ────────
+  // Without IF EXISTS, re-running the migration errors if the column was
+  // already dropped. Same idempotency reasoning as Rule 4.
+  const dropColumnMatches = sqlNoComments.match(/\bALTER\s+TABLE\b[^;]*\bDROP\s+COLUMN\b[^;]*;/gi) ?? [];
+  for (const match of dropColumnMatches) {
+    if (!/\bIF\s+EXISTS\b/i.test(match)) {
+      errors.push(
+        `[BLOCKED] ALTER TABLE DROP COLUMN without IF EXISTS is forbidden — migrations must be idempotent. ` +
+        `Use "ALTER TABLE &lt;name&gt; DROP COLUMN IF EXISTS &lt;col&gt;" instead. Found: ${match.trim().slice(0, 80)}`
+      );
+    }
+  }
+&nbsp;
+  // ── Non-blocking warnings ───────────────────────────────────────────
+  // These don't block the migration but are surfaced for reviewer attention.
+  // Check for DELETE FROM without WHERE (simple heuristic — look at each statement)
+  const deleteMatches = sqlNoComments.match(/\bDELETE\s+FROM\b[^;]*;/gi) ?? [];
+  for (const match of deleteMatches) {
+    <span class="missing-if-branch" title="else path not taken" >E</span>if (!/\bWHERE\b/i.test(match)) {
+      warnings.push(`[WARNING] DELETE FROM without WHERE clause — this deletes all rows. Found: ${match.trim().slice(0, 80)}`);
+    }
+  }
+  const updateMatches = sqlNoComments.match(/\bUPDATE\b[^;]*\bSET\b[^;]*;/gi) ?? [];
+  for (const match of updateMatches) {
+    <span class="missing-if-branch" title="else path not taken" >E</span>if (!/\bWHERE\b/i.test(match)) {
+      warnings.push(`[WARNING] UPDATE without WHERE clause — this updates all rows. Found: ${match.trim().slice(0, 80)}`);
+    }
+  }
+&nbsp;
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-08-04T07:26:11.409Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    
