@@ -269,3 +269,54 @@ Stage Summary:
 - FSM single-in-flight limitation confirmed honestly: findings are stored + broadcast even when transition is blocked — not silently dropped
 - Tests: 648/648 passing (325 unit/integration/e2e + 323 security/agent). Zero regressions. Typecheck clean. grep-audit clean.
 - Scope guards respected: Terminal Agent cwd:'/tmp' NOT fixed (deferred), FSM single-in-flight NOT fixed, no version-conflict auto-resolution, no target-dir inference, npm-only.
+
+---
+Task ID: phase-a-section-3-real-testing
+Agent: main (super-z)
+Task: Phase A Section 3 — Real test execution. QaTesterAgent was LLM-only (recommended test cases in chat, never ran anything). Build runTests() with spawn() (non-blocking), wire into QaTesterAgent, prove server stays responsive during test run.
+
+Work Log:
+- server/src/orchestration/run-tests.ts (NEW):
+  - runTests(projectRoot, { targetDir, coverage?, timeoutMs? }) using spawn()
+    (non-blocking) instead of execSync() — full suite takes ~94s, spawn lets
+    the event loop stay responsive for concurrent WS/HTTP traffic
+  - Fixed command allowlist: npm test / npm run test:coverage (server),
+    npm test (app). No arbitrary npm run <script> execution
+  - --reporter=json + parseVitestJson() extracts structured counts
+    (numTotalTests/numPassedTests/numFailedTests/success)
+  - parseVitestJson handles JSON-with-trailing-text (coverage table appended
+    after JSON when --coverage is used — tracks brace depth to extract JSON)
+  - validateShellCommand() + existsSync(package.json) pre-checks
+  - 180s timeout via spawn kill-after-timeout
+  - Coverage summary parsed from coverage-final.json (Istanbul format)
+  - --exclude tests/unit/run-tests.test.ts prevents infinite recursion
+- server/src/agents/qa-tester/index.ts:
+  - New runTestsSuite() programmatic method (matches securityScan()/
+    performanceReview() pattern)
+  - LLM-chat persona preserved — this ADDS execution, doesn't replace
+  - System prompt updated to mention runTests() capability
+- app/package.json: added "test": "vitest run" script (app had no test script)
+- .gitignore: added coverage/ + **/coverage/ (build artifact, never source)
+- server/tests/unit/run-tests.test.ts (NEW, 9 tests, ALL real — no mocks):
+  1. runTests() on server/ — real 648 tests, all pass, ~96s
+  2. runTests() with coverage — real coverage percentages (>10% all metrics)
+  3. THE KEY PROOF: concurrent HTTP /health request returns in <5s while
+     tests run for 95s — proves spawn() is non-blocking (execSync would
+     hang the event loop for 94s)
+  4. buildTestCommand allowlist — only npm test / npm run test:coverage
+  5. Missing package.json fails honestly
+  6. QaTesterAgent.runTestsSuite() wires through to runTests()
+  7-9. parseVitestJson: real JSON, leading text, non-JSON fallback
+
+Stage Summary:
+- Real test execution built + verified. QaTesterAgent can now actually RUN
+  the test suite + report real pass/fail counts + real coverage.
+- spawn() non-blocking proven: concurrent HTTP request returned in <5s
+  during a 95s test run. The server stays responsive.
+- Tests: 657 total passing (648 fast suite + 9 run-tests), 0 failures.
+  Typecheck clean. grep-audit clean.
+- Scope guards respected: no test generation (v2), no app/ coverage,
+  no WS streaming (v2), no arbitrary script execution, no approval gate
+  (test execution is read-only — matches DevOps Agent's ungated pattern).
+- NOTE: Push to GitHub pending — session restart wiped .github-token file
+  (gitignored, not in git). User needs to re-provide token for push.
