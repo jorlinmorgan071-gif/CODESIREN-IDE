@@ -390,3 +390,50 @@ Stage Summary:
 - 11/11 Playwright tests pass. Existing tests unaffected (351/351 verified).
 - Typecheck clean. grep-audit clean.
 - Scope guards: no evaluate implementation, no browser-context sandboxing (v2), stub not removed.
+
+---
+Task ID: phase-a-section-6-api-hub
+Agent: main (super-z)
+Task: Phase A Section 6 — API Hub Expansion. Add AnthropicEngine + GroqEngine + registerEngine() public API.
+
+Work Log:
+- server/src/types.ts: added 'groq' to EngineId type union
+- server/src/config.ts: added GROQ_API_KEY optional env var
+- server/src/orchestration/model-router.ts:
+  - registerEngine(engine): public method — Map.set + log, no validation/health-check
+  - hasEngine(id): public query method
+  - Constructor now calls registerEngine(new AnthropicEngine()) when ANTHROPIC_API_KEY present
+  - Constructor now calls registerEngine(new GroqEngine()) when GROQ_API_KEY present
+  - Replaced old log-only ANTHROPIC_API_KEY detection with real engine registration
+- server/src/orchestration/engines/anthropic.ts (NEW):
+  - Real Anthropic Messages API: system as separate top-level param, x-api-key + anthropic-version headers
+  - Event-type-based SSE parsing: content_block_delta.delta.text (not choices[0].delta.content)
+  - message_stop event ends stream (not [DONE] string)
+  - Filters messages to user/assistant roles only (system extracted to top-level)
+- server/src/orchestration/engines/groq.ts (NEW):
+  - OpenAI-compatible: same request body + SSE parsing as OpenRouterEngine
+  - Groq base URL: https://api.groq.com/openai/v1/chat/completions
+  - Bearer auth with GROQ_API_KEY
+- server/tests/unit/api-hub-engines.test.ts (NEW, 11 tests, mocked fetch):
+  AnthropicEngine (5 tests):
+    1. Request format: separate system param, x-api-key header, anthropic-version
+    2. System-role messages NOT in messages array (extracted to top-level)
+    3. SSE parsing: content_block_delta events → correct deltas
+    4. Connection error handling
+    5. HTTP error response handling
+  GroqEngine (4 tests):
+    6. Request format: OpenAI-compatible, Groq URL, Bearer auth
+    7. SSE parsing: standard OpenAI format (choices[0].delta.content)
+    8. Connection error handling
+    9. HTTP error response handling
+  registerEngine() (2 tests):
+    10. Engine added to map + hasEngine confirms
+    11. Registered engine selectable via req.engine
+
+Stage Summary:
+- Two new real engine implementations: Anthropic (real Messages API format) + Groq (OpenAI-compatible)
+- registerEngine() public API enables future custom providers without modifying ModelRouter
+- 11/11 tests pass (mocked fetch — verifies request format + SSE parsing without real API keys)
+- 673 total tests passing (CI-equivalent excludes), 0 failures
+- Typecheck clean. grep-audit clean.
+- Scope guards: no OpenAI-direct/DeepSeek/GLM/Gemini, no priority-chain changes, no health-check-on-register

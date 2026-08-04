@@ -10,6 +10,8 @@
 import { config } from '../config.js';
 import type { EngineId, ModelRouterRequest, ModelRouterChunk, RouterMessage } from '../types.js';
 import { OllamaEngine, checkOllamaAvailable } from './engines/ollama.js';
+import { AnthropicEngine } from './engines/anthropic.js';
+import { GroqEngine } from './engines/groq.js';
 
 export interface InferenceEngine {
   id: EngineId;
@@ -237,8 +239,16 @@ class ModelRouter {
       this.engines.set('openrouter', new OpenRouterEngine());
       console.log('[router] OpenRouter engine available (OPENROUTER_API_KEY set)');
     }
-    if (config.OPENAI_API_KEY) console.log('[router] OPENAI_API_KEY detected');
-    if (config.ANTHROPIC_API_KEY) console.log('[router] ANTHROPIC_API_KEY detected');
+    // Phase A Section 6: register Anthropic + Groq engines when API keys are present.
+    // These replace the old log-only detection — the engines are now real + usable.
+    if (config.ANTHROPIC_API_KEY) {
+      this.registerEngine(new AnthropicEngine());
+    }
+    if (config.GROQ_API_KEY) {
+      this.registerEngine(new GroqEngine());
+    }
+    // OpenAI direct is detected but not implemented (low marginal value — OpenRouter covers it)
+    if (config.OPENAI_API_KEY) console.log('[router] OPENAI_API_KEY detected (not implemented — use OpenRouter for OpenAI models)');
 
     // Check Ollama availability asynchronously — don't block startup
     this.initOllama();
@@ -311,6 +321,29 @@ class ModelRouter {
 
   getPreferredEngine(): EngineId {
     return this.preferredEngine;
+  }
+
+  /**
+   * Phase A Section 6: register a custom engine at runtime.
+   *
+   * Minimal API — no validation, no health check, no priority change.
+   * The engine is added to the map + can be selected via req.engine
+   * (explicit selection). The existing priority chain (Ollama → OpenRouter
+   * → stub) is unchanged.
+   *
+   * This is the public extension point for adding new providers without
+   * modifying the ModelRouter class itself.
+   */
+  registerEngine(engine: InferenceEngine): void {
+    this.engines.set(engine.id, engine);
+    console.log(`[router] engine registered: ${engine.id}`);
+  }
+
+  /**
+   * Check whether an engine is registered (used by tests + the engines API).
+   */
+  hasEngine(id: EngineId): boolean {
+    return this.engines.has(id);
   }
 
   stream(req: ModelRouterRequest): AsyncGenerator<ModelRouterChunk> {

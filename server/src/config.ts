@@ -24,6 +24,7 @@ const schema = z.object({
   OPENROUTER_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
+  GROQ_API_KEY: z.string().optional(),
   // Orchestrator engines (Agent Relay — directive Section 1.1)
   GEMINI_API_KEY: z.string().optional(),
   CORS_ORIGINS: z.string().default('http://localhost:3000,http://localhost:5173,http://localhost:4173'),

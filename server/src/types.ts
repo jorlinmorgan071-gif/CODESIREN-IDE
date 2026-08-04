@@ -294,7 +294,8 @@ export type EngineId =
   | 'stub'           // Step 0 — streams synthetic output, no API key needed
   | 'openrouter'     // OpenRouter gateway (Claude, GPT-4o, Gemini, DeepSeek, etc.)
   | 'openai'         // direct OpenAI
-  | 'anthropic'      // direct Anthropic
+  | 'anthropic'      // direct Anthropic (Phase A Section 6)
+  | 'groq'           // Groq — fastest inference via LPU hardware (Phase A Section 6)
   | 'ollama'         // local — directive's offline→Ollama branch
   | 'vllm'           // local
   | 'sglang'         // local
