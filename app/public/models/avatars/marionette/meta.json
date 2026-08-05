@@ -1,0 +1,10 @@
+{
+  "id": "marionette",
+  "name": "Marionette",
+  "format": "0.x",
+  "hasExpressions": true,
+  "expressionCount": 25,
+  "hasSpringBones": true,
+  "authors": "Original model provided by miHoYo",
+  "source": "VRM 0.x model"
+}

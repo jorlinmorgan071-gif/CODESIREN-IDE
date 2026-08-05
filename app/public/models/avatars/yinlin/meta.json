@@ -1,0 +1,10 @@
+{
+  "id": "yinlin",
+  "name": "Yinlin",
+  "format": "0.x",
+  "hasExpressions": true,
+  "expressionCount": 18,
+  "hasSpringBones": true,
+  "authors": "by kurogames",
+  "source": "VRM 0.x model"
+}

@@ -22,14 +22,25 @@
     "thumbnail": null
   },
   {
-    "id": "secondary",
-    "name": "Secondary Avatar",
-    "path": "/models/avatars/secondary/model.vrm",
+    "id": "yinlin",
+    "name": "Yinlin",
+    "path": "/models/avatars/yinlin/model.vrm",
     "format": "0.x",
-    "sizeMB": 21.5,
-    "hasExpressions": false,
-    "expressionCount": 0,
-    "authors": "Unknown",
+    "sizeMB": 40.0,
+    "hasExpressions": true,
+    "expressionCount": 18,
+    "authors": "by kurogames",
+    "thumbnail": null
+  },
+  {
+    "id": "marionette",
+    "name": "Marionette",
+    "path": "/models/avatars/marionette/model.vrm",
+    "format": "0.x",
+    "sizeMB": 21.6,
+    "hasExpressions": true,
+    "expressionCount": 25,
+    "authors": "Original model provided by miHoYo",
     "thumbnail": null
   }
 ]
