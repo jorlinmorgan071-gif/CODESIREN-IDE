@@ -1,0 +1,10 @@
+{
+  "id": "default",
+  "name": "Default Avatar",
+  "format": "1.0",
+  "hasExpressions": true,
+  "expressionCount": 18,
+  "hasSpringBones": true,
+  "authors": "pixiv Inc.",
+  "source": "https://github.com/pixiv/three-vrm"
+}

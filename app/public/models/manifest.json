@@ -1,0 +1,35 @@
+[
+  {
+    "id": "default",
+    "name": "Default Avatar",
+    "path": "/models/avatars/default/model.vrm",
+    "format": "1.0",
+    "sizeMB": 10.3,
+    "hasExpressions": true,
+    "expressionCount": 18,
+    "authors": "pixiv Inc.",
+    "thumbnail": null
+  },
+  {
+    "id": "hatsune-miku",
+    "name": "Hatsune Miku",
+    "path": "/models/avatars/hatsune-miku/model.vrm",
+    "format": "0.x",
+    "sizeMB": 16.9,
+    "hasExpressions": true,
+    "expressionCount": 14,
+    "authors": "RemiX3",
+    "thumbnail": null
+  },
+  {
+    "id": "secondary",
+    "name": "Secondary Avatar",
+    "path": "/models/avatars/secondary/model.vrm",
+    "format": "0.x",
+    "sizeMB": 21.5,
+    "hasExpressions": false,
+    "expressionCount": 0,
+    "authors": "Unknown",
+    "thumbnail": null
+  }
+]

@@ -1,0 +1,10 @@
+{
+  "id": "hatsune-miku",
+  "name": "Hatsune Miku",
+  "format": "0.x",
+  "hasExpressions": true,
+  "expressionCount": 14,
+  "hasSpringBones": true,
+  "authors": "RemiX3",
+  "source": "VRM 0.x model"
+}
