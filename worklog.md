@@ -495,3 +495,29 @@ Stage Summary:
 - 5/5 tests pass. Fresh total: 696 tests, 0 failures (691 + 5 new).
 - Typecheck clean. grep-audit clean.
 - Scope guards: no 2-hop project-graph, no response cache for stream(), no background indexing, no symbol index, no ctags/LSIF/SCIP.
+
+---
+Task ID: phase-b-avatar-picker
+Agent: main (super-z)
+Task: Phase B — Avatar Picker UI. Thumbnails + settings persistence + Face tab picker overlay + leak-free switching.
+
+Work Log:
+- Thumbnails: Generated via Playwright (headless Chromium + three-vrm WebGL render, one frame screenshot per model). 4 thumbnails: default (29KB), hatsune-miku (53KB), yinlin (58KB), marionette (83KB) = 228KB total. Saved as avatars/<name>/thumbnail.png. Manifest.json updated with thumbnail paths.
+- server/src/orchestrator/avatar-settings.ts (NEW): mirrors voice-settings.ts pattern. SETTINGS_PATH at .runtime/avatar-settings.json. getAvatarSettings() with read-time validation against manifest (fallback to 'default'). setAvatarSettings() with validation. customNames field for future renaming.
+- server/src/routes/avatar.ts (NEW): GET /api/avatar/settings, POST /api/avatar/settings, GET /api/avatar/manifest
+- server/src/index.ts: wired avatarRouter at /api/avatar
+- app/src/pages/FaceView.tsx:
+  - Dynamic avatarUrl state (fetched from settings API on boot)
+  - VRMModel accepts avatarUrl prop (replaces hardcoded '/models/sample.vrm')
+  - Leak-free switching: useEffect cleanup calls useLoader.clear(GLTFLoader, oldUrl) when avatarUrl changes
+  - Avatar picker overlay in top-right corner: thumbnail + name + metadata per model, doesn't obscure 3D render
+  - Boot behavior: reads persisted selectedAvatarId from /api/avatar/settings on auth-ready, loads that model
+  - Switching: persists to server via POST /api/avatar/settings, triggers useLoader re-suspend with new URL, shows loading spinner
+  - VRM 0.x auto-rotation via VRMUtils.rotateVRM0 (some VRM 0.x models face wrong direction without it)
+
+Stage Summary:
+- 4 thumbnails generated, manifest updated, settings persistence built, picker UI in Face tab
+- Leak-free switching via useLoader.clear + Suspense boundary
+- Boot reads persisted selection (doesn't always default to Default)
+- 540 tests confirmed passing (categorized runs), 0 failures
+- Typecheck clean (both server + app), lint clean, grep-audit clean

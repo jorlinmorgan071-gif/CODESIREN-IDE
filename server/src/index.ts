@@ -23,6 +23,7 @@ import { projectFilesRouter } from './routes/project-files.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { systemHealthRouter } from './routes/system-health.js';
 import { ghostModeRouter } from './routes/ghost-mode.js';
+import { avatarRouter } from './routes/avatar.js';
 import { memoryRouter } from './routes/memory.js';
 import { voiceLiveRouter } from './routes/voice-live.js';
 import { orchestratorRouter } from './routes/orchestrator.js';
@@ -141,6 +142,7 @@ async function main() {
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/system', systemHealthRouter);
   app.use('/api/ghost-mode', ghostModeRouter);
+  app.use('/api/avatar', avatarRouter);
   app.use('/api/memory', memoryRouter);
   app.use('/api/voice', voiceLiveRouter);
   app.use('/api/orchestrator', orchestratorRouter);

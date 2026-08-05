@@ -18,6 +18,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMUtils, VRMLoaderPlugin } from '@pixiv/three-vrm';
 import type { VRM } from '@pixiv/three-vrm';
+import { ChevronDown, User, Check } from 'lucide-react';
 import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { useApp } from '@/store/AppContext';
@@ -64,6 +65,7 @@ interface VRMModelProps {
   currentEmotion: EmotionId;
   audioSource: AudioNode | null;
   audioContext: AudioContext | null;
+  avatarUrl: string;  // Phase B: dynamic avatar URL
 }
 
 // Vowel → VRM blendshape mapping (per VRM spec + Section 0 findings)
@@ -75,7 +77,7 @@ const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
   U: 'ou',
 };
 
-function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMModelProps) {
+function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatarUrl }: VRMModelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
@@ -87,11 +89,29 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext }: VRMM
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
+  const prevAvatarUrlRef = useRef<string | null>(null);
 
-  // Load VRM model via GLTFLoader with VRMLoaderPlugin
-  const gltf = useLoader(GLTFLoader, '/models/sample.vrm', (loader: GLTFLoader) => {
+  // Load VRM model via GLTFLoader with VRMLoaderPlugin — uses avatarUrl prop
+  const gltf = useLoader(GLTFLoader, avatarUrl, (loader: GLTFLoader) => {
     loader.register((parser) => new VRMLoaderPlugin(parser));
   });
+
+  // Phase B: Leak-free switching — when avatarUrl changes, dispose the old model
+  useEffect(() => {
+    return () => {
+      // Cleanup: dispose the OLD model's GPU resources when avatarUrl changes
+      if (prevAvatarUrlRef.current && prevAvatarUrlRef.current !== avatarUrl) {
+        try {
+          // Clear R3F's loader cache for the old URL
+          useLoader.clear(GLTFLoader, prevAvatarUrlRef.current);
+          console.log(`[face] disposed old avatar: ${prevAvatarUrlRef.current}`);
+        } catch {
+          // useLoader.clear may fail if the cache entry was already removed
+        }
+      }
+      prevAvatarUrlRef.current = avatarUrl;
+    };
+  }, [avatarUrl]);
 
   useEffect(() => {
     if (!gltf) return;
@@ -306,6 +326,13 @@ export default function FaceView() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentEmotion, setCurrentEmotion] = useState<EmotionId>('neutral');
   const audioContextRef = useRef<AudioContext | null>(null);
+
+  // Phase B: Avatar picker state
+  const [avatarUrl, setAvatarUrl] = useState('/models/sample.vrm'); // default until settings load
+  const [avatarList, setAvatarList] = useState<Array<{ id: string; name: string; thumbnail: string | null; format: string; expressionCount: number }>>([]);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [currentAvatarName, setCurrentAvatarName] = useState('Default Avatar');
+  const [avatarSwitching, setAvatarSwitching] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -469,6 +496,92 @@ export default function FaceView() {
   // before that just registers dead handlers. Gating on authReady also
   // guarantees the user can never see stale events from a previous
   // session that were queued before auth completed.
+  // Phase B: Fetch avatar settings + manifest on boot (after auth)
+  useEffect(() => {
+    if (!authReady) return;
+    const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+    const token = getToken() ?? '';
+
+    // Fetch manifest (list of available avatars)
+    fetch(`${API_BASE}/avatar/manifest`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.avatars && Array.isArray(data.avatars)) {
+          setAvatarList(data.avatars.map((a: { id: string; name: string; thumbnail: string | null; format: string; expressionCount?: number }) => ({
+            id: a.id,
+            name: a.name,
+            thumbnail: a.thumbnail,
+            format: a.format,
+            expressionCount: a.expressionCount ?? 0,
+          })));
+        }
+      })
+      .catch((err) => console.warn('[face] failed to fetch avatar manifest:', err));
+
+    // Fetch persisted avatar settings
+    fetch(`${API_BASE}/avatar/settings`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.settings?.selectedAvatarId) {
+          const id = data.settings.selectedAvatarId;
+          const manifestEntry = avatarList.find((a) => a.id === id);
+          // Build the URL from the avatar ID
+          const url = `/models/avatars/${id}/model.vrm`;
+          setAvatarUrl(url);
+          setCurrentAvatarName(manifestEntry?.name ?? id);
+          console.log(`[face] loaded persisted avatar: ${id}`);
+        }
+      })
+      .catch((err) => console.warn('[face] failed to fetch avatar settings:', err));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authReady]);
+
+  // Phase B: Handle avatar selection from picker
+  const handleSelectAvatar = async (avatarId: string, name: string) => {
+    const newUrl = `/models/avatars/${avatarId}/model.vrm`;
+    if (newUrl === avatarUrl) {
+      setShowAvatarPicker(false);
+      return;
+    }
+
+    setAvatarSwitching(true);
+    setShowAvatarPicker(false);
+
+    // Persist to server
+    const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+    const token = getToken() ?? '';
+    try {
+      await fetch(`${API_BASE}/avatar/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ selectedAvatarId: avatarId }),
+      });
+    } catch (err) {
+      console.warn('[face] failed to persist avatar selection:', err);
+    }
+
+    // Trigger the switch (useLoader will re-suspend with the new URL)
+    setAvatarUrl(newUrl);
+    setCurrentAvatarName(name);
+    setLoading(true); // show loading spinner during switch
+
+    // Reset state for new model
+    setCurrentEmotion('neutral');
+  };
+
+  // Phase B: Handle loading state during avatar switch
+  useEffect(() => {
+    if (avatarSwitching) {
+      // Give the Suspense boundary time to catch + show the spinner
+      const timer = setTimeout(() => setAvatarSwitching(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [avatarSwitching]);
+
   useEffect(() => {
     if (!authReady) return;
     const offTranscript = wsClient.on('voice:transcript' as never, (evt: AgentEvent) => {
@@ -656,12 +769,106 @@ export default function FaceView() {
                 setError(`3D model failed to load: ${msg}`);
               }}
             >
-              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} />
+              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} avatarUrl={avatarUrl} />
             </FaceErrorBoundary>
           </Suspense>
 
           <OrbitControls enablePan={false} enableZoom={true} minDistance={1.5} maxDistance={6} />
         </Canvas>
+
+        {/* Phase B: Avatar Picker — top-right corner, doesn't obscure the 3D render */}
+        <div className="absolute top-3 right-3 z-20">
+          <button
+            onClick={() => setShowAvatarPicker(!showAvatarPicker)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] transition-colors"
+            style={{
+              backgroundColor: 'rgba(14, 14, 20, 0.8)',
+              backdropFilter: 'blur(8px)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--bright-silver)',
+            }}
+          >
+            <User className="w-3.5 h-3.5" style={{ color: 'var(--siren-red)' }} />
+            <span>{currentAvatarName}</span>
+            <ChevronDown className="w-3 h-3" style={{ color: 'var(--steel-silver)' }} />
+          </button>
+
+          {showAvatarPicker && (
+            <div
+              className="absolute top-full right-0 mt-1 w-64 rounded-lg overflow-hidden shadow-xl"
+              style={{
+                backgroundColor: 'rgba(14, 14, 20, 0.95)',
+                backdropFilter: 'blur(12px)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              {avatarList.length === 0 && (
+                <div className="px-3 py-4 text-[11px] text-center" style={{ color: 'var(--steel-silver)' }}>
+                  Loading avatars...
+                </div>
+              )}
+              {avatarList.map((avatar) => {
+                const isSelected = avatarUrl === `/models/avatars/${avatar.id}/model.vrm`;
+                return (
+                  <button
+                    key={avatar.id}
+                    onClick={() => handleSelectAvatar(avatar.id, avatar.name)}
+                    className="flex items-center gap-3 w-full px-3 py-2.5 text-left transition-colors hover:bg-white/5"
+                    style={{
+                      borderBottom: '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    {/* Thumbnail */}
+                    {avatar.thumbnail ? (
+                      <img
+                        src={avatar.thumbnail}
+                        alt={avatar.name}
+                        className="w-10 h-10 rounded object-cover flex-shrink-0"
+                        style={{ border: '1px solid var(--border-subtle)' }}
+                      />
+                    ) : (
+                      <div
+                        className="w-10 h-10 rounded flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+                      >
+                        <User className="w-4 h-4" style={{ color: 'var(--steel-silver)' }} />
+                      </div>
+                    )}
+
+                    {/* Name + metadata */}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12px] font-medium truncate" style={{ color: 'var(--bright-silver)' }}>
+                        {avatar.name}
+                      </div>
+                      <div className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
+                        VRM {avatar.format} · {avatar.expressionCount} expressions
+                      </div>
+                    </div>
+
+                    {/* Selected indicator */}
+                    {isSelected && (
+                      <Check className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--siren-red)' }} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Avatar switching loading indicator */}
+        {avatarSwitching && (
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
+            <div className="text-[12px] px-4 py-2 rounded-lg" style={{
+              backgroundColor: 'rgba(14, 14, 20, 0.9)',
+              backdropFilter: 'blur(8px)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--steel-silver)',
+            }}>
+              Switching avatar...
+            </div>
+          </div>
+        )}
 
         {/* Live captions */}
         {(captions.user || captions.agent) && (

@@ -8,7 +8,7 @@
     "hasExpressions": true,
     "expressionCount": 18,
     "authors": "pixiv Inc.",
-    "thumbnail": null
+    "thumbnail": "/models/avatars/default/thumbnail.png"
   },
   {
     "id": "hatsune-miku",
@@ -19,7 +19,7 @@
     "hasExpressions": true,
     "expressionCount": 14,
     "authors": "RemiX3",
-    "thumbnail": null
+    "thumbnail": "/models/avatars/hatsune-miku/thumbnail.png"
   },
   {
     "id": "yinlin",
@@ -30,7 +30,7 @@
     "hasExpressions": true,
     "expressionCount": 18,
     "authors": "by kurogames",
-    "thumbnail": null
+    "thumbnail": "/models/avatars/yinlin/thumbnail.png"
   },
   {
     "id": "marionette",
@@ -41,6 +41,6 @@
     "hasExpressions": true,
     "expressionCount": 25,
     "authors": "Original model provided by miHoYo",
-    "thumbnail": null
+    "thumbnail": "/models/avatars/marionette/thumbnail.png"
   }
 ]
