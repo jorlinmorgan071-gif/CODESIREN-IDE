@@ -63,7 +63,13 @@ export default function Home() {
           setPipEnabled(data.settings.pipEnabled ?? false);
           setPipPosition(data.settings.pipPosition ?? { x: 100, y: 100 });
           const id = data.settings.selectedAvatarId ?? 'default';
-          setPipAvatarUrl(`/models/avatars/${id}/model.vrm`);
+          // Custom avatars are served by the API server (not vite)
+          const isCustom = id.startsWith('custom-');
+          const apiOrigin = API_BASE.replace(/\/api$/, '');
+          const url = isCustom
+            ? `${apiOrigin}/models/avatars/custom/${id}/model.vrm`
+            : `/models/avatars/${id}/model.vrm`;
+          setPipAvatarUrl(url);
         }
       })
       .catch(() => {});

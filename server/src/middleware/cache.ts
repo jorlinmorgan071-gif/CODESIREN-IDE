@@ -85,10 +85,11 @@ export function cacheMiddleware(req: Request, res: Response, next: NextFunction)
     return;
   }
 
-  // Don't cache avatar settings — user preferences (selectedAvatarId,
-  // pipEnabled, pipPosition) change with every POST and must be read fresh
-  // on every GET. Caching causes stale avatar selection after a picker change.
-  if (req.path.startsWith('/avatar/settings')) {
+  // Don't cache avatar settings OR manifest — user preferences (selectedAvatarId,
+  // pipEnabled, pipPosition) change with every POST, and the manifest changes
+  // when custom avatars are uploaded/deleted/renamed. Caching causes stale
+  // avatar selection and stale manifest reads.
+  if (req.path.startsWith('/avatar/settings') || req.path.startsWith('/avatar/manifest') || req.path.startsWith('/avatar/custom')) {
     next();
     return;
   }

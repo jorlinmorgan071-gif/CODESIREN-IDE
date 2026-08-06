@@ -3,6 +3,9 @@
 // PDF Section 12 + 13. Directive Section 7: there is exactly ONE of each.
 
 import http from 'node:http';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import { config } from './config.js';
@@ -146,6 +149,55 @@ async function main() {
   app.use('/api/memory', memoryRouter);
   app.use('/api/voice', voiceLiveRouter);
   app.use('/api/orchestrator', orchestratorRouter);
+
+  // Phase B: Serve custom VRM avatar files directly from the server.
+  // Vite dev server doesn't reliably serve newly-created files in nested
+  // subdirectories of public/ at runtime (it caches the directory tree at
+  // startup). By serving them from Express, the custom avatars are fetchable
+  // immediately after upload, without a vite restart.
+  // Path: app/public/models/avatars/custom/<id>/model.vrm
+  // URL: /models/avatars/custom/<id>/model.vrm (served by the API server)
+  //
+  // For dev mode: the client fetches VRM files from the vite origin (localhost:3000).
+  // Vite serves built-in avatars from app/public/ correctly, but custom avatars
+  // in newly-created subdirectories may not be picked up. To work around this,
+  // the client constructs the VRM URL using VITE_API_URL for custom avatars so
+  // the fetch goes directly to the API server which serves them reliably.
+  // For prod mode: the server serves everything from a single origin.
+  // Path: server/src/index.ts → ../../app/public/models/avatars/custom
+  // (server/src → server → project-root → app)
+  // NOTE: import.meta.url resolves to the source file path. In dev (tsx), this
+  // is server/src/index.ts. In prod (compiled), it would be server/dist/index.js
+  // — but we run from server/ in both cases, so process.cwd() is reliable.
+  // We use process.cwd() as the base for robustness.
+  const customAvatarsDir = join(process.cwd(), '..', 'app', 'public', 'models', 'avatars', 'custom');
+  app.use('/models/avatars/custom', (req, res) => {
+    // req.path = /<id>/model.vrm or /<id>/thumbnail.png
+    const segments = req.path.split('/').filter(Boolean);
+    if (segments.length !== 2) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    const [avatarId, fileName] = segments;
+    // Prevent path traversal — avatarId must be 'custom-*' and fileName must be safe
+    if (!avatarId.startsWith('custom-') || !/^[\w.-]+$/.test(fileName)) {
+      res.status(400).json({ error: 'Invalid path' });
+      return;
+    }
+    const filePath = join(customAvatarsDir, avatarId, fileName);
+    if (!existsSync(filePath)) {
+      res.status(404).json({ error: 'Avatar file not found' });
+      return;
+    }
+    const buf = readFileSync(filePath);
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    const contentType = ext === 'vrm' ? 'application/octet-stream'
+                      : ext === 'png' ? 'image/png'
+                      : 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', buf.length.toString());
+    res.send(buf);
+  });
 
   // Phase 3: Security dashboard (read-only)
   app.get('/api/security/events', requireAuth, (_req, res) => {

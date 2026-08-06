@@ -11,14 +11,14 @@
 //   Emotions: happy, sad, angry, surprised, relaxed, neutral (expression presets)
 //   Eyes: blink (left+right combined), lookAt (eye tracking via look-at bone)
 
-import { useState, useEffect, useRef, useCallback, Suspense, Component, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense, Component, lazy, type ReactNode } from 'react';
 import { Canvas, useFrame, useLoader } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMUtils, VRMLoaderPlugin } from '@pixiv/three-vrm';
 import type { VRM } from '@pixiv/three-vrm';
-import { ChevronDown, User, Check } from 'lucide-react';
+import { ChevronDown, User, Check, Upload, Trash2, Pencil, AlertTriangle } from 'lucide-react';
 import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { useApp } from '@/store/AppContext';
@@ -26,6 +26,11 @@ import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
 import type { AgentEvent } from '@/types';
 import { Mic, MicOff, PhoneOff, Loader2, Volume2 } from 'lucide-react';
+
+// Phase B: Lazy-load the upload dialog (heavy: Three.js + VRM analysis)
+const AvatarUploadDialogLazy = lazy(() =>
+  import('@/components/avatar/AvatarUploadDialog').then(m => ({ default: m.AvatarUploadDialog }))
+);
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -379,10 +384,15 @@ export default function FaceView() {
 
   // Phase B: Avatar picker state
   const [avatarUrl, setAvatarUrl] = useState('/models/sample.vrm'); // default until settings load
-  const [avatarList, setAvatarList] = useState<Array<{ id: string; name: string; thumbnail: string | null; format: string; expressionCount: number }>>([]);
+  const [avatarList, setAvatarList] = useState<Array<{ id: string; name: string; thumbnail: string | null; format: string; expressionCount: number; isCustom?: boolean; issues?: string[] }>>([]);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [currentAvatarName, setCurrentAvatarName] = useState('Default Avatar');
   const [avatarSwitching, setAvatarSwitching] = useState(false);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [avatarToDelete, setAvatarToDelete] = useState<string | null>(null);
+  const [avatarToRename, setAvatarToRename] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameConflict, setRenameConflict] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -559,12 +569,14 @@ export default function FaceView() {
       .then((r) => r.json())
       .then((data) => {
         if (data.avatars && Array.isArray(data.avatars)) {
-          setAvatarList(data.avatars.map((a: { id: string; name: string; thumbnail: string | null; format: string; expressionCount?: number }) => ({
+          setAvatarList(data.avatars.map((a: { id: string; name: string; thumbnail: string | null; format: string; expressionCount?: number; isCustom?: boolean; issues?: string[] }) => ({
             id: a.id,
             name: a.name,
             thumbnail: a.thumbnail,
             format: a.format,
             expressionCount: a.expressionCount ?? 0,
+            isCustom: a.isCustom ?? false,
+            issues: a.issues,
           })));
         }
       })
@@ -577,10 +589,14 @@ export default function FaceView() {
       .then((r) => r.json())
       .then((data) => {
         if (data.settings?.selectedAvatarId) {
-          const id = data.settings.selectedAvatarId;
+          const id = data.settings.selectedAvatarId as string;
           const manifestEntry = avatarList.find((a) => a.id === id);
-          // Build the URL from the avatar ID
-          const url = `/models/avatars/${id}/model.vrm`;
+          // Build the URL — custom avatars served by API server, built-in by vite
+          const isCustom = id.startsWith('custom-');
+          const apiOrigin = API_BASE.replace(/\/api$/, '');
+          const url = isCustom
+            ? `${apiOrigin}/models/avatars/custom/${id}/model.vrm`
+            : `/models/avatars/${id}/model.vrm`;
           setAvatarUrl(url);
           setCurrentAvatarName(manifestEntry?.name ?? id);
           console.log(`[face] loaded persisted avatar: ${id}`);
@@ -592,7 +608,14 @@ export default function FaceView() {
 
   // Phase B: Handle avatar selection from picker
   const handleSelectAvatar = async (avatarId: string, name: string) => {
-    const newUrl = `/models/avatars/${avatarId}/model.vrm`;
+    // Custom avatars are served by the API server (not vite) because vite
+    // doesn't reliably serve newly-created files in nested subdirectories.
+    // Built-in avatars are served from vite's static public/ dir.
+    const isCustom = avatarId.startsWith('custom-');
+    const apiOrigin = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api').replace(/\/api$/, '');
+    const newUrl = isCustom
+      ? `${apiOrigin}/models/avatars/custom/${avatarId}/model.vrm`
+      : `/models/avatars/${avatarId}/model.vrm`;
     if (newUrl === avatarUrl) {
       setShowAvatarPicker(false);
       return;
@@ -622,6 +645,134 @@ export default function FaceView() {
     // Reset state for new model
     setCurrentEmotion('neutral');
   };
+
+  // Phase B: Refresh the avatar list from the server (after upload/delete/rename)
+  const refreshAvatarList = useCallback(async () => {
+    const token = getToken() ?? '';
+    try {
+      const res = await fetch(`${API_BASE}/avatar/manifest`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json() as { avatars: any[] };
+      if (data.avatars && Array.isArray(data.avatars)) {
+        setAvatarList(data.avatars.map((a: any) => ({
+          id: a.id,
+          name: a.name,
+          thumbnail: a.thumbnail,
+          format: a.format,
+          expressionCount: a.expressionCount ?? 0,
+          isCustom: a.isCustom ?? false,
+          issues: a.issues,
+        })));
+      }
+    } catch (err) {
+      console.warn('[face] failed to refresh avatar list:', err);
+    }
+  }, []);
+
+  // Phase B: Handle custom avatar uploaded
+  const handleAvatarUploaded = useCallback(async (newAvatar: any) => {
+    setShowUploadDialog(false);
+    await refreshAvatarList();
+    // Auto-select the newly uploaded avatar
+    if (newAvatar?.id) {
+      handleSelectAvatar(newAvatar.id, newAvatar.name);
+    }
+  }, [refreshAvatarList]);
+
+  // Phase B: Handle custom avatar delete
+  const handleDeleteAvatar = useCallback(async (avatarId: string) => {
+    const token = getToken() ?? '';
+    try {
+      const res = await fetch(`${API_BASE}/avatar/custom/${avatarId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = await res.json() as { error: string };
+        throw new Error(data.error ?? `Delete failed (${res.status})`);
+      }
+      const data = await res.json() as { settingsReset?: boolean };
+      setAvatarToDelete(null);
+      await refreshAvatarList();
+      // If the deleted avatar was selected, the server reset to default —
+      // update the UI to reflect that
+      if (data.settingsReset) {
+        setAvatarUrl('/models/avatars/default/model.vrm');
+        setCurrentAvatarName('Default Avatar');
+      }
+    } catch (err: any) {
+      console.error('[face] delete failed:', err);
+      alert(`Failed to delete avatar: ${err.message}`);
+    }
+  }, [refreshAvatarList]);
+
+  // Phase B: Start rename flow
+  const handleStartRename = useCallback((avatarId: string, currentName: string) => {
+    setAvatarToRename(avatarId);
+    setRenameValue(currentName);
+    setRenameConflict(false);
+  }, []);
+
+  // Phase B: Confirm rename
+  const handleConfirmRename = useCallback(async () => {
+    if (!avatarToRename || !renameValue.trim()) return;
+    const token = getToken() ?? '';
+    try {
+      const res = await fetch(`${API_BASE}/avatar/custom/${avatarToRename}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: renameValue.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json() as { error: string };
+        if (res.status === 409) {
+          setRenameConflict(true);
+          return;
+        }
+        throw new Error(data.error ?? `Rename failed (${res.status})`);
+      }
+      setAvatarToRename(null);
+      setRenameValue('');
+      setRenameConflict(false);
+      await refreshAvatarList();
+      // If we renamed the currently-selected avatar, update the display name
+      const renamed = avatarList.find(a => a.id === avatarToRename);
+      if (renamed && avatarUrl === `/models/avatars/${avatarToRename}/model.vrm`) {
+        setCurrentAvatarName(renameValue.trim());
+      }
+    } catch (err: any) {
+      console.error('[face] rename failed:', err);
+      alert(`Failed to rename avatar: ${err.message}`);
+    }
+  }, [avatarToRename, renameValue, avatarList, avatarUrl, refreshAvatarList]);
+
+  // Phase B: Debounced rename conflict check
+  useEffect(() => {
+    if (!avatarToRename || !renameValue.trim()) {
+      setRenameConflict(false);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const token = getToken() ?? '';
+        const res = await fetch(`${API_BASE}/avatar/custom/check-name?name=${encodeURIComponent(renameValue)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json() as { conflict: boolean };
+        // Don't flag conflict if the name matches the avatar being renamed
+        const currentAvatar = avatarList.find(a => a.id === avatarToRename);
+        if (currentAvatar && currentAvatar.name.toLowerCase() === renameValue.trim().toLowerCase()) {
+          setRenameConflict(false);
+        } else {
+          setRenameConflict(data.conflict);
+        }
+      } catch {
+        // network error — don't block
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [renameValue, avatarToRename, avatarList]);
 
   // Phase B: Handle loading state during avatar switch
   useEffect(() => {
@@ -845,7 +996,7 @@ export default function FaceView() {
 
           {showAvatarPicker && (
             <div
-              className="absolute top-full right-0 mt-1 w-64 rounded-lg overflow-hidden shadow-xl"
+              className="absolute top-full right-0 mt-1 w-72 rounded-lg overflow-hidden shadow-xl max-h-[70vh] flex flex-col"
               style={{
                 backgroundColor: 'rgba(14, 14, 20, 0.95)',
                 backdropFilter: 'blur(12px)',
@@ -857,54 +1008,247 @@ export default function FaceView() {
                   Loading avatars...
                 </div>
               )}
-              {avatarList.map((avatar) => {
-                const isSelected = avatarUrl === `/models/avatars/${avatar.id}/model.vrm`;
-                return (
-                  <button
-                    key={avatar.id}
-                    onClick={() => handleSelectAvatar(avatar.id, avatar.name)}
-                    className="flex items-center gap-3 w-full px-3 py-2.5 text-left transition-colors hover:bg-white/5"
-                    style={{
-                      borderBottom: '1px solid var(--border-subtle)',
-                    }}
-                  >
-                    {/* Thumbnail */}
-                    {avatar.thumbnail ? (
-                      <img
-                        src={avatar.thumbnail}
-                        alt={avatar.name}
-                        className="w-10 h-10 rounded object-cover flex-shrink-0"
-                        style={{ border: '1px solid var(--border-subtle)' }}
-                      />
-                    ) : (
-                      <div
-                        className="w-10 h-10 rounded flex items-center justify-center flex-shrink-0"
-                        style={{ backgroundColor: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
-                      >
-                        <User className="w-4 h-4" style={{ color: 'var(--steel-silver)' }} />
-                      </div>
-                    )}
 
-                    {/* Name + metadata */}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12px] font-medium truncate" style={{ color: 'var(--bright-silver)' }}>
-                        {avatar.name}
-                      </div>
-                      <div className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
-                        VRM {avatar.format} · {avatar.expressionCount} expressions
-                      </div>
+              {/* Avatar list — scrollable */}
+              <div className="overflow-y-auto flex-1">
+                {avatarList.map((avatar) => {
+                  // Selected check — handles both built-in (vite-served) and
+                  // custom (API-served) avatar URL formats
+                  const expectedUrl = avatar.isCustom
+                    ? `${API_BASE.replace(/\/api$/, '')}/models/avatars/custom/${avatar.id}/model.vrm`
+                    : `/models/avatars/${avatar.id}/model.vrm`;
+                  const isSelected = avatarUrl === expectedUrl || avatarUrl === `/models/avatars/${avatar.id}/model.vrm`;
+                  const isCustom = avatar.isCustom;
+                  const isRenaming = avatarToRename === avatar.id;
+                  return (
+                    <div
+                      key={avatar.id}
+                      className="group relative"
+                      style={{ borderBottom: '1px solid var(--border-subtle)' }}
+                    >
+                      {isRenaming ? (
+                        /* Inline rename input */
+                        <div className="p-2.5 space-y-2">
+                          <input
+                            type="text"
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            maxLength={60}
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleConfirmRename();
+                              if (e.key === 'Escape') { setAvatarToRename(null); setRenameValue(''); }
+                            }}
+                            className="w-full px-2 py-1 rounded text-[12px] outline-none"
+                            style={{
+                              backgroundColor: 'rgba(255,255,255,0.05)',
+                              border: `1px solid ${renameConflict ? 'var(--siren-red)' : 'rgba(238, 28, 28, 0.3)'}`,
+                              color: 'var(--bright-silver)',
+                            }}
+                          />
+                          {renameConflict && (
+                            <div className="text-[10px]" style={{ color: 'var(--siren-red)' }}>
+                              Name already taken
+                            </div>
+                          )}
+                          <div className="flex gap-1">
+                            <button
+                              onClick={handleConfirmRename}
+                              disabled={!renameValue.trim() || renameConflict}
+                              className="flex-1 px-2 py-1 rounded text-[11px] transition-colors disabled:opacity-40"
+                              style={{ backgroundColor: 'rgba(238, 28, 28, 0.2)', color: 'var(--bright-silver)' }}
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => { setAvatarToRename(null); setRenameValue(''); }}
+                              className="flex-1 px-2 py-1 rounded text-[11px] transition-colors"
+                              style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'var(--steel-silver)' }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleSelectAvatar(avatar.id, avatar.name)}
+                          className="flex items-center gap-3 w-full px-3 py-2.5 text-left transition-colors hover:bg-white/5"
+                        >
+                          {/* Thumbnail — custom avatars get red border glow */}
+                          {avatar.thumbnail ? (
+                            <img
+                              src={avatar.thumbnail}
+                              alt={avatar.name}
+                              className="w-10 h-10 rounded object-cover flex-shrink-0"
+                              style={{
+                                border: isCustom
+                                  ? '1px solid rgba(238, 28, 28, 0.6)'
+                                  : '1px solid var(--border-subtle)',
+                                boxShadow: isCustom
+                                  ? '0 0 8px rgba(238, 28, 28, 0.4)'
+                                  : 'none',
+                              }}
+                            />
+                          ) : (
+                            <div
+                              className="w-10 h-10 rounded flex items-center justify-center flex-shrink-0"
+                              style={{
+                                backgroundColor: 'var(--surface-raised)',
+                                border: isCustom
+                                  ? '1px solid rgba(238, 28, 28, 0.6)'
+                                  : '1px solid var(--border-subtle)',
+                                boxShadow: isCustom
+                                  ? '0 0 8px rgba(238, 28, 28, 0.4)'
+                                  : 'none',
+                              }}
+                            >
+                              <User className="w-4 h-4" style={{ color: 'var(--steel-silver)' }} />
+                            </div>
+                          )}
+
+                          {/* Name + metadata — custom avatars get red neon glow on name */}
+                          <div className="flex-1 min-w-0">
+                            <div
+                              className="text-[12px] font-medium truncate"
+                              style={{
+                                color: isCustom ? '#ff4444' : 'var(--bright-silver)',
+                                textShadow: isCustom
+                                  ? '0 0 5px rgba(238, 28, 28, 0.8), 0 0 10px rgba(238, 28, 28, 0.6), 0 0 15px rgba(238, 28, 28, 0.4)'
+                                  : 'none',
+                              }}
+                            >
+                              {avatar.name}
+                            </div>
+                            <div className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
+                              VRM {avatar.format} · {avatar.expressionCount} expressions
+                              {isCustom && <span style={{ color: 'rgba(238, 28, 28, 0.7)' }}> · custom</span>}
+                            </div>
+                            {/* Issues warning */}
+                            {avatar.issues && avatar.issues.length > 0 && (
+                              <div className="flex items-center gap-1 mt-0.5 text-[9px]" style={{ color: 'rgba(251, 191, 36, 0.8)' }}>
+                                <AlertTriangle className="w-2.5 h-2.5" />
+                                {avatar.issues.length} issue{avatar.issues.length === 1 ? '' : 's'}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Selected indicator */}
+                          {isSelected && (
+                            <Check className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--siren-red)' }} />
+                          )}
+                        </button>
+                      )}
+
+                      {/* Rename + Delete buttons for custom avatars (appear on hover) */}
+                      {isCustom && !isRenaming && (
+                        <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleStartRename(avatar.id, avatar.name);
+                            }}
+                            className="p-1 rounded hover:bg-white/10"
+                            title="Rename"
+                          >
+                            <Pencil className="w-3 h-3" style={{ color: 'var(--steel-silver)' }} />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAvatarToDelete(avatar.id);
+                            }}
+                            className="p-1 rounded hover:bg-white/10"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3 h-3" style={{ color: 'var(--siren-red)' }} />
+                          </button>
+                        </div>
+                      )}
                     </div>
+                  );
+                })}
+              </div>
 
-                    {/* Selected indicator */}
-                    {isSelected && (
-                      <Check className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--siren-red)' }} />
-                    )}
-                  </button>
-                );
-              })}
+              {/* Footer: Add Custom Model button */}
+              <button
+                onClick={() => {
+                  setShowAvatarPicker(false);
+                  setShowUploadDialog(true);
+                }}
+                className="flex items-center justify-center gap-2 px-3 py-2.5 text-[12px] font-medium transition-colors hover:bg-white/5"
+                style={{
+                  borderTop: '1px solid rgba(238, 28, 28, 0.2)',
+                  backgroundColor: 'rgba(238, 28, 28, 0.05)',
+                  color: 'var(--bright-silver)',
+                }}
+              >
+                <Upload className="w-3.5 h-3.5" style={{ color: 'var(--siren-red)' }} />
+                Add Custom Model
+              </button>
             </div>
           )}
         </div>
+
+        {/* Phase B: Custom avatar upload dialog */}
+        {showUploadDialog && (
+          <AvatarUploadDialogLazy
+            onClose={() => setShowUploadDialog(false)}
+            onUploaded={handleAvatarUploaded}
+          />
+        )}
+
+        {/* Phase B: Delete confirmation dialog */}
+        {avatarToDelete && (
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+            onClick={() => setAvatarToDelete(null)}
+          >
+            <div
+              className="w-[min(400px,90vw)] rounded-xl p-5"
+              style={{
+                backgroundColor: 'rgba(7, 7, 11, 0.95)',
+                border: '1px solid rgba(238, 28, 28, 0.3)',
+                boxShadow: '0 0 30px rgba(238, 28, 28, 0.2)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle className="w-5 h-5" style={{ color: 'var(--siren-red)' }} />
+                <span className="text-[14px] font-semibold" style={{ color: 'var(--bright-silver)' }}>
+                  Delete Custom Avatar?
+                </span>
+              </div>
+              <p className="text-[12px] mb-4" style={{ color: 'var(--steel-silver)' }}>
+                This will permanently delete the model file and remove it from your avatar list. This action cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setAvatarToDelete(null)}
+                  className="flex-1 px-3 py-2 rounded-lg text-[12px] transition-colors"
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.05)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--steel-silver)',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleDeleteAvatar(avatarToDelete)}
+                  className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium transition-colors"
+                  style={{
+                    backgroundColor: 'rgba(238, 28, 28, 0.2)',
+                    border: '1px solid rgba(238, 28, 28, 0.4)',
+                    color: 'var(--bright-silver)',
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Avatar switching loading indicator */}
         {avatarSwitching && (

@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getCustomAvatars, isCustomAvatarId } from './custom-avatars.js';
 
 const __filename_esm = fileURLToPath(import.meta.url);
 const __dirname_esm = dirname(__filename_esm);
@@ -63,9 +64,10 @@ export function getAvatarSettings(): AvatarSettings {
     const raw = readFileSync(SETTINGS_PATH, 'utf8');
     const parsed = JSON.parse(raw) as Partial<AvatarSettings>;
 
-    // Validate selectedAvatarId
+    // Validate selectedAvatarId — must be either a built-in ID or a
+    // registered custom avatar ID. Custom IDs are always 'custom-*'.
     const selectedId = parsed.selectedAvatarId ?? 'default';
-    if (!validAvatarIds.has(selectedId)) {
+    if (!isValidAvatarId(selectedId)) {
       console.warn(`[avatar-settings] invalid selectedAvatarId '${selectedId}', falling back to 'default'`);
       return { ...DEFAULT_SETTINGS, customNames: parsed.customNames ?? {} };
     }
@@ -95,8 +97,8 @@ export function setAvatarSettings(updates: Partial<AvatarSettings>): AvatarSetti
   };
 
   if (updates.selectedAvatarId !== undefined) {
-    if (!validAvatarIds.has(updates.selectedAvatarId)) {
-      throw new Error(`Invalid avatar ID: '${updates.selectedAvatarId}'. Valid IDs: ${[...validAvatarIds].join(', ')}`);
+    if (!isValidAvatarId(updates.selectedAvatarId)) {
+      throw new Error(`Invalid avatar ID: '${updates.selectedAvatarId}'. Valid IDs: ${[...validAvatarIds, ...getCustomAvatars().map(c => c.id)].join(', ')}`);
     }
     next.selectedAvatarId = updates.selectedAvatarId;
   }
@@ -130,7 +132,20 @@ export function setAvatarSettings(updates: Partial<AvatarSettings>): AvatarSetti
 
 /**
  * Get the list of valid avatar IDs (for validation in routes).
+ * Includes both built-in and custom IDs.
  */
 export function getValidAvatarIds(): string[] {
-  return [...validAvatarIds];
+  return [...validAvatarIds, ...getCustomAvatars().map(c => c.id)];
+}
+
+/**
+ * Check if an avatar ID is valid — either a built-in ID or a registered custom ID.
+ * Custom IDs must exist in the custom-avatars registry (not just any 'custom-*' string).
+ */
+function isValidAvatarId(id: string): boolean {
+  if (validAvatarIds.has(id)) return true;
+  if (isCustomAvatarId(id)) {
+    return getCustomAvatars().some(c => c.id === id);
+  }
+  return false;
 }
