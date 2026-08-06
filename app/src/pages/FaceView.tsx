@@ -314,9 +314,43 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
   return (
     <group ref={groupRef}>
       <primitive object={gltf.scene} scale={1} position={[0, -1.2, 0]} />
+      {/* Phase B: Soft blob shadow — a radial-gradient circle at the avatar's
+          feet. Not a real shadow-map (which needs a directional light + ground
+          plane + shadow camera). This is the VTuber/desktop-mascot technique:
+          a simple semi-transparent ellipse that grounds the avatar visually.
+          Positioned just below the model's base (y=-1.25), rotated flat (X=-90°)
+          so it lies on the "ground" plane. The shadow follows the groupRef
+          (which is animated by the breathing loop), so it stays attached
+          during idle movement and future PIP dragging. */}
+      <mesh position={[0, -1.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.6, 32]} />
+        <meshBasicMaterial
+          transparent
+          opacity={0.5}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          map={blobShadowTexture}
+        />
+      </mesh>
     </group>
   );
 }
+
+// ── Blob shadow texture (generated once, reused) ────────────────────────
+// Creates a radial gradient on a canvas: opaque black center → transparent edge.
+// This gives the soft, realistic "contact shadow" look without real shadow mapping.
+const blobShadowCanvas = document.createElement('canvas');
+blobShadowCanvas.width = 128;
+blobShadowCanvas.height = 128;
+const blobCtx = blobShadowCanvas.getContext('2d')!;
+const blobGradient = blobCtx.createRadialGradient(64, 64, 0, 64, 64, 60);
+blobGradient.addColorStop(0, 'rgba(0, 0, 0, 1)');
+blobGradient.addColorStop(0.4, 'rgba(0, 0, 0, 0.6)');
+blobGradient.addColorStop(0.8, 'rgba(0, 0, 0, 0.15)');
+blobGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+blobCtx.fillStyle = blobGradient;
+blobCtx.fillRect(0, 0, 128, 128);
+const blobShadowTexture = new THREE.CanvasTexture(blobShadowCanvas);
 
 // ── Main FaceView component ──────────────────────────────────────────────
 
