@@ -7,10 +7,14 @@ import { FileExplorer } from '@/components/layout/FileExplorer';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { Dock } from '@/components/dock/Dock';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, PictureInPicture2 } from 'lucide-react';
 import { useGestureInput, dispatchGesture, type GestureType } from '@/systems/presence/gesture';
 import type { AgentEvent } from '@/types';
 import { wsClient } from '@/lib/ws';
+import { getToken } from '@/lib/auth';
+
+// Phase B — lazy-load the AvatarOverlay (heavy: Three.js + VRM)
+const AvatarOverlay = lazy(() => import('@/components/avatar/AvatarOverlay').then(m => ({ default: m.AvatarOverlay })));
 
 // Phase 5 — lazy-load heavy, conditionally-rendered components.
 // These components pull in large vendor libs (xterm, motion/react, monaco)
@@ -38,9 +42,61 @@ export default function Home() {
   const relay = useRelay();
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
+  // Phase B: PIP avatar overlay state
+  const [pipEnabled, setPipEnabled] = useState(false);
+  const [pipPosition, setPipPosition] = useState({ x: 100, y: 100 });
+  const [pipAvatarUrl, setPipAvatarUrl] = useState('/models/sample.vrm');
+
   useEffect(() => {
     applyTheme(state.currentTheme);
   }, [state.currentTheme]);
+
+  // Phase B: Fetch avatar settings on boot (for PIP overlay)
+  useEffect(() => {
+    if (!state.authReady) return;
+    const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+    const token = getToken() ?? '';
+    fetch(`${API_BASE}/avatar/settings`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => {
+        if (data.settings) {
+          setPipEnabled(data.settings.pipEnabled ?? false);
+          setPipPosition(data.settings.pipPosition ?? { x: 100, y: 100 });
+          const id = data.settings.selectedAvatarId ?? 'default';
+          setPipAvatarUrl(`/models/avatars/${id}/model.vrm`);
+        }
+      })
+      .catch(() => {});
+  }, [state.authReady]);
+
+  // Phase B: Toggle PIP overlay
+  const togglePip = async () => {
+    const newEnabled = !pipEnabled;
+    setPipEnabled(newEnabled);
+    const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+    const token = getToken() ?? '';
+    try {
+      await fetch(`${API_BASE}/avatar/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ pipEnabled: newEnabled }),
+      });
+    } catch { /* persistence failure — UI state still updates locally */ }
+  };
+
+  // Phase B: Save PIP position on drag end (not every frame)
+  const handlePipDragEnd = async (pos: { x: number; y: number }) => {
+    setPipPosition(pos);
+    const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+    const token = getToken() ?? '';
+    try {
+      await fetch(`${API_BASE}/avatar/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ pipPosition: pos }),
+      });
+    } catch { /* persistence failure — position still updates locally */ }
+  };
 
   // Keyboard shortcuts — registered on window (Layer-1 input modality)
   useEffect(() => {
@@ -204,6 +260,33 @@ export default function Home() {
 
       {/* Dock — floating glass pill at bottom center (Section 5) */}
       <Dock onNavigate={handleDockNavigate} activeView={deriveActiveView()} />
+
+      {/* Phase B: PIP toggle button — bottom-left, next to the Dock */}
+      <button
+        onClick={togglePip}
+        className="fixed bottom-4 left-4 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110 z-40"
+        style={{
+          backgroundColor: pipEnabled ? 'rgba(238, 28, 28, 0.2)' : 'rgba(14, 14, 20, 0.8)',
+          border: `1px solid ${pipEnabled ? 'rgba(238, 28, 28, 0.4)' : 'var(--border-subtle)'}`,
+          backdropFilter: 'blur(8px)',
+          color: pipEnabled ? 'var(--siren-red)' : 'var(--steel-silver)',
+        }}
+        title={pipEnabled ? 'Hide avatar overlay' : 'Show avatar overlay'}
+      >
+        <PictureInPicture2 className="w-4 h-4" />
+      </button>
+
+      {/* Phase B: Avatar PIP overlay — draggable, position-persisted */}
+      {pipEnabled && (
+        <Suspense fallback={null}>
+          <AvatarOverlay
+            avatarUrl={pipAvatarUrl}
+            position={pipPosition}
+            onClose={togglePip}
+            onDragEnd={handlePipDragEnd}
+          />
+        </Suspense>
+      )}
 
       {/* Floating Action Button for Inline AI */}
       <button

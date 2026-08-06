@@ -15,14 +15,23 @@ const __filename_esm = fileURLToPath(import.meta.url);
 const __dirname_esm = dirname(__filename_esm);
 const SETTINGS_PATH = join(__dirname_esm, '..', '..', '.runtime', 'avatar-settings.json');
 
+export interface PipPosition {
+  x: number;
+  y: number;
+}
+
 export interface AvatarSettings {
   selectedAvatarId: string;
   customNames: Record<string, string>;  // future: { "default": "My Custom Name" }
+  pipEnabled: boolean;                    // Phase B: PIP overlay visibility
+  pipPosition: PipPosition;              // Phase B: PIP overlay position { x, y }
 }
 
 const DEFAULT_SETTINGS: AvatarSettings = {
   selectedAvatarId: 'default',
   customNames: {},
+  pipEnabled: false,
+  pipPosition: { x: 100, y: 100 },
 };
 
 // Valid avatar IDs (read from manifest.json at module load)
@@ -62,6 +71,8 @@ export function getAvatarSettings(): AvatarSettings {
     return {
       selectedAvatarId: selectedId,
       customNames: parsed.customNames ?? {},
+      pipEnabled: parsed.pipEnabled ?? false,
+      pipPosition: parsed.pipPosition ?? { x: 100, y: 100 },
     };
   } catch (err: any) {
     console.warn(`[avatar-settings] failed to read settings: ${err.message}`);
@@ -77,6 +88,8 @@ export function setAvatarSettings(updates: Partial<AvatarSettings>): AvatarSetti
   const next: AvatarSettings = {
     selectedAvatarId: current.selectedAvatarId,
     customNames: current.customNames,
+    pipEnabled: current.pipEnabled,
+    pipPosition: current.pipPosition,
   };
 
   if (updates.selectedAvatarId !== undefined) {
@@ -88,6 +101,14 @@ export function setAvatarSettings(updates: Partial<AvatarSettings>): AvatarSetti
 
   if (updates.customNames !== undefined) {
     next.customNames = updates.customNames;
+  }
+
+  if (updates.pipEnabled !== undefined) {
+    next.pipEnabled = updates.pipEnabled;
+  }
+
+  if (updates.pipPosition !== undefined) {
+    next.pipPosition = updates.pipPosition;
   }
 
   // Persist
