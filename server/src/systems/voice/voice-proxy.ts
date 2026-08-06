@@ -25,6 +25,7 @@ import { getTTSProvider } from './tts-provider.js';
 interface ActiveVoiceSession {
   id: string;
   userId: string;
+  userDisplayName: string;  // for greeting personalization
   projectId: string;
   startedAt: number;
   lastAudioAt: number;
@@ -32,6 +33,132 @@ interface ActiveVoiceSession {
   audioBuffer: Buffer[];  // accumulated audio chunks for current turn
   zaiInstance: any | null;
 }
+
+// ── Greeting Pool ────────────────────────────────────────────────────────
+// Phase B: Hands-Free — rotating greeting pool with time-context tags.
+// 7 variants: 2 warm, 2 cheeky, 3 sassy. Some are time-restricted (only
+// fire at appropriate hours); others are time-agnostic. Random selection
+// from the eligible pool per session start. No LLM call — static/templated.
+//
+// [name] is replaced with the user's display name (from JWT claims → req.user.name).
+// If the name is empty/missing, the greeting falls back to a generic form.
+//
+// Time tags:
+//   'morning'   — 05:00–11:59
+//   'afternoon' — 12:00–17:59
+//   'evening'   — 18:00–22:59
+//   'late-night'— 23:00–04:59
+//   'any'       — no time restriction
+
+type GreetingTone = 'warm' | 'cheeky' | 'sassy';
+type TimeTag = 'morning' | 'afternoon' | 'evening' | 'late-night' | 'any';
+
+interface GreetingVariant {
+  id: string;
+  tone: GreetingTone;
+  timeTag: TimeTag;
+  text: string;  // may contain [name] placeholder
+}
+
+const GREETING_POOL: readonly GreetingVariant[] = [
+  // ── Warm (2) ──
+  {
+    id: 'warm-1',
+    tone: 'warm',
+    timeTag: 'any',
+    text: 'Hey [name]. Code Siren is live and listening. What are we building?',
+  },
+  {
+    id: 'warm-2',
+    tone: 'warm',
+    timeTag: 'morning',
+    text: 'Good morning, [name]. Fresh coffee, fresh code. What\'s first?',
+  },
+  // ── Cheeky (2) ──
+  {
+    id: 'cheeky-1',
+    tone: 'cheeky',
+    timeTag: 'any',
+    text: 'Code Siren online, [name]. Try not to break production today.',
+  },
+  {
+    id: 'cheeky-2',
+    tone: 'cheeky',
+    timeTag: 'late-night',
+    text: 'Coding at this hour, [name]? Bold. Let\'s make it count.',
+  },
+  // ── Sassy (3) ──
+  {
+    id: 'sassy-1',
+    tone: 'sassy',
+    timeTag: 'any',
+    text: 'Oh look, [name]\'s back. I was getting bored without you. What\'s the task?',
+  },
+  {
+    id: 'sassy-2',
+    tone: 'sassy',
+    timeTag: 'evening',
+    text: 'Evening, [name]. I\'ve been idle all day and I\'m ready to judge your code.',
+  },
+  {
+    id: 'sassy-3',
+    tone: 'sassy',
+    timeTag: 'any',
+    text: 'Code Siren awakened, [name]. Speak — I\'m listening, for once.',
+  },
+] as const;
+
+/**
+ * Determine the time-of-day tag for the current hour.
+ *   05:00–11:59 → 'morning'
+ *   12:00–17:59 → 'afternoon'
+ *   18:00–22:59 → 'evening'
+ *   23:00–04:59 → 'late-night'
+ */
+function getTimeTag(hour: number): TimeTag {
+  if (hour >= 5 && hour < 12) return 'morning';
+  if (hour >= 12 && hour < 18) return 'afternoon';
+  if (hour >= 18 && hour < 23) return 'evening';
+  return 'late-night';
+}
+
+/**
+ * Pick a random greeting from the eligible pool.
+ * Eligible = greetings where timeTag is 'any' OR matches the current time tag.
+ * Uses crypto-grade randomness for unbiased selection.
+ */
+function pickGreeting(hour: number): GreetingVariant {
+  const currentTag = getTimeTag(hour);
+  const eligible = GREETING_POOL.filter(
+    g => g.timeTag === 'any' || g.timeTag === currentTag
+  );
+  // Guard: if no eligible greetings (shouldn't happen), fall back to the first
+  const pool = eligible.length > 0 ? eligible : [GREETING_POOL[0]];
+  const idx = Math.floor(Math.random() * pool.length);
+  return pool[idx];
+}
+
+/**
+ * Personalize a greeting by replacing [name] with the user's display name.
+ * If the name is empty/missing, the greeting is rephrased to omit the name
+ * rather than leaving a dangling comma or awkward placeholder.
+ */
+function personalizeGreeting(text: string, name: string): string {
+  const trimmedName = (name ?? '').trim();
+  if (!trimmedName) {
+    // Remove the "[name]. " or "[name], " prefix gracefully
+    return text.replace(/\[name\][.,]?\s*/g, '');
+  }
+  return text.replace(/\[name\]/g, trimmedName);
+}
+
+// ── Exports for testing ──────────────────────────────────────────────────
+// These are exported so the behavioral test can verify the pool, time-tag
+// filtering, and name substitution without starting a full voice session.
+
+export const greetingPool = GREETING_POOL;
+export { getTimeTag, pickGreeting, personalizeGreeting };
+export type { GreetingVariant, GreetingTone, TimeTag };
 
 // ── Voice proxy singleton ────────────────────────────────────────────────
 
@@ -51,14 +178,16 @@ class VoiceProxy {
 
   /**
    * Start a voice session. Called when user taps the Live icon.
+   * userDisplayName is used for greeting personalization (from JWT claims).
    */
-  async startSession(userId: string, projectId: string): Promise<string> {
+  async startSession(userId: string, projectId: string, userDisplayName?: string): Promise<string> {
     const sessionId = `voice-${uuid()}`;
     await this.ensureZai();
 
     const session: ActiveVoiceSession = {
       id: sessionId,
       userId,
+      userDisplayName: userDisplayName ?? '',
       projectId,
       startedAt: Date.now(),
       lastAudioAt: Date.now(),
@@ -71,7 +200,7 @@ class VoiceProxy {
     // Start silence timer
     this.resetSilenceTimer(sessionId);
 
-    console.log(`[voice-proxy] session started: ${sessionId} for user ${userId}`);
+    console.log(`[voice-proxy] session started: ${sessionId} for user ${userId} (${userDisplayName || 'no name'})`);
 
     // Fire wake greeting — non-blocking, fire-and-forget. If TTS fails,
     // the session still works normally (user just doesn't hear a greeting).
@@ -87,25 +216,33 @@ class VoiceProxy {
    * active TTS provider when a voice session starts. Fires once per session
    * (not per turn). No LLM call — static/templated text only.
    *
+   * Phase B: Hands-Free — draws from a rotating pool of 7 variants
+   * (2 warm, 2 cheeky, 3 sassy). Time-restricted entries only fire in their
+   * appropriate time window. Personalized with the user's display name.
+   *
    * Broadcasts a voice:greeting WS event with the greeting text + audio
    * (audio is null if TTS fails). The client can display the text as a
    * caption and/or play the audio.
    */
   private async fireGreeting(sessionId: string): Promise<void> {
-    const hour = new Date().getHours();
-    let greeting: string;
-    if (hour < 12) {
-      greeting = 'Good morning. Code Siren voice is active. How can I help?';
-    } else if (hour < 18) {
-      greeting = 'Good afternoon. Code Siren voice is active. How can I help?';
-    } else {
-      greeting = 'Good evening. Code Siren voice is active. How can I help?';
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      console.warn(`[voice-proxy] fireGreeting: session ${sessionId} not found`);
+      return;
     }
+
+    const hour = new Date().getHours();
+    const variant = pickGreeting(hour);
+    const greeting = personalizeGreeting(variant.text, session.userDisplayName);
+
+    console.log(`[voice-proxy] greeting: id=${variant.id} tone=${variant.tone} timeTag=${variant.timeTag} hour=${hour} → "${greeting}"`);
 
     // Broadcast the greeting text immediately (for live caption)
     broadcast(makeEvent('voice:greeting' as any, {
       sessionId,
       text: greeting,
+      greetingId: variant.id,
+      tone: variant.tone,
       audioBase64: null,  // filled in after TTS completes
       ts: Date.now(),
     }));
@@ -120,6 +257,8 @@ class VoiceProxy {
       broadcast(makeEvent('voice:greeting' as any, {
         sessionId,
         text: greeting,
+        greetingId: variant.id,
+        tone: variant.tone,
         audioBase64: result.audioBase64,
         ts: Date.now(),
       }));

@@ -24,9 +24,11 @@ voiceLiveRouter.post('/live/start', requireAuth, async (req, res) => {
   }
 
   const projectId = (typeof req.body?.projectId === 'string' ? req.body.projectId : '00000000-0000-0000-0000-000000000000');
+  // Pass the user's display name (from JWT claims) for greeting personalization
+  const userDisplayName = req.user?.name ?? '';
 
   try {
-    const sessionId = await voiceProxy.startSession(userId, projectId);
+    const sessionId = await voiceProxy.startSession(userId, projectId, userDisplayName);
     res.json({
       sessionId,
       status: 'active',
