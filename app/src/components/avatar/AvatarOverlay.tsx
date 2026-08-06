@@ -209,6 +209,7 @@ export function AvatarOverlay({ avatarUrl, position, onClose, onDragEnd }: Avata
     <>
       <div ref={constraintsRef} className="fixed inset-0 pointer-events-none" />
       <motion.div
+        data-testid="pip-overlay"
         drag
         dragConstraints={constraintsRef}
         dragMomentum={false}

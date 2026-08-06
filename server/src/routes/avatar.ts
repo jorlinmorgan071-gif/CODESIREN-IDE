@@ -48,7 +48,9 @@ avatarRouter.post('/settings', requireAuth, (req, res) => {
 // GET /api/avatar/manifest — returns the avatar manifest from app/public/models/manifest.json
 avatarRouter.get('/manifest', requireAuth, (_req, res) => {
   try {
-    const manifestPath = join(__dirname_esm, '..', '..', 'app', 'public', 'models', 'manifest.json');
+    // Path: server/src/routes/ → ../../../app/public/models/manifest.json
+    // (server/src/routes → server/src → server → project-root → app)
+    const manifestPath = join(__dirname_esm, '..', '..', '..', 'app', 'public', 'models', 'manifest.json');
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
     res.json({ avatars: manifest });
   } catch (err: any) {

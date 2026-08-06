@@ -263,6 +263,7 @@ export default function Home() {
 
       {/* Phase B: PIP toggle button — bottom-left, next to the Dock */}
       <button
+        data-testid="pip-toggle"
         onClick={togglePip}
         className="fixed bottom-4 left-4 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110 z-40"
         style={{

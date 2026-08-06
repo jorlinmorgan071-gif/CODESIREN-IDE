@@ -38,7 +38,9 @@ const DEFAULT_SETTINGS: AvatarSettings = {
 let validAvatarIds: Set<string> = new Set(['default']);
 
 try {
-  const manifestPath = join(__dirname_esm, '..', '..', 'app', 'public', 'models', 'manifest.json');
+  // Path: server/src/orchestrator/ → ../../../app/public/models/manifest.json
+  // (server/src/orchestrator → server/src → server → project-root → app)
+  const manifestPath = join(__dirname_esm, '..', '..', '..', 'app', 'public', 'models', 'manifest.json');
   if (existsSync(manifestPath)) {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
     if (Array.isArray(manifest)) {
