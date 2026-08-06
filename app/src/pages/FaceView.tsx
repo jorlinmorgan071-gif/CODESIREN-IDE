@@ -362,9 +362,11 @@ const blobShadowTexture = new THREE.CanvasTexture(blobShadowCanvas);
 export default function FaceView() {
   const {
     isActive, isMuted, amplitude, sessionId, captions, visemeHint,
-    startSession, endSession, toggleMute,
+    toggleMute,
     setCaption, setVisemeHint, setAudioSource, clearAudioSource,
     currentAudioSource, audioContext, ensureAudioContext,
+    startVoiceSession, endVoiceSession,
+    error: voiceError,
   } = useVoiceSession();
   // Auth-gate fix (Bug A): the WS listeners effect below subscribes to
   // voice:* events which carry auth-context. Don't attach them until
@@ -380,7 +382,6 @@ export default function FaceView() {
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentEmotion, setCurrentEmotion] = useState<EmotionId>('neutral');
-  const audioContextRef = useRef<AudioContext | null>(null);
 
   // Phase B: Avatar picker state
   const [avatarUrl, setAvatarUrl] = useState('/models/sample.vrm'); // default until settings load
@@ -393,146 +394,18 @@ export default function FaceView() {
   const [avatarToRename, setAvatarToRename] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameConflict, setRenameConflict] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
 
-  // ── Start a voice session ─────────────────────────────────────────────
+  // Phase B: Voice session logic (getUserMedia + MediaRecorder + silence
+  // detection) has been lifted into VoiceSessionContext so the F6 hotkey
+  // can trigger it from anywhere. FaceView's button calls the same shared
+  // startVoiceSession/endVoiceSession — no duplication.
   const handleStart = useCallback(async () => {
-    setError(null);
-    try {
-      const token = getToken();
-      const res = await fetch(`${API_BASE}/voice/live/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = await res.json() as { sessionId: string };
-      startSession(body.sessionId);
+    await startVoiceSession();
+  }, [startVoiceSession]);
 
-      // Start recording from microphone
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
-        }
-      };
-
-      recorder.onstop = async () => {
-        // Send accumulated audio to server for ASR
-        if (audioChunksRef.current.length === 0) return;
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        audioChunksRef.current = [];
-
-        // Convert to ArrayBuffer and send via WS as binary.
-        // Option C fix: pure audio data, no sessionId header. The server
-        // routes the audio to the user's active voice session via their WS
-        // auth state (state.claims.sub).
-        const arrayBuffer = await blob.arrayBuffer();
-        wsClient.send('voice:audio', arrayBuffer);
-      };
-
-      // Start recording in 1-second chunks
-      recorder.start(1000);
-      mediaRecorderRef.current = recorder;
-
-      // Set up silence detection
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
-      const source = audioContext.createMediaStreamSource(stream);
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      analyserRef.current = analyser;
-
-      // Connect mic to VoiceSessionContext for amplitude
-      setAudioSource(source);
-
-      // Silence detection loop
-      const checkSilence = () => {
-        if (!analyserRef.current || !isActive) return;
-        const data = new Uint8Array(analyserRef.current.frequencyBinCount);
-        analyserRef.current.getByteFrequencyData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) sum += data[i];
-        const avg = sum / data.length;
-
-        if (avg < 10) {  // silence threshold
-          if (silenceTimerRef.current === null) {
-            silenceTimerRef.current = setTimeout(() => {
-              // Turn end detected — stop recording, send audio, restart
-              if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-                mediaRecorderRef.current.stop();
-                mediaRecorderRef.current = null;
-              }
-              // Restart recording for next turn
-              setTimeout(() => {
-                if (isActive && mediaRecorderRef.current === null) {
-                  const newRecorder = new MediaRecorder(stream);
-                  newRecorder.ondataavailable = recorder.ondataavailable;
-                  newRecorder.onstop = recorder.onstop;
-                  newRecorder.start(1000);
-                  mediaRecorderRef.current = newRecorder;
-                }
-              }, 500);
-              silenceTimerRef.current = null;
-            }, 1500);  // 1.5s of silence = turn end
-          }
-        } else {
-          if (silenceTimerRef.current !== null) {
-            clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = null;
-          }
-        }
-
-        requestAnimationFrame(checkSilence);
-      };
-      checkSilence();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [startSession, isActive, setAudioSource]);
-
-  // ── End voice session ─────────────────────────────────────────────────
   const handleEnd = useCallback(async () => {
-    // Stop recording
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current = null;
-    }
-
-    // Stop all media tracks
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-
-    // Clear silence timer
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-
-    clearAudioSource();
-
-    // Tell server to end the session
-    if (sessionId) {
-      try {
-        const token = getToken();
-        await fetch(`${API_BASE}/voice/live/${sessionId}/end`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch { /* server may have already cleaned up */ }
-    }
-
-    endSession();
-  }, [sessionId, endSession, clearAudioSource]);
+    await endVoiceSession();
+  }, [endVoiceSession]);
 
   // ── Toggle mute ───────────────────────────────────────────────────────
   const handleMute = useCallback(async () => {
@@ -938,11 +811,11 @@ export default function FaceView() {
           </div>
         )}
 
-        {error && (
+        {(error || voiceError) && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 px-3 py-2 rounded-md text-[12px]"
             style={{ backgroundColor: 'rgba(238, 28, 28, 0.15)', border: '1px solid rgba(238, 28, 28, 0.4)', color: 'var(--siren-red)' }}>
-            {error}
-            <button onClick={() => setError(null)} className="ml-2 underline">dismiss</button>
+            {error || voiceError}
+            <button onClick={() => { setError(null); }} className="ml-2 underline">dismiss</button>
           </div>
         )}
 

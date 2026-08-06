@@ -2,12 +2,13 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router';
 import { useApp } from '@/store/AppContext';
 import { applyTheme } from '@/store/themes';
+import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { TitleBar } from '@/components/layout/TitleBar';
 import { FileExplorer } from '@/components/layout/FileExplorer';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { Dock } from '@/components/dock/Dock';
-import { Sparkles, PictureInPicture2 } from 'lucide-react';
+import { Sparkles, PictureInPicture2, Mic } from 'lucide-react';
 import { useGestureInput, dispatchGesture, type GestureType } from '@/systems/presence/gesture';
 import type { AgentEvent } from '@/types';
 import { wsClient } from '@/lib/ws';
@@ -40,6 +41,7 @@ export default function Home() {
   const { state, toggleInlineAI, toggleAgentPanel, toggleSettings, dispatch } = useApp();
   const navigate = useNavigate();
   const relay = useRelay();
+  const { isActive: voiceActive, toggleVoiceSession } = useVoiceSession();
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
   // Phase B: PIP avatar overlay state
@@ -222,6 +224,33 @@ export default function Home() {
     >
       {/* Title Bar */}
       <TitleBar />
+
+      {/* Phase B: Global voice-active indicator — visible on Home route when
+          the voice session is active (started via F6 hotkey or FaceView button).
+          Shows a pulsing red mic badge so the user always knows the mic is live. */}
+      {voiceActive && (
+        <div
+          className="fixed top-12 right-4 z-50 flex items-center gap-2 px-3 py-1.5 rounded-full animate-pulse"
+          style={{
+            backgroundColor: 'rgba(238, 28, 28, 0.2)',
+            border: '1px solid rgba(238, 28, 28, 0.5)',
+            backdropFilter: 'blur(8px)',
+          }}
+          title="Voice session active — press F6 to end"
+        >
+          <Mic className="w-3.5 h-3.5" style={{ color: 'var(--siren-red)' }} />
+          <span className="text-[11px] font-medium" style={{ color: 'var(--bright-silver)' }}>
+            Listening
+          </span>
+          <button
+            onClick={() => void toggleVoiceSession()}
+            className="ml-1 text-[10px] underline"
+            style={{ color: 'var(--steel-silver)' }}
+          >
+            End (F6)
+          </button>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
