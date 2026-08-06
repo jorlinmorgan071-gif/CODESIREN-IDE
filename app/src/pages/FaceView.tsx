@@ -89,29 +89,45 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
-  const prevAvatarUrlRef = useRef<string | null>(null);
 
   // Load VRM model via GLTFLoader with VRMLoaderPlugin — uses avatarUrl prop
   const gltf = useLoader(GLTFLoader, avatarUrl, (loader: GLTFLoader) => {
     loader.register((parser) => new VRMLoaderPlugin(parser));
   });
 
-  // Phase B: Leak-free switching — when avatarUrl changes, dispose the old model
+  // Phase B: Leak-free switching — when avatarUrl changes, deepDispose the old
+  // model's GPU resources (geometries, textures, materials) AND clear R3F's
+  // loader cache. useLoader.clear alone does NOT free GPU memory — it only
+  // removes the entry from the cache Map. VRMUtils.deepDispose traverses the
+  // scene graph and calls .dispose() on every geometry, material, and texture.
+  const prevGltfRef = useRef<{ scene: THREE.Group; url: string } | null>(null);
+
   useEffect(() => {
     return () => {
-      // Cleanup: dispose the OLD model's GPU resources when avatarUrl changes
-      if (prevAvatarUrlRef.current && prevAvatarUrlRef.current !== avatarUrl) {
+      if (prevGltfRef.current && prevGltfRef.current.url !== avatarUrl) {
         try {
-          // Clear R3F's loader cache for the old URL
-          useLoader.clear(GLTFLoader, prevAvatarUrlRef.current);
-          console.log(`[face] disposed old avatar: ${prevAvatarUrlRef.current}`);
+          // 1. deepDispose — frees GPU resources (geometries, textures, materials)
+          VRMUtils.deepDispose(prevGltfRef.current.scene);
+          console.log(`[face] deepDispose old avatar: ${prevGltfRef.current.url}`);
         } catch {
-          // useLoader.clear may fail if the cache entry was already removed
+          // deepDispose may fail if already disposed
+        }
+        try {
+          // 2. useLoader.clear — removes the entry from R3F's loader cache
+          useLoader.clear(GLTFLoader, prevGltfRef.current.url);
+        } catch {
+          // cache entry may already be removed
         }
       }
-      prevAvatarUrlRef.current = avatarUrl;
     };
   }, [avatarUrl]);
+
+  // Store the current gltf scene for disposal on next switch
+  useEffect(() => {
+    if (gltf?.scene) {
+      prevGltfRef.current = { scene: gltf.scene, url: avatarUrl };
+    }
+  }, [gltf, avatarUrl]);
 
   useEffect(() => {
     if (!gltf) return;
