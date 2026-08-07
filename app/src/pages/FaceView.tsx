@@ -399,12 +399,13 @@ export default function FaceView() {
   const [pendingWrite, setPendingWrite] = useState<{
     confirmId: string;
     proposedAction: string;
-    params: { routeName: string; description: string; method: string | null; path: string; isPublic: boolean };
+    intentType: 'write-route' | 'write-migration' | 'write-component';
+    params: Record<string, unknown>;
     confidence: number;
   } | null>(null);
   const [writeResult, setWriteResult] = useState<{
     success: boolean;
-    routeFilePath: string | null;
+    filePath: string | null;
     resultText: string;
   } | null>(null);
 
@@ -792,16 +793,18 @@ export default function FaceView() {
       const payload = evt.payload as {
         confirmId: string;
         proposedAction: string;
-        params: { routeName: string; description: string; method: string | null; path: string; isPublic: boolean };
+        intentType: 'write-route' | 'write-migration' | 'write-component';
+        params: Record<string, unknown>;
         confidence: number;
       };
       setPendingWrite({
         confirmId: payload.confirmId,
         proposedAction: payload.proposedAction,
+        intentType: payload.intentType,
         params: payload.params,
         confidence: payload.confidence,
       });
-      setWriteResult(null);  // clear any previous result
+      setWriteResult(null);
     });
 
     const offWriteConfirmed = wsClient.on('voice:write-confirmed' as never, () => {
@@ -812,19 +815,19 @@ export default function FaceView() {
       const payload = evt.payload as { reason: 'user-cancel' | 'timeout' };
       setPendingWrite(null);
       if (payload.reason === 'timeout') {
-        setWriteResult({ success: false, routeFilePath: null, resultText: 'Confirmation timed out — no route was written.' });
+        setWriteResult({ success: false, filePath: null, resultText: 'Confirmation timed out — no file was written.' });
       }
     });
 
     const offWriteResult = wsClient.on('voice:write-result' as never, (evt: AgentEvent) => {
       const payload = evt.payload as {
         success: boolean;
-        routeFilePath: string | null;
+        filePath: string | null;
         resultText: string;
       };
       setWriteResult({
         success: payload.success,
-        routeFilePath: payload.routeFilePath,
+        filePath: payload.filePath,
         resultText: payload.resultText,
       });
     });
@@ -1214,7 +1217,7 @@ export default function FaceView() {
               <div className="flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4" style={{ color: 'var(--siren-red)' }} />
                 <span className="text-[13px] font-semibold" style={{ color: 'var(--bright-silver)' }}>
-                  Confirm Route Write
+                  Confirm {pendingWrite.intentType === 'write-route' ? 'Route Write' : pendingWrite.intentType === 'write-migration' ? 'Migration Write' : 'Component Write'}
                 </span>
                 <span className="text-[10px] ml-auto" style={{ color: 'var(--muted-silver)' }}>
                   {Math.round(pendingWrite.confidence * 100)}% confidence
@@ -1225,23 +1228,15 @@ export default function FaceView() {
                 {pendingWrite.proposedAction}
               </p>
 
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <div className="p-2 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
-                  <div style={{ color: 'var(--muted-silver)' }}>Route Name</div>
-                  <div style={{ color: 'var(--bright-silver)' }}>{pendingWrite.params.routeName}</div>
-                </div>
-                <div className="p-2 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
-                  <div style={{ color: 'var(--muted-silver)' }}>Path</div>
-                  <div style={{ color: 'var(--bright-silver)' }}>{pendingWrite.params.path}</div>
-                </div>
-                <div className="p-2 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
-                  <div style={{ color: 'var(--muted-silver)' }}>Method</div>
-                  <div style={{ color: 'var(--bright-silver)' }}>{pendingWrite.params.method ?? 'any'}</div>
-                </div>
-                <div className="p-2 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
-                  <div style={{ color: 'var(--muted-silver)' }}>Auth</div>
-                  <div style={{ color: 'var(--bright-silver)' }}>{pendingWrite.params.isPublic ? 'public' : 'required'}</div>
-                </div>
+              <div className="text-[11px] p-2 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
+                <span style={{ color: 'var(--muted-silver)' }}>Type: </span>
+                <span style={{ color: 'var(--bright-silver)' }}>{pendingWrite.intentType}</span>
+                {pendingWrite.params.description ? (
+                  <>
+                    <span style={{ color: 'var(--muted-silver)' }}> · Description: </span>
+                    <span style={{ color: 'var(--bright-silver)' }}>{String(pendingWrite.params.description)}</span>
+                  </>
+                ) : null}
               </div>
 
               <div className="text-[11px]" style={{ color: 'var(--muted-silver)' }}>
@@ -1312,7 +1307,7 @@ export default function FaceView() {
               )}
               <div className="flex-1">
                 <div className="text-[12px] font-medium" style={{ color: 'var(--bright-silver)' }}>
-                  {writeResult.success ? 'Route Written' : 'Write Failed'}
+                  {writeResult.success ? 'File Written' : 'Write Failed'}
                 </div>
                 <div className="text-[11px] mt-1" style={{ color: 'var(--steel-silver)' }}>
                   {writeResult.resultText}

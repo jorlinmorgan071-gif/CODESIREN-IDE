@@ -227,10 +227,11 @@ describe('Scenario 1: End-to-end write', () => {
     expect(intent.type).toBe('write-route');
     expect(intent.confidence).toBe(0.95);
     expect(intent.params).toBeDefined();
-    expect(intent.params!.routeName).toBe('login');
-    expect(intent.params!.method).toBe('POST');
-    expect(intent.params!.path).toBe('/api/login');
-    expect(intent.params!.isPublic).toBe(true);
+    const routeParams = intent.params as import('../../src/orchestration/voice-intent-router.js').WriteRouteParams;
+    expect(routeParams.routeName).toBe('login');
+    expect(routeParams.method).toBe('POST');
+    expect(routeParams.path).toBe('/api/login');
+    expect(routeParams.isPublic).toBe(true);
 
     // Step 2: Start a voice session + confirmation flow
     const sessionId = await voiceProxy.startSession('test-user-e2e', 'test-project', 'TestUser');
@@ -247,11 +248,11 @@ describe('Scenario 1: End-to-end write', () => {
 
     const backendAgent = agentManager.get('backend-agent')!;
     const result = await (backendAgent as any).generateRoute({
-      description: intent.params!.description,
+      description: routeParams.description,
       projectRoot: TEST_PROJECT_ROOT,
-      routeName: intent.params!.routeName,
-      mountPath: intent.params!.path,
-      isPublic: intent.params!.isPublic,
+      routeName: routeParams.routeName,
+      mountPath: routeParams.path,
+      isPublic: routeParams.isPublic,
     });
 
     // Step 3: Verify real file on disk
@@ -419,10 +420,11 @@ describe('Scenario 6: Multi-turn rambling', () => {
         const intent = await classifyIntent(cleaned);
         expect(intent.type).toBe('write-route');
         expect(intent.confidence).toBe(0.92);
-        expect(intent.params!.routeName).toBe('logout');
+        const logoutParams = intent.params as import('../../src/orchestration/voice-intent-router.js').WriteRouteParams;
+        expect(logoutParams.routeName).toBe('logout');
 
         console.log(`  [scenario 6] full buffer: "${fullContext.slice(0, 100)}..."`);
-        console.log(`  [scenario 6] classification: type=${intent.type} confidence=${intent.confidence} routeName=${intent.params!.routeName}`);
+        console.log(`  [scenario 6] classification: type=${intent.type} confidence=${intent.confidence} routeName=${logoutParams.routeName}`);
 
         // Verify the router used the full context, not just "go siren add a logout route"
         // (the mock matches on "add a logout route" which only appears in the last turn,

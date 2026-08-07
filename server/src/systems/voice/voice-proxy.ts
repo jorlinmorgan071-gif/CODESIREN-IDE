@@ -53,8 +53,10 @@ import {
   classifyIntent,
   type VoiceIntent,
   type WriteRouteParams,
+  type WriteMigrationParams,
+  type WriteComponentParams,
 } from '../../orchestration/voice-intent-router.js';
-import type { BackendRouteResult } from '../../types.js';
+import type { BackendRouteResult, MigrationResult, UIGenerateResult } from '../../types.js';
 
 // ── Greeting Pool ────────────────────────────────────────────────────────
 // Phase B: Hands-Free — rotating greeting pool with time-context tags.
@@ -406,29 +408,39 @@ class VoiceProxy {
       const intent = await classifyIntent(cleanedTranscript);
       console.log(`[voice-proxy] intent: type=${intent.type} confidence=${intent.confidence.toFixed(2)}`);
 
+      // Build proposed action for any write-type intent
       if (intent.type === 'write-route' && intent.params) {
-        // Build the proposed action description for confirmation
-        const params = intent.params;
+        const params = intent.params as WriteRouteParams;
         const authNote = params.isPublic ? 'public (no auth required)' : 'auth required (requireAuth)';
         const methodNote = params.method ? `${params.method} ` : '';
         const pathNote = params.path ?? `/api/${params.routeName}`;
         const proposedAction = `Add a new ${methodNote}route at ${pathNote} in server/src/routes/${params.routeName}.ts (${authNote}). Backend Agent will scaffold it and Code Review will gate the write.`;
-
-        // Start the confirmation flow
         await this.startWriteConfirmation(sessionId, intent, proposedAction);
-        return;  // don't proceed to chat — awaiting confirmation
+        return;
+      }
+
+      if (intent.type === 'write-migration' && intent.params) {
+        const params = intent.params as WriteMigrationParams;
+        const proposedAction = `Create a new database migration for: ${params.description}. Database Agent will generate the SQL and Code Review will gate the write.`;
+        await this.startWriteConfirmation(sessionId, intent, proposedAction);
+        return;
+      }
+
+      if (intent.type === 'write-component' && intent.params) {
+        const params = intent.params as WriteComponentParams;
+        const iconNote = params.includeIcons ? ' with icons' : '';
+        const animNote = params.includeAnimation ? ' with animation' : '';
+        const proposedAction = `Create a new ${params.componentName} component${iconNote}${animNote} in app/src/components/ui/${params.componentName}.tsx. UI Designer will generate it and Code Review will gate the write.`;
+        await this.startWriteConfirmation(sessionId, intent, proposedAction);
+        return;
       }
 
       // type === 'chat' or low confidence — fall through to normal chat.
-      // If the trigger phrase was heard but the intent was chat/ambiguous,
-      // tell the user we didn't understand it as a write request.
       if (intent.confidence < 0.7) {
-        const promptText = "I heard the trigger phrase, but I'm not sure what route you'd like me to add. Could you rephrase? For example: 'Go Siren, add a login route.'";
+        const promptText = "I heard the trigger phrase, but I'm not sure what you'd like me to create. Could you rephrase? For example: 'Go Siren, add a login route', 'Go Siren, create a migration for a users table', or 'Go Siren, make a UserCard component'.";
         await this.speakText(sessionId, promptText);
         return;
       }
-      // confidence >= 0.7 but classified as chat — the user asked a question
-      // with the trigger phrase. Fall through to normal chat (rare case).
     }
 
     // Step 2: Create AgentTask with origin: 'voice' — SAME path as typed chat
@@ -593,7 +605,6 @@ class VoiceProxy {
     }
 
     const confirmId = `confirm-${uuid()}`;
-    const params = intent.params!;
 
     const timeoutTimer = setTimeout(() => {
       this.cancelWriteConfirmation(sessionId, confirmId, 'timeout');
@@ -607,18 +618,14 @@ class VoiceProxy {
       timeoutTimer,
     };
 
-    // Broadcast the confirmation event — the UI shows confirm/cancel buttons
+    // Broadcast the confirmation event — the UI shows confirm/cancel buttons.
+    // Send the intent type + raw params so the UI can display capability-specific details.
     broadcast(makeEvent('voice:confirm-write' as any, {
       sessionId,
       confirmId,
       proposedAction,
-      params: {
-        routeName: params.routeName,
-        description: params.description,
-        method: params.method ?? null,
-        path: params.path ?? `/api/${params.routeName}`,
-        isPublic: params.isPublic ?? false,
-      },
+      intentType: intent.type,
+      params: intent.params,
       confidence: intent.confidence,
       timeoutMs: this.CONFIRMATION_TIMEOUT_MS,
       ts: Date.now(),
@@ -628,7 +635,7 @@ class VoiceProxy {
     const spokenPrompt = `I'm ready to ${proposedAction} Say yes or click confirm to proceed, or say cancel.`;
     await this.speakText(sessionId, spokenPrompt);
 
-    console.log(`[voice-proxy] confirmation pending: confirmId=${confirmId} routeName=${params.routeName}`);
+    console.log(`[voice-proxy] confirmation pending: confirmId=${confirmId} intentType=${intent.type}`);
   }
 
   /**
@@ -661,45 +668,97 @@ class VoiceProxy {
       sessionId, confirmId, ts: Date.now(),
     }));
 
+    const intentType = pending.intent.type;
     const params = pending.intent.params!;
-    console.log(`[voice-proxy] confirmWrite: dispatching to BackendAgent.generateRoute() — routeName=${params.routeName}`);
+    console.log(`[voice-proxy] confirmWrite: dispatching intent type=${intentType}`);
 
-    // Dispatch to the existing BackendAgent.generateRoute() — NO changes to
-    // that method or its self-checks or the writeProjectFile()/CodeReviewAgent gate.
-    let result: BackendRouteResult;
+    // Dispatch to the appropriate agent's structured method based on intent type.
+    // All three methods are UNCHANGED — they go through their own self-checks
+    // + the writeProjectFile()/CodeReviewAgent gate.
+    let resultText: string = '';
+    let success = false;
+    let filePath: string | null = null;
+    let refused: string | null = null;
+    let error: string | null = null;
+
     try {
-      const backendAgent = agentManager.get('backend-agent');
-      if (!backendAgent) {
-        throw new Error('Backend Agent not registered');
+      if (intentType === 'write-route') {
+        const p = params as WriteRouteParams;
+        const backendAgent = agentManager.get('backend-agent');
+        if (!backendAgent) throw new Error('Backend Agent not registered');
+        const result: BackendRouteResult = await (backendAgent as any).generateRoute({
+          description: p.description,
+          projectRoot: '/tmp/code-siren-voice',
+          routeName: p.routeName,
+          mountPath: p.path ?? `/api/${p.routeName}`,
+          isPublic: p.isPublic ?? false,
+        });
+        if (result.refused) {
+          resultText = `The Backend Agent refused to generate the route: ${result.refused}`;
+          refused = result.refused;
+        } else if (result.routeFileWritten && result.registered) {
+          resultText = `Wrote ${result.routeFilePath} — Code Review approved. The route is registered in index.ts.`;
+          success = true;
+          filePath = result.routeFilePath;
+        } else if (result.routeFileWritten && !result.registered) {
+          resultText = `Wrote ${result.routeFilePath}, but index.ts registration failed: ${result.error ?? 'unknown error'}.`;
+          filePath = result.routeFilePath;
+          error = result.error ?? null;
+        } else {
+          resultText = `Code Review rejected the route: ${result.error ?? 'rejected'}. No file was written.`;
+          error = result.error ?? 'rejected';
+        }
+      } else if (intentType === 'write-migration') {
+        const p = params as WriteMigrationParams;
+        const dbAgent = agentManager.get('database-agent');
+        if (!dbAgent) throw new Error('Database Agent not registered');
+        const result: MigrationResult = await (dbAgent as any).designMigration({
+          description: p.description,
+          projectRoot: '/tmp/code-siren-voice',
+        });
+        if (result.error && !result.applied) {
+          resultText = `Migration created as ${result.filename}, but was not applied: ${result.error}.`;
+          filePath = result.filename;
+          error = result.error;
+        } else if (result.applied) {
+          resultText = `Migration ${result.filename} created and applied. ${result.tables.length} table(s) defined.`;
+          success = true;
+          filePath = result.filename;
+        } else {
+          resultText = `Migration ${result.filename} created but not applied (Postgres unavailable).`;
+          filePath = result.filename;
+        }
+      } else if (intentType === 'write-component') {
+        const p = params as WriteComponentParams;
+        const uiAgent = agentManager.get('ui-designer-agent');
+        if (!uiAgent) throw new Error('UI Designer Agent not registered');
+        const componentPath = p.componentPath ?? `app/src/components/ui/${p.componentName}.tsx`;
+        const result: UIGenerateResult = await (uiAgent as any).generateComponent({
+          projectRoot: '/tmp/code-siren-voice',
+          componentPath,
+          componentName: p.componentName,
+          description: p.description,
+          includeIcons: p.includeIcons ?? false,
+          includeAnimation: p.includeAnimation ?? false,
+        });
+        if (result.refused) {
+          resultText = `The UI Designer refused to generate the component: ${result.refused}`;
+          refused = result.refused;
+        } else if (result.written) {
+          resultText = `Wrote ${result.filePath} — Code Review approved.`;
+          success = true;
+          filePath = result.filePath;
+        } else {
+          resultText = `Code Review rejected the component. No file was written.`;
+          error = 'rejected';
+        }
+      } else {
+        throw new Error(`Unknown write type: ${intentType}`);
       }
-      // The BackendAgent's generateRoute is a structured method, not execute()
-      result = await (backendAgent as any).generateRoute({
-        description: params.description,
-        projectRoot: '/tmp/code-siren-voice',  // v1: demo project root
-        routeName: params.routeName,
-        mountPath: params.path ?? `/api/${params.routeName}`,
-        isPublic: params.isPublic ?? false,
-      });
     } catch (err: any) {
-      console.error(`[voice-proxy] generateRoute failed: ${err.message}`);
-      const errorMsg = `I tried to generate the route, but encountered an error: ${err.message}`;
-      await this.speakText(sessionId, errorMsg);
-      broadcast(makeEvent('voice:write-result' as any, {
-        sessionId, confirmId, success: false, error: err.message, ts: Date.now(),
-      }));
-      return;
-    }
-
-    // Report the result — spoken + visual
-    let resultText: string;
-    if (result.refused) {
-      resultText = `The Backend Agent refused to generate the route: ${result.refused}`;
-    } else if (result.routeFileWritten && result.registered) {
-      resultText = `Wrote ${result.routeFilePath} — Code Review approved. The route is registered in index.ts.`;
-    } else if (result.routeFileWritten && !result.registered) {
-      resultText = `Wrote ${result.routeFilePath}, but index.ts registration failed: ${result.error ?? 'unknown error'}. The route file exists but isn't mounted yet.`;
-    } else {
-      resultText = `Code Review rejected the route: ${result.error ?? 'rejected'}. No file was written.`;
+      console.error(`[voice-proxy] ${intentType} dispatch failed: ${err.message}`);
+      resultText = `I tried to generate the ${intentType.replace('write-', '')}, but encountered an error: ${err.message}`;
+      error = err.message;
     }
 
     await this.speakText(sessionId, resultText);
@@ -707,15 +766,15 @@ class VoiceProxy {
     broadcast(makeEvent('voice:write-result' as any, {
       sessionId,
       confirmId,
-      success: result.routeFileWritten && result.registered,
-      routeFilePath: result.routeFilePath,
-      refused: result.refused ?? null,
-      error: result.error ?? null,
+      success,
+      filePath,
+      refused,
+      error,
       resultText,
       ts: Date.now(),
     }));
 
-    console.log(`[voice-proxy] write result: written=${result.routeFileWritten} registered=${result.registered} refused=${result.refused ?? 'none'}`);
+    console.log(`[voice-proxy] write result: success=${success} filePath=${filePath} refused=${refused ?? 'none'} error=${error ?? 'none'}`);
   }
 
   /**
