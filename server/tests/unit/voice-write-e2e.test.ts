@@ -155,6 +155,12 @@ beforeAll(async () => {
     agentManager.register(new CodeReviewAgent());
   }
 
+  // Mock ensureZai to avoid requiring .z-ai-config (not available in CI)
+  // The e2e tests don't need real ASR/TTS — the mock LLM handles intent
+  // classification, and the real generateRoute() + writeProjectFile() gate
+  // are what we're testing.
+  (voiceProxy as any).ensureZai = async () => ({});
+
   // Create test project structure
   mkdirSync(TEST_ROUTES_DIR, { recursive: true });
   // Create a minimal index.ts

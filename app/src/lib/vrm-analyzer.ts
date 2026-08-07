@@ -15,7 +15,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { VRMLoaderPlugin, VRMUtils, VRMUtils as _VRMUtils } from '@pixiv/three-vrm';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import type { VRM } from '@pixiv/three-vrm';
 
 export interface VrmAnalysisResult {
@@ -34,7 +34,7 @@ export interface VrmAnalysisResult {
   thumbnail: Blob | null;  // PNG thumbnail, null if rendering failed
   vrm: VRM | null;         // the loaded VRM object (for preview rendering)
   scene: THREE.Group | null;
-  gltf: any | null;
+  gltf: { scene: THREE.Group; userData: Record<string, unknown> } | null;
 }
 
 /**
@@ -49,11 +49,20 @@ export async function analyzeVrmFile(file: File): Promise<VrmAnalysisResult> {
   const loader = new GLTFLoader();
   loader.register((parser) => new VRMLoaderPlugin(parser));
 
-  const gltf = await new Promise<any>((resolve, reject) => {
+  // Minimal type for the gltf result — we only access userData.vrm, scene, userData.vrmSpringBoneManager
+  interface GltfResult {
+    scene: THREE.Group;
+    userData: {
+      vrm?: VRM;
+      vrmSpringBoneManager?: unknown;
+    };
+  }
+
+  const gltf = await new Promise<GltfResult>((resolve, reject) => {
     loader.parse(
       arrayBuffer,
       '',
-      (gltf) => resolve(gltf),
+      (gltf) => resolve(gltf as GltfResult),
       (err) => reject(err),
     );
   });
@@ -75,7 +84,7 @@ export async function analyzeVrmFile(file: File): Promise<VrmAnalysisResult> {
     const expressions = expressionManager.expressions;
     for (const expr of expressions) {
       // expression.presetName gives 'happy', 'sad', 'aa', 'ee', etc.
-      const preset = (expr as any).presetName ?? (expr as any).name ?? 'unknown';
+      const preset = (expr as { presetName?: string; name?: string }).presetName ?? (expr as { name?: string }).name ?? 'unknown';
       expressionPresets.push(preset);
     }
   }
@@ -103,11 +112,14 @@ export async function analyzeVrmFile(file: File): Promise<VrmAnalysisResult> {
           materialCount++;
           // Collect textures from material maps
           for (const key of Object.keys(mat)) {
-            const val = (mat as any)[key];
+            const val = (mat as Record<string, unknown>)[key];
             if (val instanceof THREE.Texture) {
               textures.add(val);
-            } else if (val && typeof val === 'object' && val.texture instanceof THREE.Texture) {
-              textures.add(val.texture);
+            } else if (val && typeof val === 'object' && 'texture' in val) {
+              const tex = (val as { texture: unknown }).texture;
+              if (tex instanceof THREE.Texture) {
+                textures.add(tex);
+              }
             }
           }
         }
@@ -124,7 +136,7 @@ export async function analyzeVrmFile(file: File): Promise<VrmAnalysisResult> {
   // SpringBone — check if VRMSpringBonePlugin data exists
   // @pixiv/three-vrm-spring-bone would be loaded separately, but the VRM object
   // may have springBoneManager. We check the gltf extensions.
-  const hasSpringBone = !!(gltf.userData?.vrmSpringBoneManager ?? (vrm as any).springBoneManager);
+  const hasSpringBone = !!(gltf.userData?.vrmSpringBoneManager ?? (vrm as { springBoneManager?: unknown }).springBoneManager);
 
   // Humanoid
   const hasHumanoid = !!vrm.humanoid;
@@ -140,7 +152,7 @@ export async function analyzeVrmFile(file: File): Promise<VrmAnalysisResult> {
   if (file.size > 50 * 1024 * 1024) issues.push(`Large file (${(file.size / 1024 / 1024).toFixed(1)} MB) — may load slowly`);
 
   // Render thumbnail
-  const thumbnail = await renderThumbnail(scene, vrm);
+  const thumbnail = await renderThumbnail(scene);
 
   return {
     format,
@@ -158,7 +170,7 @@ export async function analyzeVrmFile(file: File): Promise<VrmAnalysisResult> {
     thumbnail,
     vrm,
     scene,
-    gltf,
+    gltf: gltf as { scene: THREE.Group; userData: Record<string, unknown> },
   };
 }
 
@@ -168,7 +180,7 @@ export async function analyzeVrmFile(file: File): Promise<VrmAnalysisResult> {
  * VRM 1.0: meta.metaVersion is '1' or '1.0'
  */
 function detectVrmFormat(vrm: VRM): '0.x' | '1.0' {
-  const meta = vrm.meta as any;
+  const meta = vrm.meta as { metaVersion?: string; licenseUrl?: string };
   if (!meta) return '0.x'; // assume 0.x if no meta
   const version = meta.metaVersion ?? meta.licenseUrl ?? '0';
   if (String(version) === '1' || String(version) === '1.0') return '1.0';
@@ -180,7 +192,7 @@ function detectVrmFormat(vrm: VRM): '0.x' | '1.0' {
  * Creates a temporary scene + camera + renderer, positions the camera to frame
  * the model, renders, and captures as PNG.
  */
-async function renderThumbnail(scene: THREE.Group, _vrm: VRM): Promise<Blob | null> {
+async function renderThumbnail(scene: THREE.Group): Promise<Blob | null> {
   try {
     // Compute bounding box to frame the model
     const box = new THREE.Box3().setFromObject(scene);

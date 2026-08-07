@@ -214,6 +214,7 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
       // Fire-and-forget — endVoiceSession is async but we don't need to await
       void endVoiceSessionInternal();
     }, AUTO_END_TIMEOUT_MS);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Internal end (used by auto-end timer to avoid circular dep on endVoiceSession)
@@ -382,6 +383,7 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
       setError(msg);
       console.error('[voice-session] start failed:', msg);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startSession, setAudioSource, resetAutoEndTimer]);
 
   // Full end: stop recorder + close AudioContext + POST /voice/live/:id/end

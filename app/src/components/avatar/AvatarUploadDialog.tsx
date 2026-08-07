@@ -23,9 +23,16 @@ import { getToken } from '@/lib/auth';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
+interface UploadedAvatar {
+  id: string;
+  name: string;
+  format: string;
+  [key: string]: unknown;
+}
+
 interface AvatarUploadDialogProps {
   onClose: () => void;
-  onUploaded: (avatar: any) => void;
+  onUploaded: (avatar: UploadedAvatar) => void;
 }
 
 type Stage = 'select' | 'analyzing' | 'review' | 'uploading' | 'success' | 'error';
@@ -58,9 +65,10 @@ export function AvatarUploadDialog({ onClose, onUploaded }: AvatarUploadDialogPr
       const baseName = selectedFile.name.replace(/\.vrm$/i, '');
       setDisplayName(baseName);
       setStage('review');
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.error('[avatar-upload] analysis failed:', err);
-      setErrorMsg(err.message ?? 'Failed to analyze VRM file');
+      setErrorMsg(msg ?? 'Failed to analyze VRM file');
       setStage('error');
     }
   }, []);
@@ -140,14 +148,15 @@ export function AvatarUploadDialog({ onClose, onUploaded }: AvatarUploadDialogPr
         throw new Error(data.error ?? `Upload failed (${res.status})`);
       }
 
-      const data = await res.json() as { avatar: any };
+      const data = await res.json() as { avatar: UploadedAvatar };
       setStage('success');
       setTimeout(() => {
         onUploaded(data.avatar);
       }, 800);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.error('[avatar-upload] upload failed:', err);
-      setErrorMsg(err.message);
+      setErrorMsg(msg);
       setStage('error');
     }
   }, [file, analysis, displayName, nameConflict, onUploaded]);

@@ -539,16 +539,16 @@ export default function FaceView() {
       const res = await fetch(`${API_BASE}/avatar/manifest`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json() as { avatars: any[] };
+      const data = await res.json() as { avatars: Array<Record<string, unknown>> };
       if (data.avatars && Array.isArray(data.avatars)) {
-        setAvatarList(data.avatars.map((a: any) => ({
-          id: a.id,
-          name: a.name,
-          thumbnail: a.thumbnail,
-          format: a.format,
-          expressionCount: a.expressionCount ?? 0,
-          isCustom: a.isCustom ?? false,
-          issues: a.issues,
+        setAvatarList(data.avatars.map((a) => ({
+          id: String(a.id),
+          name: String(a.name),
+          thumbnail: a.thumbnail as string | null,
+          format: String(a.format),
+          expressionCount: Number(a.expressionCount ?? 0),
+          isCustom: Boolean(a.isCustom ?? false),
+          issues: a.issues as string[] | undefined,
         })));
       }
     } catch (err) {
@@ -557,13 +557,14 @@ export default function FaceView() {
   }, []);
 
   // Phase B: Handle custom avatar uploaded
-  const handleAvatarUploaded = useCallback(async (newAvatar: any) => {
+  const handleAvatarUploaded = useCallback(async (newAvatar: { id: string; name: string }) => {
     setShowUploadDialog(false);
     await refreshAvatarList();
     // Auto-select the newly uploaded avatar
     if (newAvatar?.id) {
       handleSelectAvatar(newAvatar.id, newAvatar.name);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshAvatarList]);
 
   // Phase B: Handle custom avatar delete
@@ -587,9 +588,10 @@ export default function FaceView() {
         setAvatarUrl('/models/avatars/default/model.vrm');
         setCurrentAvatarName('Default Avatar');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.error('[face] delete failed:', err);
-      alert(`Failed to delete avatar: ${err.message}`);
+      alert(`Failed to delete avatar: ${msg}`);
     }
   }, [refreshAvatarList]);
 
@@ -627,9 +629,10 @@ export default function FaceView() {
       if (renamed && avatarUrl === `/models/avatars/${avatarToRename}/model.vrm`) {
         setCurrentAvatarName(renameValue.trim());
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.error('[face] rename failed:', err);
-      alert(`Failed to rename avatar: ${err.message}`);
+      alert(`Failed to rename avatar: ${msg}`);
     }
   }, [avatarToRename, renameValue, avatarList, avatarUrl, refreshAvatarList]);
 
@@ -801,7 +804,7 @@ export default function FaceView() {
       setWriteResult(null);  // clear any previous result
     });
 
-    const offWriteConfirmed = wsClient.on('voice:write-confirmed' as never, (_evt: AgentEvent) => {
+    const offWriteConfirmed = wsClient.on('voice:write-confirmed' as never, () => {
       setPendingWrite(null);  // hide the confirmation panel
     });
 

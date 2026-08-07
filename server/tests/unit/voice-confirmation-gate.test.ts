@@ -36,6 +36,12 @@ beforeAll(async () => {
     agentManager.register(new BackendAgent());
   }
 
+  // Mock ensureZai to avoid requiring .z-ai-config (not available in CI)
+  // The confirmation gate tests don't need real ASR/TTS — they test the
+  // gate mechanics (confirm/cancel/timeout) which are independent of the
+  // z-ai SDK.
+  (voiceProxy as any).ensureZai = async () => ({});
+
   // Capture all broadcast events
   unsubscribeSink = registerSink((event) => {
     capturedEvents.push(event);
