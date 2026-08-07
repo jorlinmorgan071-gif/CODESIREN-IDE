@@ -395,6 +395,19 @@ export default function FaceView() {
   const [renameValue, setRenameValue] = useState('');
   const [renameConflict, setRenameConflict] = useState(false);
 
+  // Phase B: Voice-to-Code-Written v1 — write confirmation state
+  const [pendingWrite, setPendingWrite] = useState<{
+    confirmId: string;
+    proposedAction: string;
+    params: { routeName: string; description: string; method: string | null; path: string; isPublic: boolean };
+    confidence: number;
+  } | null>(null);
+  const [writeResult, setWriteResult] = useState<{
+    success: boolean;
+    routeFilePath: string | null;
+    resultText: string;
+  } | null>(null);
+
   // Phase B: Voice session logic (getUserMedia + MediaRecorder + silence
   // detection) has been lifted into VoiceSessionContext so the F6 hotkey
   // can trigger it from anywhere. FaceView's button calls the same shared
@@ -771,6 +784,48 @@ export default function FaceView() {
       }
     });
 
+    // Phase B: Voice-to-Code-Written v1 — confirmation gate WS listeners
+    const offConfirmWrite = wsClient.on('voice:confirm-write' as never, (evt: AgentEvent) => {
+      const payload = evt.payload as {
+        confirmId: string;
+        proposedAction: string;
+        params: { routeName: string; description: string; method: string | null; path: string; isPublic: boolean };
+        confidence: number;
+      };
+      setPendingWrite({
+        confirmId: payload.confirmId,
+        proposedAction: payload.proposedAction,
+        params: payload.params,
+        confidence: payload.confidence,
+      });
+      setWriteResult(null);  // clear any previous result
+    });
+
+    const offWriteConfirmed = wsClient.on('voice:write-confirmed' as never, (_evt: AgentEvent) => {
+      setPendingWrite(null);  // hide the confirmation panel
+    });
+
+    const offWriteCancelled = wsClient.on('voice:write-cancelled' as never, (evt: AgentEvent) => {
+      const payload = evt.payload as { reason: 'user-cancel' | 'timeout' };
+      setPendingWrite(null);
+      if (payload.reason === 'timeout') {
+        setWriteResult({ success: false, routeFilePath: null, resultText: 'Confirmation timed out — no route was written.' });
+      }
+    });
+
+    const offWriteResult = wsClient.on('voice:write-result' as never, (evt: AgentEvent) => {
+      const payload = evt.payload as {
+        success: boolean;
+        routeFilePath: string | null;
+        resultText: string;
+      };
+      setWriteResult({
+        success: payload.success,
+        routeFilePath: payload.routeFilePath,
+        resultText: payload.resultText,
+      });
+    });
+
     return () => {
       offTranscript();
       offAgentChunk();
@@ -780,6 +835,10 @@ export default function FaceView() {
       offEnded();
       offAutoDisconnect();
       offGreeting();
+      offConfirmWrite();
+      offWriteConfirmed();
+      offWriteCancelled();
+      offWriteResult();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setCaption, setVisemeHint, setAudioSource, clearAudioSource, handleEnd, authReady]);
@@ -1133,6 +1192,136 @@ export default function FaceView() {
               color: 'var(--steel-silver)',
             }}>
               Switching avatar...
+            </div>
+          </div>
+        )}
+
+        {/* Phase B: Voice-to-Code-Written v1 — Write confirmation panel */}
+        {pendingWrite && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 w-full max-w-lg px-4 z-30">
+            <div
+              className="rounded-xl p-4 space-y-3"
+              style={{
+                backgroundColor: 'rgba(7, 7, 11, 0.95)',
+                border: '1px solid rgba(238, 28, 28, 0.4)',
+                boxShadow: '0 0 30px rgba(238, 28, 28, 0.15)',
+                backdropFilter: 'blur(12px)',
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" style={{ color: 'var(--siren-red)' }} />
+                <span className="text-[13px] font-semibold" style={{ color: 'var(--bright-silver)' }}>
+                  Confirm Route Write
+                </span>
+                <span className="text-[10px] ml-auto" style={{ color: 'var(--muted-silver)' }}>
+                  {Math.round(pendingWrite.confidence * 100)}% confidence
+                </span>
+              </div>
+
+              <p className="text-[12px]" style={{ color: 'var(--steel-silver)' }}>
+                {pendingWrite.proposedAction}
+              </p>
+
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="p-2 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
+                  <div style={{ color: 'var(--muted-silver)' }}>Route Name</div>
+                  <div style={{ color: 'var(--bright-silver)' }}>{pendingWrite.params.routeName}</div>
+                </div>
+                <div className="p-2 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
+                  <div style={{ color: 'var(--muted-silver)' }}>Path</div>
+                  <div style={{ color: 'var(--bright-silver)' }}>{pendingWrite.params.path}</div>
+                </div>
+                <div className="p-2 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
+                  <div style={{ color: 'var(--muted-silver)' }}>Method</div>
+                  <div style={{ color: 'var(--bright-silver)' }}>{pendingWrite.params.method ?? 'any'}</div>
+                </div>
+                <div className="p-2 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
+                  <div style={{ color: 'var(--muted-silver)' }}>Auth</div>
+                  <div style={{ color: 'var(--bright-silver)' }}>{pendingWrite.params.isPublic ? 'public' : 'required'}</div>
+                </div>
+              </div>
+
+              <div className="text-[11px]" style={{ color: 'var(--muted-silver)' }}>
+                Say "yes" or click Confirm. Say "cancel" or click Cancel. Auto-cancels in 5 min.
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    const token = getToken() ?? '';
+                    const sid = sessionId ?? '';
+                    if (!sid) return;
+                    await fetch(`${API_BASE}/voice/live/${sid}/confirm-write`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                      body: JSON.stringify({ confirmId: pendingWrite.confirmId }),
+                    });
+                  }}
+                  className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium transition-all"
+                  style={{
+                    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                    border: '1px solid rgba(34, 197, 94, 0.4)',
+                    color: '#22c55e',
+                  }}
+                >
+                  ✓ Confirm
+                </button>
+                <button
+                  onClick={async () => {
+                    const token = getToken() ?? '';
+                    const sid = sessionId ?? '';
+                    if (!sid) return;
+                    await fetch(`${API_BASE}/voice/live/${sid}/cancel-write`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                      body: JSON.stringify({ confirmId: pendingWrite.confirmId }),
+                    });
+                  }}
+                  className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium transition-all"
+                  style={{
+                    backgroundColor: 'rgba(238, 28, 28, 0.15)',
+                    border: '1px solid rgba(238, 28, 28, 0.4)',
+                    color: 'var(--siren-red)',
+                  }}
+                >
+                  ✗ Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Phase B: Voice-to-Code-Written v1 — Write result display */}
+        {writeResult && !pendingWrite && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 w-full max-w-lg px-4 z-30">
+            <div
+              className="rounded-xl p-4 flex items-start gap-3"
+              style={{
+                backgroundColor: 'rgba(7, 7, 11, 0.95)',
+                border: `1px solid ${writeResult.success ? 'rgba(34, 197, 94, 0.4)' : 'rgba(238, 28, 28, 0.4)'}`,
+                backdropFilter: 'blur(12px)',
+              }}
+            >
+              {writeResult.success ? (
+                <Check className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: '#22c55e' }} />
+              ) : (
+                <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: 'var(--siren-red)' }} />
+              )}
+              <div className="flex-1">
+                <div className="text-[12px] font-medium" style={{ color: 'var(--bright-silver)' }}>
+                  {writeResult.success ? 'Route Written' : 'Write Failed'}
+                </div>
+                <div className="text-[11px] mt-1" style={{ color: 'var(--steel-silver)' }}>
+                  {writeResult.resultText}
+                </div>
+              </div>
+              <button
+                onClick={() => setWriteResult(null)}
+                className="text-[10px] underline"
+                style={{ color: 'var(--muted-silver)' }}
+              >
+                dismiss
+              </button>
             </div>
           </div>
         )}

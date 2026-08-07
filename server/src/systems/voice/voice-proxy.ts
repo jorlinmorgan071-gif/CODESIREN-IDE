@@ -32,7 +32,29 @@ interface ActiveVoiceSession {
   muted: boolean;
   audioBuffer: Buffer[];  // accumulated audio chunks for current turn
   zaiInstance: any | null;
+  // Phase B: Voice-to-Code-Written v1
+  transcriptBuffer: string[];  // accumulated transcripts across turns (for multi-turn context)
+  pendingConfirmation: PendingConfirmation | null;  // non-null when awaiting user confirm/cancel
 }
+
+// Phase B: Voice-to-Code-Written v1 — pending confirmation state
+interface PendingConfirmation {
+  intent: VoiceIntent;
+  proposedAction: string;  // human-readable description for TTS + visual
+  confirmId: string;       // unique ID for the WS event
+  createdAt: number;       // for timeout
+  timeoutTimer: NodeJS.Timeout;
+}
+
+// Phase B: Voice-to-Code-Written v1 — import the intent router
+import {
+  containsTriggerPhrase,
+  stripTriggerPhrase,
+  classifyIntent,
+  type VoiceIntent,
+  type WriteRouteParams,
+} from '../../orchestration/voice-intent-router.js';
+import type { BackendRouteResult } from '../../types.js';
 
 // ── Greeting Pool ────────────────────────────────────────────────────────
 // Phase B: Hands-Free — rotating greeting pool with time-context tags.
@@ -194,6 +216,8 @@ class VoiceProxy {
       muted: false,
       audioBuffer: [],
       zaiInstance: this.zaiInstance,
+      transcriptBuffer: [],
+      pendingConfirmation: null,
     };
     this.sessions.set(sessionId, session);
 
@@ -325,6 +349,88 @@ class VoiceProxy {
       sessionId, text: transcript, role: 'user', ts: Date.now(),
     }));
 
+    // ── Phase B: Voice-to-Code-Written v1 — pending confirmation check ──
+    // If there's a pending write confirmation, check if the user said
+    // "yes"/"confirm" or "cancel". This takes priority over everything else.
+    if (session.pendingConfirmation) {
+      const lower = transcript.toLowerCase().trim();
+      const confirmId = session.pendingConfirmation.confirmId;
+      // Match: yes, yeah, yep, confirm, do it, go ahead, sure, ok, okay
+      const confirmPatterns = /^(yes|yeah|yep|confirm|do it|go ahead|sure|ok|okay)\b/i;
+      // Match: no, cancel, stop, abort, nope
+      const cancelPatterns = /^(no|cancel|stop|abort|nope)\b/i;
+      if (confirmPatterns.test(lower)) {
+        console.log(`[voice-proxy] voice confirm detected: "${transcript}"`);
+        await this.confirmWrite(sessionId, confirmId);
+        return;
+      }
+      if (cancelPatterns.test(lower)) {
+        console.log(`[voice-proxy] voice cancel detected: "${transcript}"`);
+        this.cancelWriteConfirmation(sessionId, confirmId, 'user-cancel');
+        return;
+      }
+      // User said something else during confirmation — prompt again
+      console.log(`[voice-proxy] unrecognized during confirmation: "${transcript}"`);
+      await this.speakText(sessionId, "I didn't catch that. Say yes to confirm, or cancel to abort.");
+      return;
+    }
+
+    // ── Phase B: Voice-to-Code-Written v1 ──────────────────────────────
+    // Accumulate transcript buffer for multi-turn context. The router uses
+    // the FULL buffer (not just the last utterance) so multi-turn rambling
+    // before the trigger phrase still gives the router full context.
+    session.transcriptBuffer.push(transcript);
+    // Keep the buffer bounded — last 10 turns
+    if (session.transcriptBuffer.length > 10) {
+      session.transcriptBuffer = session.transcriptBuffer.slice(-10);
+    }
+
+    // Check for trigger phrase — only invoke the intent router if present.
+    // Nothing gets acted on until the trigger phrase is heard.
+    if (containsTriggerPhrase(transcript)) {
+      console.log(`[voice-proxy] trigger phrase detected in transcript`);
+
+      // Use the full accumulated buffer for context, with the trigger phrase
+      // stripped from the current turn
+      const fullContext = [...session.transcriptBuffer].join(' ');
+      const cleanedTranscript = stripTriggerPhrase(fullContext);
+
+      if (!cleanedTranscript.trim()) {
+        // Trigger phrase with no actual request — ask what to do
+        const promptText = "I heard the trigger phrase, but I didn't catch what you'd like me to do. What route would you like me to add?";
+        await this.speakText(sessionId, promptText);
+        return;
+      }
+
+      // Classify intent
+      const intent = await classifyIntent(cleanedTranscript);
+      console.log(`[voice-proxy] intent: type=${intent.type} confidence=${intent.confidence.toFixed(2)}`);
+
+      if (intent.type === 'write-route' && intent.params) {
+        // Build the proposed action description for confirmation
+        const params = intent.params;
+        const authNote = params.isPublic ? 'public (no auth required)' : 'auth required (requireAuth)';
+        const methodNote = params.method ? `${params.method} ` : '';
+        const pathNote = params.path ?? `/api/${params.routeName}`;
+        const proposedAction = `Add a new ${methodNote}route at ${pathNote} in server/src/routes/${params.routeName}.ts (${authNote}). Backend Agent will scaffold it and Code Review will gate the write.`;
+
+        // Start the confirmation flow
+        await this.startWriteConfirmation(sessionId, intent, proposedAction);
+        return;  // don't proceed to chat — awaiting confirmation
+      }
+
+      // type === 'chat' or low confidence — fall through to normal chat.
+      // If the trigger phrase was heard but the intent was chat/ambiguous,
+      // tell the user we didn't understand it as a write request.
+      if (intent.confidence < 0.7) {
+        const promptText = "I heard the trigger phrase, but I'm not sure what route you'd like me to add. Could you rephrase? For example: 'Go Siren, add a login route.'";
+        await this.speakText(sessionId, promptText);
+        return;
+      }
+      // confidence >= 0.7 but classified as chat — the user asked a question
+      // with the trigger phrase. Fall through to normal chat (rare case).
+    }
+
     // Step 2: Create AgentTask with origin: 'voice' — SAME path as typed chat
     const taskId = uuid();
     const task: AgentTask = {
@@ -443,6 +549,200 @@ class VoiceProxy {
     console.log(`[voice-proxy] turn complete — ASR: "${transcript.slice(0, 60)}" → agent: ${agentResponse.length} chars → TTS: ${audioBase64 ? 'ok' : 'failed'}${agentError ? ` (agent error: ${agentError})` : ''}`);
 
     this.resetSilenceTimer(sessionId);
+  }
+
+  // ── Phase B: Voice-to-Code-Written v1 — confirmation gate ──────────────
+
+  /** 5-minute confirmation timeout — matches Ghost Mode's pattern. */
+  private readonly CONFIRMATION_TIMEOUT_MS = 5 * 60 * 1000;
+
+  /**
+   * Helper: speak a text string via TTS + broadcast it as a voice:agent-response.
+   * Used for confirmation prompts, result reporting, and error messages.
+   */
+  private async speakText(sessionId: string, text: string): Promise<void> {
+    let audioBase64: string | null = null;
+    try {
+      const tts = getTTSProvider();
+      const result = await tts.speak(text);
+      audioBase64 = result.audioBase64;
+    } catch (err: any) {
+      console.warn(`[voice-proxy] speakText TTS failed: ${err.message}`);
+    }
+    broadcast(makeEvent('voice:agent-response' as any, {
+      sessionId, text, audioBase64, ts: Date.now(),
+    }));
+  }
+
+  /**
+   * Start the write-confirmation flow.
+   * Broadcasts a voice:confirm-write WS event + speaks the proposed action
+   * via TTS. Sets a 5-min timeout — if no response, auto-cancels (fail-closed).
+   */
+  private async startWriteConfirmation(
+    sessionId: string,
+    intent: VoiceIntent,
+    proposedAction: string,
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+
+    // If there's already a pending confirmation, cancel it first
+    if (session.pendingConfirmation) {
+      clearTimeout(session.pendingConfirmation.timeoutTimer);
+    }
+
+    const confirmId = `confirm-${uuid()}`;
+    const params = intent.params!;
+
+    const timeoutTimer = setTimeout(() => {
+      this.cancelWriteConfirmation(sessionId, confirmId, 'timeout');
+    }, this.CONFIRMATION_TIMEOUT_MS);
+
+    session.pendingConfirmation = {
+      intent,
+      proposedAction,
+      confirmId,
+      createdAt: Date.now(),
+      timeoutTimer,
+    };
+
+    // Broadcast the confirmation event — the UI shows confirm/cancel buttons
+    broadcast(makeEvent('voice:confirm-write' as any, {
+      sessionId,
+      confirmId,
+      proposedAction,
+      params: {
+        routeName: params.routeName,
+        description: params.description,
+        method: params.method ?? null,
+        path: params.path ?? `/api/${params.routeName}`,
+        isPublic: params.isPublic ?? false,
+      },
+      confidence: intent.confidence,
+      timeoutMs: this.CONFIRMATION_TIMEOUT_MS,
+      ts: Date.now(),
+    }));
+
+    // Speak the confirmation prompt
+    const spokenPrompt = `I'm ready to ${proposedAction} Say yes or click confirm to proceed, or say cancel.`;
+    await this.speakText(sessionId, spokenPrompt);
+
+    console.log(`[voice-proxy] confirmation pending: confirmId=${confirmId} routeName=${params.routeName}`);
+  }
+
+  /**
+   * Confirm the pending write — dispatches to BackendAgent.generateRoute().
+   * Called when the user says "yes" / clicks Confirm in the UI.
+   */
+  async confirmWrite(sessionId: string, confirmId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      console.warn(`[voice-proxy] confirmWrite: session ${sessionId} not found`);
+      return;
+    }
+
+    const pending = session.pendingConfirmation;
+    if (!pending) {
+      console.warn(`[voice-proxy] confirmWrite: no pending confirmation`);
+      return;
+    }
+    if (pending.confirmId !== confirmId) {
+      console.warn(`[voice-proxy] confirmWrite: confirmId mismatch (expected ${pending.confirmId}, got ${confirmId})`);
+      return;
+    }
+
+    // Clear the timeout + pending state
+    clearTimeout(pending.timeoutTimer);
+    session.pendingConfirmation = null;
+
+    // Broadcast that confirmation was accepted
+    broadcast(makeEvent('voice:write-confirmed' as any, {
+      sessionId, confirmId, ts: Date.now(),
+    }));
+
+    const params = pending.intent.params!;
+    console.log(`[voice-proxy] confirmWrite: dispatching to BackendAgent.generateRoute() — routeName=${params.routeName}`);
+
+    // Dispatch to the existing BackendAgent.generateRoute() — NO changes to
+    // that method or its self-checks or the writeProjectFile()/CodeReviewAgent gate.
+    let result: BackendRouteResult;
+    try {
+      const backendAgent = agentManager.get('backend-agent');
+      if (!backendAgent) {
+        throw new Error('Backend Agent not registered');
+      }
+      // The BackendAgent's generateRoute is a structured method, not execute()
+      result = await (backendAgent as any).generateRoute({
+        description: params.description,
+        projectRoot: '/tmp/code-siren-voice',  // v1: demo project root
+        routeName: params.routeName,
+        mountPath: params.path ?? `/api/${params.routeName}`,
+        isPublic: params.isPublic ?? false,
+      });
+    } catch (err: any) {
+      console.error(`[voice-proxy] generateRoute failed: ${err.message}`);
+      const errorMsg = `I tried to generate the route, but encountered an error: ${err.message}`;
+      await this.speakText(sessionId, errorMsg);
+      broadcast(makeEvent('voice:write-result' as any, {
+        sessionId, confirmId, success: false, error: err.message, ts: Date.now(),
+      }));
+      return;
+    }
+
+    // Report the result — spoken + visual
+    let resultText: string;
+    if (result.refused) {
+      resultText = `The Backend Agent refused to generate the route: ${result.refused}`;
+    } else if (result.routeFileWritten && result.registered) {
+      resultText = `Wrote ${result.routeFilePath} — Code Review approved. The route is registered in index.ts.`;
+    } else if (result.routeFileWritten && !result.registered) {
+      resultText = `Wrote ${result.routeFilePath}, but index.ts registration failed: ${result.error ?? 'unknown error'}. The route file exists but isn't mounted yet.`;
+    } else {
+      resultText = `Code Review rejected the route: ${result.error ?? 'rejected'}. No file was written.`;
+    }
+
+    await this.speakText(sessionId, resultText);
+
+    broadcast(makeEvent('voice:write-result' as any, {
+      sessionId,
+      confirmId,
+      success: result.routeFileWritten && result.registered,
+      routeFilePath: result.routeFilePath,
+      refused: result.refused ?? null,
+      error: result.error ?? null,
+      resultText,
+      ts: Date.now(),
+    }));
+
+    console.log(`[voice-proxy] write result: written=${result.routeFileWritten} registered=${result.registered} refused=${result.refused ?? 'none'}`);
+  }
+
+  /**
+   * Cancel the pending write — explicit cancel or timeout.
+   * Nothing is written. Fail-closed.
+   */
+  cancelWriteConfirmation(sessionId: string, confirmId: string, reason: 'user-cancel' | 'timeout'): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+
+    const pending = session.pendingConfirmation;
+    if (!pending) return;
+    if (pending.confirmId !== confirmId) return;
+
+    clearTimeout(pending.timeoutTimer);
+    session.pendingConfirmation = null;
+
+    broadcast(makeEvent('voice:write-cancelled' as any, {
+      sessionId, confirmId, reason, ts: Date.now(),
+    }));
+
+    const cancelText = reason === 'timeout'
+      ? 'Confirmation timed out. No route was written.'
+      : 'Cancelled. No route was written.';
+    void this.speakText(sessionId, cancelText);
+
+    console.log(`[voice-proxy] write cancelled: confirmId=${confirmId} reason=${reason}`);
   }
 
   /**

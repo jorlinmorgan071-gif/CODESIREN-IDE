@@ -106,3 +106,54 @@ voiceLiveRouter.get('/live/:id/status', requireAuth, (req, res) => {
     silenceTimeoutMs: voiceProxy.silenceTimeoutMs,
   });
 });
+
+// ── Phase B: Voice-to-Code-Written v1 — confirm/cancel write ─────────────
+// These endpoints let the UI's Confirm/Cancel buttons dispatch to the
+// voice proxy's confirmation gate. The user can also confirm via voice
+// ("yes") or cancel via voice ("cancel") — these endpoints are the
+// visual-button equivalent.
+
+voiceLiveRouter.post('/live/:id/confirm-write', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { confirmId } = req.body ?? {};
+  const session = voiceProxy.getSession(id);
+
+  if (!session) {
+    res.status(404).json({ error: 'Voice session not found', id });
+    return;
+  }
+  if (session.userId !== req.user?.id) {
+    res.status(403).json({ error: 'Session belongs to another user', id });
+    return;
+  }
+  if (typeof confirmId !== 'string') {
+    res.status(400).json({ error: 'confirmId is required' });
+    return;
+  }
+
+  // confirmWrite is async — it dispatches to BackendAgent.generateRoute()
+  await voiceProxy.confirmWrite(id, confirmId);
+  res.json({ confirmed: true, id, confirmId });
+});
+
+voiceLiveRouter.post('/live/:id/cancel-write', requireAuth, (req, res) => {
+  const { id } = req.params;
+  const { confirmId } = req.body ?? {};
+  const session = voiceProxy.getSession(id);
+
+  if (!session) {
+    res.status(404).json({ error: 'Voice session not found', id });
+    return;
+  }
+  if (session.userId !== req.user?.id) {
+    res.status(403).json({ error: 'Session belongs to another user', id });
+    return;
+  }
+  if (typeof confirmId !== 'string') {
+    res.status(400).json({ error: 'confirmId is required' });
+    return;
+  }
+
+  voiceProxy.cancelWriteConfirmation(id, confirmId, 'user-cancel');
+  res.json({ cancelled: true, id, confirmId });
+});
