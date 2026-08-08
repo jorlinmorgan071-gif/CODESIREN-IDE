@@ -15,7 +15,9 @@ import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
 import { SensoryFeedbackOverlay } from '@/components/voice/SensoryFeedbackOverlay';
 import { ScreenIntelligence } from '@/components/voice/ScreenIntelligence';
-import { InteractionBubble } from '@/components/voice/InteractionBubble';
+
+// Phase B — lazy-load heavy voice components (Three.js + VRM + wlipsync)
+const InteractionBubble = lazy(() => import('@/components/voice/InteractionBubble').then(m => ({ default: m.InteractionBubble })));
 
 // Phase B — lazy-load the AvatarOverlay (heavy: Three.js + VRM)
 const AvatarOverlay = lazy(() => import('@/components/avatar/AvatarOverlay').then(m => ({ default: m.AvatarOverlay })));
@@ -563,7 +565,9 @@ export default function Home() {
       <SensoryFeedbackOverlay />
 
       {/* Phase B: Interaction bubble — unified voice/screen-share/caption UI */}
-      <InteractionBubble />
+      <Suspense fallback={null}>
+        <InteractionBubble />
+      </Suspense>
 
       {/* Phase B: Screen Intelligence — screen share + drag-and-drop image analysis */}
       <ScreenIntelligence />
