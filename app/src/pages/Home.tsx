@@ -8,7 +8,7 @@ import { FileExplorer } from '@/components/layout/FileExplorer';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { Dock } from '@/components/dock/Dock';
-import { Sparkles, PictureInPicture2, Mic } from 'lucide-react';
+import { Sparkles, PictureInPicture2, Mic, Monitor } from 'lucide-react';
 import { useGestureInput, dispatchGesture, type GestureType } from '@/systems/presence/gesture';
 import type { AgentEvent } from '@/types';
 import { wsClient } from '@/lib/ws';
@@ -45,6 +45,11 @@ export default function Home() {
   const relay = useRelay();
   const { isActive: voiceActive, toggleVoiceSession } = useVoiceSession();
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
+
+  // Phase B: Screen Intelligence — screen share state
+  const [screenSharing, setScreenSharing] = useState(false);
+  const [visionAnalyzing, setVisionAnalyzing] = useState(false);
+  const [visionPrompt] = useState('Explain what is on screen. If there is an error message, explain what it means and how to fix it.');
 
   // Phase B: PIP avatar overlay state
   const [pipEnabled, setPipEnabled] = useState(false);
@@ -107,6 +112,134 @@ export default function Home() {
       });
     } catch { /* persistence failure — position still updates locally */ }
   };
+
+  // Phase B: Screen Intelligence — capture screen frame + analyze via vision endpoint
+  const captureAndAnalyze = async (imageDataUri: string, prompt?: string) => {
+    setVisionAnalyzing(true);
+    try {
+      const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+      const token = getToken() ?? '';
+      const res = await fetch(`${API_BASE}/orchestrator/vision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ image: imageDataUri, prompt: prompt ?? visionPrompt }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'Vision request failed' })) as { error: string };
+        throw new Error(errData.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json() as { analysis: string };
+      // Display the result in the InlineAI panel via custom event
+      window.dispatchEvent(new CustomEvent('code-siren:vision-result', {
+        detail: { analysis: data.analysis },
+      }));
+      // Open the InlineAI panel
+      if (!state.inlineAIVisible) toggleInlineAI();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      window.dispatchEvent(new CustomEvent('code-siren:vision-result', {
+        detail: { analysis: `Vision analysis failed: ${msg}` },
+      }));
+      if (!state.inlineAIVisible) toggleInlineAI();
+    } finally {
+      setVisionAnalyzing(false);
+    }
+  };
+
+  const handleScreenShare = async () => {
+    if (screenSharing) return;
+    try {
+      setScreenSharing(true);
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 1 }, // low frame rate — we only need one frame
+        audio: false,
+      });
+
+      // Capture a single frame
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true;
+      await video.play();
+      // Wait one frame for the video to render
+      await new Promise(r => requestAnimationFrame(() => r(null)));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(video, 0, 0);
+      const dataUri = canvas.toDataURL('image/png');
+
+      // Stop the stream immediately — we only needed one frame
+      stream.getTracks().forEach(t => t.stop());
+      setScreenSharing(false);
+
+      // Send to vision endpoint
+      await captureAndAnalyze(dataUri);
+    } catch (err: unknown) {
+      setScreenSharing(false);
+      // User cancelled the picker — don't show an error
+      if (err instanceof DOMException && err.name === 'NotAllowedError') return;
+      console.error('[screen-share] failed:', err);
+    }
+  };
+
+  // Phase B: Screen Intelligence — drag-and-drop image handler
+  useEffect(() => {
+    const handleDrop = async (e: DragEvent) => {
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+      const file = files[0];
+      if (!file.type.startsWith('image/')) return;
+
+      e.preventDefault();
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const dataUri = reader.result as string;
+        await captureAndAnalyze(dataUri, 'Explain what is in this image. If there is an error message, explain what it means and how to fix it.');
+      };
+      reader.readAsDataURL(file);
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types?.includes('Files')) {
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener('drop', handleDrop);
+    window.addEventListener('dragover', handleDragOver);
+    return () => {
+      window.removeEventListener('drop', handleDrop);
+      window.removeEventListener('dragover', handleDragOver);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visionPrompt]);
+
+  // Phase B: Screen Intelligence — paste image handler
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (!file) continue;
+          e.preventDefault();
+          const reader = new FileReader();
+          reader.onload = async () => {
+            const dataUri = reader.result as string;
+            await captureAndAnalyze(dataUri, 'Explain what is in this image. If there is an error message, explain what it means and how to fix it.');
+          };
+          reader.readAsDataURL(file);
+          return;
+        }
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visionPrompt]);
 
   // Keyboard shortcuts — registered on window (Layer-1 input modality)
   useEffect(() => {
@@ -313,6 +446,44 @@ export default function Home() {
       >
         <PictureInPicture2 className="w-4 h-4" />
       </button>
+
+      {/* Phase B: Screen Intelligence — screen share button */}
+      <button
+        data-testid="screen-share-btn"
+        onClick={handleScreenShare}
+        disabled={visionAnalyzing}
+        className="fixed bottom-4 left-16 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110 z-40"
+        style={{
+          backgroundColor: screenSharing || visionAnalyzing ? 'rgba(238, 28, 28, 0.2)' : 'rgba(14, 14, 20, 0.8)',
+          border: `1px solid ${screenSharing || visionAnalyzing ? 'rgba(238, 28, 28, 0.4)' : 'var(--border-subtle)'}`,
+          backdropFilter: 'blur(8px)',
+          color: screenSharing || visionAnalyzing ? 'var(--siren-red)' : 'var(--steel-silver)',
+        }}
+        title={visionAnalyzing ? 'Analyzing screen...' : 'Share screen for AI analysis'}
+      >
+        {visionAnalyzing ? (
+          <span className="text-[10px] animate-pulse">...</span>
+        ) : (
+          <Monitor className="w-4 h-4" />
+        )}
+      </button>
+
+      {/* Phase B: Screen Intelligence — sharing active indicator */}
+      {(screenSharing || visionAnalyzing) && (
+        <div
+          className="fixed top-12 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-3 py-1.5 rounded-full animate-pulse"
+          style={{
+            backgroundColor: 'rgba(238, 28, 28, 0.2)',
+            border: '1px solid rgba(238, 28, 28, 0.5)',
+            backdropFilter: 'blur(8px)',
+          }}
+        >
+          <Monitor className="w-3.5 h-3.5" style={{ color: 'var(--siren-red)' }} />
+          <span className="text-[11px] font-medium" style={{ color: 'var(--bright-silver)' }}>
+            {visionAnalyzing ? 'Analyzing screen...' : 'Screen sharing active'}
+          </span>
+        </div>
+      )}
 
       {/* Phase B: Avatar PIP overlay — draggable, position-persisted */}
       {pipEnabled && (
