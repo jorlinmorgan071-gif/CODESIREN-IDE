@@ -58,6 +58,7 @@ interface VoiceSessionContextValue extends VoiceSessionState {
   ensureAudioContext: () => AudioContext;
   currentAudioSource: AudioNode | null;
   audioContext: AudioContext | null;
+  analyser: AnalyserNode | null;  // exposed for waveform visualization
 }
 
 const VoiceSessionContext = createContext<VoiceSessionContextValue | null>(null);
@@ -424,6 +425,7 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
     setAudioSource, clearAudioSource, ensureAudioContext,
     currentAudioSource,
     audioContext: audioContextState,
+    analyser: analyserRef.current,
   }), [isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint, error,
     startVoiceSession, endVoiceSession, toggleVoiceSession,
     startSession, endSession, toggleMute, setCaption, setVisemeHint,

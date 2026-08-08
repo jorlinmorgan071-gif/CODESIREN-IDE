@@ -13,6 +13,7 @@ import { useGestureInput, dispatchGesture, type GestureType } from '@/systems/pr
 import type { AgentEvent } from '@/types';
 import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
+import { SensoryFeedbackOverlay } from '@/components/voice/SensoryFeedbackOverlay';
 
 // Phase B — lazy-load the AvatarOverlay (heavy: Three.js + VRM)
 const AvatarOverlay = lazy(() => import('@/components/avatar/AvatarOverlay').then(m => ({ default: m.AvatarOverlay })));
@@ -373,6 +374,9 @@ export default function Home() {
           Shows when the orchestrator pauses between milestones in
           default-approval mode. Renders null when no plan is awaiting. */}
       <RelayBanner />
+
+      {/* Phase B: Sensory feedback overlay — glow + cursor shimmer + waveform + chime */}
+      <SensoryFeedbackOverlay />
     </div>
   );
 }
