@@ -242,6 +242,17 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visionPrompt]);
 
+  // Phase B: Listen for bubble settings open requests (click on bubble body)
+  useEffect(() => {
+    const handler = () => {
+      if (!state.settingsVisible) toggleSettings();
+      // Also dispatch to SettingsModal to auto-switch to bubble tab
+      window.dispatchEvent(new CustomEvent('code-siren:switch-settings-tab', { detail: 'bubble' }));
+    };
+    window.addEventListener('code-siren:open-bubble-settings', handler);
+    return () => window.removeEventListener('code-siren:open-bubble-settings', handler);
+  }, [state.settingsVisible, toggleSettings]);
+
   // Keyboard shortcuts — registered on window (Layer-1 input modality)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

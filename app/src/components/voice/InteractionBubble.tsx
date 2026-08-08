@@ -11,15 +11,18 @@
 // Three modes: idle, voice-call, screen-share. Video-call is honestly disabled.
 // Expand/collapse toggle switches between 120×120 bubble and 300×400 full PIP.
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
 import { motion } from 'motion/react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { useApp } from '@/store/AppContext';
 import { themes } from '@/store/themes';
 import { Mic, MicOff, PhoneOff, Monitor, Video, Maximize2, Minimize2, X } from 'lucide-react';
 import { getToken } from '@/lib/auth';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import type { VRM } from '@pixiv/three-vrm';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -71,6 +74,207 @@ function WaveformRing({ analyser, accentColor }: { analyser: AnalyserNode | null
       </mesh>
     </group>
   );
+}
+
+// ── VRM Bubble Content — the VRM avatar IS the bubble ────────────────────
+// The avatar face fills the entire bubble shape. Breathing + blink animation.
+function VRMBubbleContent({ avatarUrl }: { avatarUrl: string }) {
+  const vrmRef = useRef<VRM | null>(null);
+  const groupRef = useRef<THREE.Group>(null);
+  const blinkTimer = useRef(0);
+  const blinkPhase = useRef<'open' | 'closing' | 'opening'>('open');
+  const blinkValue = useRef(0);
+
+  const gltf = useLoader(GLTFLoader, avatarUrl, (loader: GLTFLoader) => {
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+  });
+
+  useEffect(() => {
+    if (gltf?.userData?.vrm) {
+      vrmRef.current = gltf.userData.vrm as VRM;
+      VRMUtils.removeUnnecessaryVertices(gltf.scene);
+    }
+  }, [gltf]);
+
+  useFrame((state) => {
+    const vrm = vrmRef.current;
+    if (!vrm || !groupRef.current) return;
+    const delta = state.clock.getDelta();
+    const t = state.clock.elapsedTime;
+    vrm.update(delta);
+
+    // Breathing
+    groupRef.current.position.y = Math.sin(t * 0.5) * 0.02;
+    groupRef.current.rotation.y = Math.sin(t * 0.1) * 0.05;
+
+    // Blink
+    blinkTimer.current -= delta * 1000;
+    if (blinkPhase.current === 'open' && blinkTimer.current <= 0) {
+      blinkPhase.current = 'closing'; blinkTimer.current = 80;
+    } else if (blinkPhase.current === 'closing') {
+      blinkValue.current = Math.min(1, blinkValue.current + delta * 12);
+      if (blinkValue.current >= 1) { blinkPhase.current = 'opening'; blinkTimer.current = 200; }
+    } else if (blinkPhase.current === 'opening') {
+      blinkValue.current = Math.max(0, blinkValue.current - delta * 5);
+      if (blinkValue.current <= 0) { blinkPhase.current = 'open'; blinkTimer.current = 3000 + Math.random() * 3000; }
+    }
+    const expr = vrm.expressionManager;
+    if (expr) { expr.setValue('blink', blinkValue.current); expr.update(); }
+  });
+
+  return (
+    <group ref={groupRef}>
+      <primitive object={gltf.scene} scale={1} position={[0, -1.2, 0]} />
+    </group>
+  );
+}
+
+// ── Bars Visualization — frequency bars in a circle ──────────────────────
+function BarsVisualization({ analyser, accentColor }: { analyser: AnalyserNode | null; accentColor: string }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const dataRef = useRef<Uint8Array | null>(null);
+  const barsRef = useRef<THREE.Mesh[]>([]);
+
+  useEffect(() => {
+    if (analyser) dataRef.current = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
+  }, [analyser]);
+
+  useFrame(() => {
+    if (!analyser || !dataRef.current || !groupRef.current) return;
+    analyser.getByteFrequencyData(dataRef.current as Uint8Array<ArrayBuffer>);
+    const barCount = Math.min(24, dataRef.current.length);
+    for (let i = 0; i < barCount; i++) {
+      const bar = barsRef.current[i];
+      if (!bar) continue;
+      const value = dataRef.current[i] / 255;
+      const scale = 0.3 + value * 0.7;
+      bar.scale.y = scale;
+      (bar.material as THREE.MeshBasicMaterial).opacity = 0.2 + value * 0.6;
+    }
+    groupRef.current.rotation.z = Date.now() * 0.0003;
+  });
+
+  const color = new THREE.Color(accentColor);
+  const barCount = 24;
+
+  return (
+    <group ref={groupRef}>
+      {Array.from({ length: barCount }).map((_, i) => {
+        const angle = (i / barCount) * Math.PI * 2;
+        const radius = 0.8;
+        return (
+          <mesh
+            key={i}
+            ref={(el) => { if (el) barsRef.current[i] = el; }}
+            position={[Math.cos(angle) * radius, Math.sin(angle) * radius, 0]}
+            scale={[1, 0.3, 1]}
+          >
+            <boxGeometry args={[0.05, 0.3, 0.05]} />
+            <meshBasicMaterial color={color} transparent opacity={0.3} />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+// ── Pulse Visualization — pulsing solid orb ──────────────────────────────
+function PulseVisualization({ analyser, accentColor }: { analyser: AnalyserNode | null; accentColor: string }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const dataRef = useRef<Uint8Array | null>(null);
+
+  useEffect(() => {
+    if (analyser) dataRef.current = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
+  }, [analyser]);
+
+  useFrame((state) => {
+    if (!meshRef.current) return;
+    let amplitude = 0;
+    if (analyser && dataRef.current) {
+      analyser.getByteFrequencyData(dataRef.current as Uint8Array<ArrayBuffer>);
+      let sum = 0;
+      for (let i = 0; i < 16; i++) sum += dataRef.current[i];
+      amplitude = (sum / 16) / 255;
+    }
+    const breathe = 1 + Math.sin(state.clock.elapsedTime * 2) * 0.05;
+    const pulse = 1 + amplitude * 0.4;
+    meshRef.current.scale.setScalar(breathe * pulse);
+    (meshRef.current.material as THREE.MeshBasicMaterial).opacity = 0.4 + amplitude * 0.4;
+  });
+
+  const color = new THREE.Color(accentColor);
+  return (
+    <mesh ref={meshRef}>
+      <circleGeometry args={[0.85, 32]} />
+      <meshBasicMaterial color={color} transparent opacity={0.4} />
+    </mesh>
+  );
+}
+
+// ── Orb Visualization — glowing gradient orb ────────────────────────────
+function OrbVisualization({ analyser, accentColor }: { analyser: AnalyserNode | null; accentColor: string }) {
+  const innerRef = useRef<THREE.Mesh>(null);
+  const outerRef = useRef<THREE.Mesh>(null);
+  const dataRef = useRef<Uint8Array | null>(null);
+
+  useEffect(() => {
+    if (analyser) dataRef.current = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
+  }, [analyser]);
+
+  useFrame((state) => {
+    let amplitude = 0;
+    if (analyser && dataRef.current) {
+      analyser.getByteFrequencyData(dataRef.current as Uint8Array<ArrayBuffer>);
+      let sum = 0;
+      for (let i = 0; i < 16; i++) sum += dataRef.current[i];
+      amplitude = (sum / 16) / 255;
+    }
+    const t = state.clock.elapsedTime;
+    if (innerRef.current) {
+      innerRef.current.scale.setScalar(1 + amplitude * 0.3);
+      (innerRef.current.material as THREE.MeshBasicMaterial).opacity = 0.6 + amplitude * 0.3;
+    }
+    if (outerRef.current) {
+      outerRef.current.scale.setScalar(1 + Math.sin(t * 1.5) * 0.08 + amplitude * 0.2);
+      (outerRef.current.material as THREE.MeshBasicMaterial).opacity = 0.15 + amplitude * 0.2;
+    }
+  });
+
+  const color = new THREE.Color(accentColor);
+  return (
+    <group>
+      <mesh ref={outerRef}>
+        <circleGeometry args={[0.95, 32]} />
+        <meshBasicMaterial color={color} transparent opacity={0.15} />
+      </mesh>
+      <mesh ref={innerRef} position={[0, 0, 0.01]}>
+        <circleGeometry args={[0.6, 32]} />
+        <meshBasicMaterial color={color} transparent opacity={0.6} />
+      </mesh>
+    </group>
+  );
+}
+
+// ── Bubble Visualization Switcher ────────────────────────────────────────
+function BubbleVisualization({
+  visual, analyser, accentColor, avatarUrl,
+}: {
+  visual: string;
+  analyser: AnalyserNode | null;
+  accentColor: string;
+  avatarUrl: string;
+}) {
+  if (visual === 'vrm' && avatarUrl) {
+    return (
+      <Suspense fallback={<PulseVisualization analyser={analyser} accentColor={accentColor} />}>
+        <VRMBubbleContent avatarUrl={avatarUrl} />
+      </Suspense>
+    );
+  }
+  if (visual === 'bars') return <BarsVisualization analyser={analyser} accentColor={accentColor} />;
+  if (visual === 'pulse') return <PulseVisualization analyser={analyser} accentColor={accentColor} />;
+  if (visual === 'orb') return <OrbVisualization analyser={analyser} accentColor={accentColor} />;
+  return <WaveformRing analyser={analyser} accentColor={accentColor} />;
 }
 
 // ── BubbleCaption (reads existing VoiceSessionContext captions) ──────────
@@ -322,13 +526,21 @@ export function InteractionBubble() {
               className={`relative w-full h-full overflow-hidden flex flex-col bubble-style-${bubbleSettings.bubbleAnimation}`}
               style={{
                 borderRadius,
-                backgroundColor: 'rgba(7, 7, 11, 0.9)',
-                border: `1px solid ${accentColor}30`,
-                boxShadow: `0 8px 32px rgba(0,0,0,0.6), 0 0 20px ${accentColor}15`,
+                backgroundColor: bubbleSettings.bubbleVisual === 'vrm' ? 'transparent' : 'rgba(7, 7, 11, 0.9)',
+                border: `1px solid ${accentColor}40`,
+                boxShadow: `0 12px 40px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05), 0 0 24px ${accentColor}20`,
                 backdropFilter: 'blur(12px)',
               }}
             >
-              {/* Waveform canvas — fills the bubble in idle/voice-call mode */}
+              {/* Click on bubble body opens accessibility settings */}
+              <div
+                className="absolute inset-0 z-10 cursor-pointer"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('code-siren:open-bubble-settings'));
+                }}
+                title="Click to open bubble settings"
+              />
+              {/* Visualization canvas — fills the bubble */}
               <div className="flex-1 relative" style={{ minHeight: 0 }}>
                 <Canvas
                   camera={{ position: [0, 0, 2], fov: 50 }}
@@ -337,7 +549,15 @@ export function InteractionBubble() {
                 >
                   <ambientLight intensity={0.5} />
                   <pointLight position={[0, 0, 3]} intensity={1} color={accentColor} />
-                  <WaveformRing analyser={analyser} accentColor={accentColor} />
+                  <pointLight position={[0, 2, 1]} intensity={0.5} color="#0088FF" />
+                  <BubbleVisualization
+                    visual={bubbleSettings.bubbleVisual}
+                    analyser={analyser}
+                    accentColor={accentColor}
+                    avatarUrl={bubbleSettings.bubbleAvatarId === 'default'
+                      ? '/models/avatars/default/model.vrm'
+                      : `/models/avatars/${bubbleSettings.bubbleAvatarId}/model.vrm`}
+                  />
                 </Canvas>
 
                 {/* Mode indicator text in center */}

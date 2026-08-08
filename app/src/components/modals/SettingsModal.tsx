@@ -62,6 +62,16 @@ const deployments = [
 export function SettingsModal() {
   const { state, toggleSettings, setTheme, setModel } = useApp();
   const [activeTab, setActiveTab] = useState<SettingsTab>('models');
+
+  // Phase B: Listen for requests to switch to the bubble tab
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail === 'bubble') setActiveTab('bubble');
+    };
+    window.addEventListener('code-siren:switch-settings-tab', handler);
+    return () => window.removeEventListener('code-siren:switch-settings-tab', handler);
+  }, []);
   const [autoModel, setAutoModel] = useState(true);
   const [toggles, setToggles] = useState<Record<string, boolean>>({
     commandConfirm: true,
