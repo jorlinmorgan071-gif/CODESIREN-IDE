@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useApp } from '@/store/AppContext';
 import { motion, AnimatePresence } from 'motion/react';
 import type { ThemeName, VoiceSettings, VoiceProviderOption, KokoroVoiceOption, ElevenLabsVoiceOption } from '@/types';
+import { BubbleSettingsPanel } from './BubbleSettingsPanel';
 import { themes } from '@/store/themes';
 import { api } from '@/lib/api';
 import {
@@ -23,12 +24,13 @@ import {
   Bot,
 } from 'lucide-react';
 
-type SettingsTab = 'models' | 'voice' | 'themes' | 'extensions' | 'security' | 'deployment';
+type SettingsTab = 'models' | 'voice' | 'themes' | 'bubble' | 'extensions' | 'security' | 'deployment';
 
 const settingsTabs: { id: SettingsTab; label: string; icon: LucideIcon }[] = [
   { id: 'models', label: 'Model Router', icon: Cpu },
   { id: 'voice', label: 'Voice', icon: Mic },
   { id: 'themes', label: 'Themes', icon: Palette },
+  { id: 'bubble', label: 'Bubble', icon: Sparkles },
   { id: 'extensions', label: 'Extensions', icon: Puzzle },
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'deployment', label: 'Deployment', icon: Rocket },
@@ -899,6 +901,11 @@ export function SettingsModal() {
                     </button>
                   ))}
                 </div>
+              )}
+
+              {/* Bubble Accessibility */}
+              {activeTab === 'bubble' && (
+                <BubbleSettingsPanel />
               )}
 
               {/* Extensions */}

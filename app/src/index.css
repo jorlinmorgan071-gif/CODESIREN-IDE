@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Bebas+Neue&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Bebas+Neue&family=Fira+Code:wght@400;500;600&family=Space+Grotesk:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=DM+Sans:wght@400;500;700&family=Sora:wght@300;400;500;600&family=Manrope:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Roboto+Mono:wght@400;500&family=Source+Code+Pro:wght@400;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -401,4 +401,95 @@
   border-color: var(--siren-red);
   color: var(--bright-silver);
   background-color: rgba(238, 28, 28, 0.05);
+}
+
+/* ════════════════════════════════════════════════════════════════════ */
+/* Phase B: Bubble Accessibility Settings — caption fonts, shadows,      */
+/* animations, visualization styles                                       */
+/* ════════════════════════════════════════════════════════════════════ */
+
+/* Caption font families */
+.caption-font-inter { font-family: 'Inter', sans-serif; }
+.caption-font-jetbrains { font-family: 'JetBrains Mono', monospace; }
+.caption-font-fira { font-family: 'Fira Code', monospace; }
+.caption-font-space { font-family: 'Space Grotesk', sans-serif; }
+.caption-font-outfit { font-family: 'Outfit', sans-serif; }
+.caption-font-dm { font-family: 'DM Sans', sans-serif; }
+.caption-font-sora { font-family: 'Sora', sans-serif; }
+.caption-font-manrope { font-family: 'Manrope', sans-serif; }
+.caption-font-jakarta { font-family: 'Plus Jakarta Sans', sans-serif; }
+.caption-font-roboto-mono { font-family: 'Roboto Mono', monospace; }
+.caption-font-source-code { font-family: 'Source Code Pro', monospace; }
+.caption-font-bebas { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.05em; }
+
+/* Caption shadow styles */
+.caption-shadow-none { text-shadow: none; }
+.caption-shadow-soft { text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+.caption-shadow-medium { text-shadow: 0 2px 4px rgba(0,0,0,0.7), 0 0 8px rgba(0,0,0,0.4); }
+.caption-shadow-strong { text-shadow: 0 2px 6px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.6), 0 0 20px rgba(0,0,0,0.3); }
+.caption-shadow-raised { text-shadow: 0 -1px 0 rgba(255,255,255,0.15), 0 1px 3px rgba(0,0,0,0.8), 0 3px 8px rgba(0,0,0,0.5); }
+.caption-shadow-glow { text-shadow: 0 0 4px currentColor, 0 0 8px currentColor, 0 0 12px rgba(0,0,0,0.5); }
+
+/* Caption background styles */
+.caption-bg-none { background: transparent !important; }
+.caption-bg-solid { background: rgba(7, 7, 11, 0.95) !important; }
+.caption-bg-blur { background: rgba(7, 7, 11, 0.8) !important; backdrop-filter: blur(8px); }
+.caption-bg-gradient { background: linear-gradient(180deg, rgba(7,7,11,0.95) 0%, rgba(14,14,20,0.9) 100%) !important; }
+.caption-bg-accent { background: rgba(238, 28, 28, 0.15) !important; backdrop-filter: blur(6px); }
+
+/* Caption entrance animations */
+@keyframes caption-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes caption-slide-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes caption-scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes caption-blur-in {
+  from { opacity: 0; filter: blur(4px); }
+  to { opacity: 1; filter: blur(0); }
+}
+
+.caption-anim-fade { animation: caption-fade-in 0.3s ease-out; }
+.caption-anim-slide { animation: caption-slide-in 0.3s ease-out; }
+.caption-anim-scale { animation: caption-scale-in 0.25s ease-out; }
+.caption-anim-blur { animation: caption-blur-in 0.3s ease-out; }
+.caption-anim-none { animation: none; }
+
+/* Bubble visualization styles */
+@keyframes bubble-pulse-ring {
+  0% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.08); opacity: 0.9; }
+  100% { transform: scale(1); opacity: 0.6; }
+}
+@keyframes bubble-rotate-glow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes bubble-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+
+.bubble-style-pulse { animation: bubble-pulse-ring 2s ease-in-out infinite; }
+.bubble-style-rotate { animation: bubble-rotate-glow 8s linear infinite; }
+.bubble-style-breathe { animation: bubble-breathe 3s ease-in-out infinite; }
+
+/* Bubble shape presets */
+.bubble-shape-circle { border-radius: 50%; }
+.bubble-shape-rounded { border-radius: 24px; }
+.bubble-shape-squircle { border-radius: 35%; }
+.bubble-shape-hexagon { clip-path: polygon(50% 0%, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%); }
+
+/* High-contrast caption mode */
+.caption-high-contrast {
+  color: #ffffff !important;
+  background: rgba(0, 0, 0, 0.95) !important;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.9) !important;
+  font-weight: 600 !important;
 }

@@ -74,20 +74,47 @@ function WaveformRing({ analyser, accentColor }: { analyser: AnalyserNode | null
 }
 
 // ── BubbleCaption (reads existing VoiceSessionContext captions) ──────────
-function BubbleCaption({ captions }: { captions: { user: string; agent: string } }) {
+interface BubbleCaptionProps {
+  captions: { user: string; agent: string };
+  settings: {
+    captionFont: string;
+    captionSize: string;
+    captionShadow: string;
+    captionBg: string;
+    captionAnimation: string;
+    highContrast: boolean;
+    bubbleShape: string;
+    bubbleVisual: string;
+    bubbleAnimation: string;
+    showVRM: boolean;
+    bubbleAvatarId: string;
+    bubbleSize: string;
+  };
+}
+
+function BubbleCaption({ captions, settings }: BubbleCaptionProps) {
   if (!captions.user && !captions.agent) return null;
+  const fontSize = { xs: '9px', sm: '11px', md: '13px', lg: '16px' }[settings.captionSize as string] ?? '11px';
   return (
     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 max-w-[250px] space-y-1">
       {captions.user && (
-        <div className="text-[10px] p-1.5 rounded-md" style={{ backgroundColor: 'rgba(14, 14, 20, 0.9)', border: '1px solid var(--border-subtle)' }}>
-          <span className="text-[8px] uppercase mr-1" style={{ color: 'var(--steel-silver)' }}>You:</span>
-          <span style={{ color: 'var(--bright-silver)' }}>{captions.user.slice(0, 120)}</span>
+        <div
+          key={`user-${captions.user.length}`}
+          className={`caption-font-${settings.captionFont} caption-shadow-${settings.captionShadow} caption-bg-${settings.captionBg} caption-anim-${settings.captionAnimation} ${settings.highContrast ? 'caption-high-contrast' : ''}`}
+          style={{ fontSize, padding: '4px 8px', borderRadius: '4px', color: settings.highContrast ? '#fff' : 'var(--bright-silver)' }}
+        >
+          <span style={{ fontSize: '0.8em', opacity: 0.6 }}>You: </span>
+          {captions.user.slice(0, 150)}
         </div>
       )}
       {captions.agent && (
-        <div className="text-[10px] p-1.5 rounded-md" style={{ backgroundColor: 'rgba(14, 14, 20, 0.9)', border: '1px solid rgba(0, 191, 255, 0.2)' }}>
-          <span className="text-[8px] uppercase mr-1" style={{ color: 'var(--steel-silver)' }}>AI:</span>
-          <span style={{ color: 'var(--bright-silver)' }}>{captions.agent.slice(0, 120)}</span>
+        <div
+          key={`agent-${captions.agent.length}`}
+          className={`caption-font-${settings.captionFont} caption-shadow-${settings.captionShadow} caption-bg-${settings.captionBg} caption-anim-${settings.captionAnimation} ${settings.highContrast ? 'caption-high-contrast' : ''}`}
+          style={{ fontSize, padding: '4px 8px', borderRadius: '4px', color: settings.highContrast ? '#fff' : 'var(--bright-silver)' }}
+        >
+          <span style={{ fontSize: '0.8em', opacity: 0.6 }}>AI: </span>
+          {captions.agent.slice(0, 150)}
         </div>
       )}
     </div>
@@ -107,6 +134,41 @@ export function InteractionBubble() {
   const [expanded, setExpanded] = useState(false);
   const [position, setPosition] = useState({ x: 100, y: 100 });
   const [visible, setVisible] = useState(false);
+
+  // Phase B: Bubble accessibility settings
+  const [bubbleSettings, setBubbleSettings] = useState({
+    captionFont: 'inter',
+    captionSize: 'sm',
+    captionShadow: 'medium',
+    captionBg: 'blur',
+    captionAnimation: 'fade',
+    highContrast: false,
+    bubbleShape: 'circle',
+    bubbleVisual: 'ring',
+    bubbleAnimation: 'breathe',
+    showVRM: false,
+    bubbleAvatarId: 'default',
+    bubbleSize: 'md',
+  });
+
+  // Fetch settings on mount
+  useEffect(() => {
+    const token = getToken() ?? '';
+    fetch(`${API_BASE}/bubble/settings`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => { if (data.settings) setBubbleSettings(data.settings); })
+      .catch(() => {});
+  }, []);
+
+  // Listen for live settings changes from the settings panel
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail) setBubbleSettings(detail);
+    };
+    window.addEventListener('code-siren:bubble-settings-changed', handler);
+    return () => window.removeEventListener('code-siren:bubble-settings-changed', handler);
+  }, []);
 
   // Sync mode with isActive (voice session)
   useEffect(() => {
@@ -211,9 +273,10 @@ export function InteractionBubble() {
       .catch(() => {});
   }, []);
 
-  const size = expanded ? 300 : 120;
-  const height = expanded ? 400 : 120;
-  const borderRadius = expanded ? 12 : 60;
+  const bubbleSizeMap = { sm: 80, md: 120, lg: 160 };
+  const size = expanded ? 300 : (bubbleSizeMap[bubbleSettings.bubbleSize as keyof typeof bubbleSizeMap] ?? 120);
+  const height = expanded ? 400 : (bubbleSizeMap[bubbleSettings.bubbleSize as keyof typeof bubbleSizeMap] ?? 120);
+  const borderRadius = expanded ? 12 : (bubbleSettings.bubbleShape === 'circle' ? '50%' : bubbleSettings.bubbleShape === 'rounded' ? 24 : bubbleSettings.bubbleShape === 'squircle' ? '35%' : 12);
 
   return (
     <>
@@ -256,7 +319,7 @@ export function InteractionBubble() {
             style={{ width: size, height }}
           >
             <div
-              className="relative w-full h-full overflow-hidden flex flex-col"
+              className={`relative w-full h-full overflow-hidden flex flex-col bubble-style-${bubbleSettings.bubbleAnimation}`}
               style={{
                 borderRadius,
                 backgroundColor: 'rgba(7, 7, 11, 0.9)',
@@ -364,7 +427,7 @@ export function InteractionBubble() {
               </div>
 
               {/* Live captions */}
-              <BubbleCaption captions={captions} />
+              <BubbleCaption captions={captions} settings={bubbleSettings} />
             </div>
           </motion.div>
         </>

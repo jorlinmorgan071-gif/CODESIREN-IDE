@@ -89,7 +89,7 @@ export function cacheMiddleware(req: Request, res: Response, next: NextFunction)
   // pipEnabled, pipPosition) change with every POST, and the manifest changes
   // when custom avatars are uploaded/deleted/renamed. Caching causes stale
   // avatar selection and stale manifest reads.
-  if (req.path.startsWith('/avatar/settings') || req.path.startsWith('/avatar/manifest') || req.path.startsWith('/avatar/custom')) {
+  if (req.path.startsWith('/avatar/settings') || req.path.startsWith('/avatar/manifest') || req.path.startsWith('/avatar/custom') || req.path.startsWith('/bubble/settings')) {
     next();
     return;
   }
