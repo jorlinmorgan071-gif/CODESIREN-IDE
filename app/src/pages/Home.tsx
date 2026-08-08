@@ -15,6 +15,7 @@ import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
 import { SensoryFeedbackOverlay } from '@/components/voice/SensoryFeedbackOverlay';
 import { ScreenIntelligence } from '@/components/voice/ScreenIntelligence';
+import { InteractionBubble } from '@/components/voice/InteractionBubble';
 
 // Phase B — lazy-load the AvatarOverlay (heavy: Three.js + VRM)
 const AvatarOverlay = lazy(() => import('@/components/avatar/AvatarOverlay').then(m => ({ default: m.AvatarOverlay })));
@@ -549,6 +550,9 @@ export default function Home() {
 
       {/* Phase B: Sensory feedback overlay — glow + cursor shimmer + waveform + chime */}
       <SensoryFeedbackOverlay />
+
+      {/* Phase B: Interaction bubble — unified voice/screen-share/caption UI */}
+      <InteractionBubble />
 
       {/* Phase B: Screen Intelligence — screen share + drag-and-drop image analysis */}
       <ScreenIntelligence />
