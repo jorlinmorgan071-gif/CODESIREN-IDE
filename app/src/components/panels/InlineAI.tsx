@@ -13,15 +13,21 @@ import {
   Languages,
   TestTube,
   Wand2,
+  Loader2,
 } from 'lucide-react';
+import { getToken } from '@/lib/auth';
 
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+
+// Phase B: Editor Actions — only 'explain' is functional.
+// The other 5 are honestly marked "coming soon" — NOT silently faking it.
 const quickActions = [
-  { id: 'explain', label: 'Explain', icon: FileText, description: 'Explain this code' },
-  { id: 'refactor', label: 'Refactor', icon: RefreshCw, description: 'Refactor for clarity' },
-  { id: 'optimize', label: 'Optimize', icon: Gauge, description: 'Optimize performance' },
-  { id: 'test', label: 'Generate Tests', icon: TestTube, description: 'Create unit tests' },
-  { id: 'document', label: 'Document', icon: FileCode, description: 'Add documentation' },
-  { id: 'convert', label: 'Convert', icon: Languages, description: 'Convert language' },
+  { id: 'explain', label: 'Explain', icon: FileText, description: 'Explain this code', available: true },
+  { id: 'refactor', label: 'Refactor', icon: RefreshCw, description: 'Refactor for clarity', available: false },
+  { id: 'optimize', label: 'Optimize', icon: Gauge, description: 'Optimize performance', available: false },
+  { id: 'test', label: 'Generate Tests', icon: TestTube, description: 'Create unit tests', available: false },
+  { id: 'document', label: 'Document', icon: FileCode, description: 'Add documentation', available: false },
+  { id: 'convert', label: 'Convert', icon: Languages, description: 'Convert language', available: false },
 ];
 
 export function InlineAI() {
@@ -30,7 +36,66 @@ export function InlineAI() {
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [response, setResponse] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Phase B: Listen for 'code-siren:explain' custom events from Monaco's
+  // context menu action. When fired, automatically trigger the Explain flow
+  // with the selected code.
+  useEffect(() => {
+    const handleExplainRequest = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { code: string; language?: string };
+      if (detail?.code) {
+        void runExplain(detail.code, detail.language);
+      }
+    };
+    window.addEventListener('code-siren:explain', handleExplainRequest);
+    return () => window.removeEventListener('code-siren:explain', handleExplainRequest);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const runExplain = useCallback(async (code: string, language?: string) => {
+    setActiveAction('explain');
+    setResponse(null);
+    setError(null);
+
+    try {
+      const token = getToken() ?? '';
+      const res = await fetch(`${API_BASE}/orchestrator/explain`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ code, language }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'Request failed' })) as { error: string };
+        throw new Error(errData.error ?? `HTTP ${res.status}`);
+      }
+
+      const data = await res.json() as { explanation: string };
+      setResponse(data.explanation || '(no explanation returned)');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+    } finally {
+      setActiveAction(null);
+    }
+  }, []);
+
+  const handleAction = (actionId: string) => {
+    if (actionId === 'explain') {
+      // For the Explain button click (without a selection from the editor),
+      // we need the selected text. We dispatch a request to the editor to
+      // send us its selection via the same custom event mechanism.
+      // The editor listens for this and fires back 'code-siren:explain'.
+      window.dispatchEvent(new CustomEvent('code-siren:request-selection'));
+      return;
+    }
+    // Other actions are not yet functional — don't fake it
+  };
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.inline-action-btn')) return;
@@ -65,34 +130,8 @@ export function InlineAI() {
     };
   }, [isDragging, dragOffset, setInlineAIPosition]);
 
-  const handleAction = (actionId: string) => {
-    setActiveAction(actionId);
-    setResponse(null);
-
-    // Simulate AI response
-    setTimeout(() => {
-      const responses: Record<string, string> = {
-        explain: 'This code defines a React functional component that renders a responsive navigation header. It uses useState to manage the mobile menu open/closed state, and conditionally renders the mobile navigation based on the isMenuOpen boolean.',
-        refactor: 'I would extract the mobile menu into a separate component, use a custom hook for the menu state, and add proper TypeScript interfaces for the navigation items.',
-        optimize: 'Consider memoizing the Header component with React.memo, using useCallback for the toggle handler, and implementing lazy loading for the mobile menu content.',
-        test: 'I\'ll generate tests covering: rendering with title prop, mobile menu toggle functionality, accessibility attributes, and responsive behavior across breakpoints.',
-        document: 'Adding JSDoc comments, describing props with @param tags, documenting the component\'s behavior, and including usage examples.',
-        convert: 'I can convert this to a class component, or translate it to Vue SFC format. Which would you prefer?',
-      };
-      setResponse(responses[actionId] || 'Processing your request...');
-      setActiveAction(null);
-    }, 800);
-  };
-
   if (!state.inlineAIVisible) return null;
 
-  // Bug C fix: render via portal to document.body so the panel's
-  // position:fixed escapes any ancestor with transform/filter/will-change
-  // (motion.div animations, Dock springs, etc.) that would otherwise
-  // contain the fixed positioning and cause the panel to render relative
-  // to that ancestor instead of the viewport. The portal guarantees the
-  // panel is always positioned relative to the viewport, regardless of
-  // where <InlineAI /> is mounted in the React tree.
   return createPortal(
     <motion.div
       ref={panelRef}
@@ -100,7 +139,7 @@ export function InlineAI() {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: 0.2 }}
-      className="fixed z-50 w-[280px] rounded-lg overflow-hidden"
+      className="fixed z-50 w-[320px] rounded-lg overflow-hidden"
       style={{
         left: state.inlineAIPosition.x,
         top: state.inlineAIPosition.y,
@@ -137,27 +176,30 @@ export function InlineAI() {
       </div>
 
       {/* Quick Actions Grid */}
-      {!response && (
+      {!response && !error && !activeAction && (
         <div className="p-3 grid grid-cols-2 gap-1.5">
           {quickActions.map((action) => {
             const Icon = action.icon;
-            const isActive = activeAction === action.id;
-
             return (
               <button
                 key={action.id}
                 className="inline-action-btn flex items-center gap-2 px-2.5 py-2 rounded-md text-[11px] transition-all hover:bg-white/5 text-left"
                 style={{
-                  backgroundColor: isActive ? 'rgba(238, 28, 28, 0.1)' : 'transparent',
-                  color: isActive ? 'var(--siren-red)' : 'var(--bright-silver)',
-                  border: isActive ? '1px solid rgba(238, 28, 28, 0.3)' : '1px solid transparent',
+                  color: action.available ? 'var(--bright-silver)' : 'var(--muted-silver)',
+                  border: '1px solid transparent',
+                  opacity: action.available ? 1 : 0.5,
+                  cursor: action.available ? 'pointer' : 'not-allowed',
                 }}
-                onClick={() => handleAction(action.id)}
-                disabled={!!activeAction}
+                onClick={() => action.available && handleAction(action.id)}
+                disabled={!action.available}
+                title={action.available ? action.description : 'Coming soon — not yet functional'}
               >
-                <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: isActive ? 'var(--siren-red)' : 'var(--steel-silver)' }} />
+                <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: action.available ? 'var(--steel-silver)' : 'var(--muted-silver)' }} />
                 <div className="min-w-0">
-                  <div className="font-medium">{action.label}</div>
+                  <div className="font-medium">
+                    {action.label}
+                    {!action.available && <span className="text-[8px] ml-1" style={{ color: 'var(--muted-silver)' }}>soon</span>}
+                  </div>
                   <div className="text-[9px] truncate" style={{ color: 'var(--muted-silver)' }}>
                     {action.description}
                   </div>
@@ -169,11 +211,11 @@ export function InlineAI() {
       )}
 
       {/* Loading state */}
-      {activeAction && (
+      {activeAction === 'explain' && (
         <div className="p-4 flex items-center gap-2">
-          <div className="w-4 h-4 rounded-full animate-agent-pulse" style={{ backgroundColor: 'var(--siren-red)' }} />
-          <span className="text-[12px] animate-pulse" style={{ color: 'var(--steel-silver)' }}>
-            Processing...
+          <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--siren-red)' }} />
+          <span className="text-[12px]" style={{ color: 'var(--steel-silver)' }}>
+            Explaining code...
           </span>
         </div>
       )}
@@ -182,7 +224,7 @@ export function InlineAI() {
       {response && (
         <div className="p-3">
           <div
-            className="text-[12px] leading-relaxed p-2.5 rounded-md"
+            className="text-[12px] leading-relaxed p-2.5 rounded-md whitespace-pre-wrap"
             style={{
               backgroundColor: 'rgba(238, 28, 28, 0.05)',
               borderLeft: '2px solid var(--siren-red)',
@@ -202,18 +244,28 @@ export function InlineAI() {
         </div>
       )}
 
-      {/* Attachments area */}
-      <div
-        className="px-3 py-2 flex items-center gap-2"
-        style={{ borderTop: '1px solid var(--border-subtle)' }}
-      >
-        <span className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
-          Attachments
-        </span>
-        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: 'var(--surface-dark)', color: 'var(--steel-silver)' }}>
-          Header.tsx
-        </span>
-      </div>
+      {/* Error */}
+      {error && (
+        <div className="p-3">
+          <div
+            className="text-[12px] p-2.5 rounded-md"
+            style={{
+              backgroundColor: 'rgba(238, 28, 28, 0.1)',
+              border: '1px solid rgba(238, 28, 28, 0.3)',
+              color: 'var(--siren-red)',
+            }}
+          >
+            {error}
+          </div>
+          <button
+            className="mt-2 text-[11px] px-3 py-1.5 rounded-md transition-colors hover:bg-white/5"
+            style={{ color: 'var(--steel-silver)' }}
+            onClick={() => { setError(null); }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
     </motion.div>,
     document.body,
   );

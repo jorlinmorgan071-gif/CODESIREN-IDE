@@ -402,6 +402,49 @@ export function CodeEditor() {
         }
       );
 
+      // ── Phase B: Editor Actions — "Explain" context menu ─────────────
+      // Right-click in the editor → "Explain Selected Code" → reads the
+      // selection, dispatches a custom event that InlineAI listens for.
+      // Also listens for 'code-siren:request-selection' so the InlineAI
+      // panel's Explain button can request the current selection.
+      _editor.addAction({
+        id: 'code-siren-explain',
+        label: 'Explain Selected Code',
+        contextMenuGroupId: 'navigation',
+        contextMenuOrder: 1.5,
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyE],
+        run: async (ed: MonacoType.editor.ICodeEditor) => {
+          const selection = ed.getSelection();
+          if (!selection || selection.isEmpty()) return;
+          const model = ed.getModel();
+          if (!model) return;
+          const selectedText = model.getValueInRange(selection);
+          if (!selectedText.trim()) return;
+          const language = model.getLanguageId?.() ?? undefined;
+          window.dispatchEvent(new CustomEvent('code-siren:explain', {
+            detail: { code: selectedText, language },
+          }));
+        },
+      });
+
+      // Listen for request-selection from the InlineAI Explain button
+      const requestSelectionHandler = () => {
+        const selection = _editor.getSelection();
+        if (!selection || selection.isEmpty()) return;
+        const model = _editor.getModel();
+        if (!model) return;
+        const selectedText = model.getValueInRange(selection);
+        if (!selectedText.trim()) return;
+        const language = model.getLanguageId?.() ?? undefined;
+        window.dispatchEvent(new CustomEvent('code-siren:explain', {
+          detail: { code: selectedText, language },
+        }));
+      };
+      window.addEventListener('code-siren:request-selection', requestSelectionHandler);
+      _editor.onDidDispose(() => {
+        window.removeEventListener('code-siren:request-selection', requestSelectionHandler);
+      });
+
       // ── Phase A Step 3: Multi-file model sync (initial pass) ────────
       // The full sync logic runs in a separate useEffect below that
       // watches state.editorTabs + state.fileContents. Here we just

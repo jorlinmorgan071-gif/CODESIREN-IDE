@@ -3,6 +3,7 @@
 //
 //   POST /api/orchestrator/chat          Tier 1 chat (streams via WS)
 //   POST /api/orchestrator/complete      Lightweight code completion (HTTP, non-streaming)
+//   POST /api/orchestrator/explain       Explain selected code (HTTP, non-streaming, read-only)
 //   POST /api/orchestrator/plan          Generate plan from session history
 //   POST /api/orchestrator/plan/:id/approve    Approve + start relay
 //   POST /api/orchestrator/plan/:id/advance    Advance to next milestone
@@ -427,6 +428,84 @@ orchestratorRouter.post('/complete', requireAuth, async (req, res) => {
       return;
     }
     console.error('[orchestrator:complete] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/orchestrator/explain ──────────────────────────────────────
+// Phase B: Editor Actions — "Explain" selected code.
+//
+// Mirrors /complete's pattern exactly: direct modelRouter.stream(), no agent
+// dispatch, no context bundle, no trace. Read-only — no writes, no gate.
+//
+// Request:  { code: string, language?: string }
+// Response: { explanation: string }
+//
+// The system prompt instructs the model to explain the code clearly and
+// concisely — what it does, how it works, any notable patterns or gotchas.
+// Hard 10s timeout (longer than completion — explanations can be longer).
+
+const explainSchema = z.object({
+  code: z.string().min(1).max(20000),
+  language: z.string().max(50).optional(),
+});
+
+const EXPLAIN_SYSTEM_PROMPT =
+  'You are a code explanation engine. The user provides a code snippet. ' +
+  'Explain what the code does, how it works, and any notable patterns, ' +
+  'gotchas, or best practices relevant to it. Be clear and concise — ' +
+  '2-4 short paragraphs, no markdown headings, no code fences in the ' +
+  'explanation itself. Plain text only.';
+
+const EXPLAIN_TIMEOUT_MS = 10_000;
+
+orchestratorRouter.post('/explain', requireAuth, async (req, res) => {
+  const parsed = explainSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
+
+  const { code, language } = parsed.data;
+
+  const abort = new AbortController();
+  const timeoutId = setTimeout(() => abort.abort(), EXPLAIN_TIMEOUT_MS);
+
+  try {
+    const chunks: string[] = [];
+
+    const userPrompt = language
+      ? `Explain this ${language} code:\n\n${code}`
+      : `Explain this code:\n\n${code}`;
+
+    const generator = modelRouter.stream({
+      domain: 'ARCHITECT',
+      executionMode: 'single-shot',
+      agentId: 'explain',
+      messages: [
+        { role: 'system', content: EXPLAIN_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
+      ],
+    } as any);
+
+    for await (const chunk of generator) {
+      if (abort.signal.aborted) break;
+      if (chunk.delta) {
+        chunks.push(chunk.delta);
+      }
+    }
+
+    clearTimeout(timeoutId);
+
+    const explanation = chunks.join('').trim();
+    res.json({ explanation });
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (abort.signal.aborted) {
+      res.json({ explanation: '(explanation timed out — try again with a shorter selection)' });
+      return;
+    }
+    console.error('[orchestrator:explain] error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

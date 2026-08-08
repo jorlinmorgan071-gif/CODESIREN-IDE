@@ -62,6 +62,8 @@ interface AppState {
   // Inline AI
   inlineAIVisible: boolean;
   inlineAIPosition: { x: number; y: number };
+  // Phase B: Editor Actions — the pending request from Monaco's context menu
+  inlineAIRequest: { action: string; code: string; language?: string } | null;
 
   // Modals
   agentPanelVisible: boolean;
@@ -96,6 +98,7 @@ type AppAction =
   | { type: 'SET_AI_GENERATING'; payload: boolean }
   | { type: 'TOGGLE_INLINE_AI' }
   | { type: 'SET_INLINE_AI_POSITION'; payload: { x: number; y: number } }
+  | { type: 'SET_INLINE_AI_REQUEST'; payload: { action: string; code: string; language?: string } | null }
   | { type: 'TOGGLE_AGENT_PANEL' }
   | { type: 'TOGGLE_SETTINGS' }
   | { type: 'SET_ACTIVE_TERMINAL'; payload: string }
@@ -134,6 +137,7 @@ const initialState: AppState = {
 
   inlineAIVisible: false,
   inlineAIPosition: { x: 400, y: 200 },
+  inlineAIRequest: null,
 
   agentPanelVisible: false,
   settingsVisible: false,
@@ -284,6 +288,9 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_INLINE_AI_POSITION':
       return { ...state, inlineAIPosition: action.payload };
 
+    case 'SET_INLINE_AI_REQUEST':
+      return { ...state, inlineAIRequest: action.payload, inlineAIVisible: true };
+
     case 'TOGGLE_AGENT_PANEL':
       return { ...state, agentPanelVisible: !state.agentPanelVisible };
 
@@ -366,6 +373,7 @@ interface AppContextValue {
   setAIGenerating: (generating: boolean) => void;
   toggleInlineAI: () => void;
   setInlineAIPosition: (pos: { x: number; y: number }) => void;
+  setInlineAIRequest: (req: { action: string; code: string; language?: string } | null) => void;
   toggleAgentPanel: () => void;
   toggleSettings: () => void;
   setActiveTerminal: (id: string) => void;
@@ -394,6 +402,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const toggleInlineAI = useCallback(() => dispatch({ type: 'TOGGLE_INLINE_AI' }), []);
   const setInlineAIPosition = useCallback((pos: { x: number; y: number }) =>
     dispatch({ type: 'SET_INLINE_AI_POSITION', payload: pos }), []);
+  const setInlineAIRequest = useCallback((req: { action: string; code: string; language?: string } | null) =>
+    dispatch({ type: 'SET_INLINE_AI_REQUEST', payload: req }), []);
   const toggleAgentPanel = useCallback(() => dispatch({ type: 'TOGGLE_AGENT_PANEL' }), []);
   const toggleSettings = useCallback(() => dispatch({ type: 'TOGGLE_SETTINGS' }), []);
   const setActiveTerminal = useCallback((id: string) => dispatch({ type: 'SET_ACTIVE_TERMINAL', payload: id }), []);
@@ -465,6 +475,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAIGenerating,
         toggleInlineAI,
         setInlineAIPosition,
+        setInlineAIRequest,
         toggleAgentPanel,
         toggleSettings,
         setActiveTerminal,
