@@ -15,6 +15,7 @@ import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
 import { SensoryFeedbackOverlay } from '@/components/voice/SensoryFeedbackOverlay';
 import { ScreenIntelligence } from '@/components/voice/ScreenIntelligence';
+import { BubbleToggle } from '@/components/voice/BubbleToggle';
 
 // Phase B — lazy-load heavy voice components (Three.js + VRM + wlipsync)
 const InteractionBubble = lazy(() => import('@/components/voice/InteractionBubble').then(m => ({ default: m.InteractionBubble })));
@@ -53,6 +54,9 @@ export default function Home() {
   const [screenSharing, setScreenSharing] = useState(false);
   const [visionAnalyzing, setVisionAnalyzing] = useState(false);
   const [visionPrompt] = useState('Explain what is on screen. If there is an error message, explain what it means and how to fix it.');
+
+  // Phase B: Interaction bubble visibility
+  const [bubbleVisible, setBubbleVisible] = useState(false);
 
   // Phase B: PIP avatar overlay state
   const [pipEnabled, setPipEnabled] = useState(false);
@@ -564,10 +568,15 @@ export default function Home() {
       {/* Phase B: Sensory feedback overlay — glow + cursor shimmer + waveform + chime */}
       <SensoryFeedbackOverlay />
 
-      {/* Phase B: Interaction bubble — unified voice/screen-share/caption UI */}
-      <Suspense fallback={null}>
-        <InteractionBubble />
-      </Suspense>
+      {/* Phase B: Interaction bubble — lightweight toggle + lazy-loaded heavy bubble */}
+      {!bubbleVisible && (
+        <BubbleToggle onClick={() => setBubbleVisible(true)} />
+      )}
+      {bubbleVisible && (
+        <Suspense fallback={null}>
+          <InteractionBubble onClose={() => setBubbleVisible(false)} />
+        </Suspense>
+      )}
 
       {/* Phase B: Screen Intelligence — screen share + drag-and-drop image analysis */}
       <ScreenIntelligence />

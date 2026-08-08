@@ -79,7 +79,7 @@ async function main() {
 
     log('Loading Home route...');
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(8000);
 
     // ════════════════════════════════════════════════════════════════════
     // TEST 1: Bubble drag → reload → position persists
@@ -125,7 +125,7 @@ async function main() {
 
           // Reload
           await page.reload({ waitUntil: 'domcontentloaded' });
-          await page.waitForTimeout(5000);
+          await page.waitForTimeout(8000);
 
           // Re-open bubble
           await page.click('[data-testid="interaction-bubble-toggle"]', { force: true });
@@ -340,7 +340,7 @@ async function main() {
         // Wait for potential WS events (the stub engine won't produce real transcripts,
         // but we can verify the caption component is wired to the context)
         // Wait 5 seconds for any WS events
-        await page.waitForTimeout(5000);
+        await page.waitForTimeout(8000);
 
         const captionAfter = await page.evaluate(() => {
           const bubble = document.querySelector('[data-testid="interaction-bubble"]');

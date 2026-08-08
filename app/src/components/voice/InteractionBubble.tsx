@@ -465,7 +465,7 @@ function BubbleCaption({ captions, settings }: BubbleCaptionProps) {
 }
 
 // ── Main InteractionBubble component ─────────────────────────────────────
-export function InteractionBubble() {
+export function InteractionBubble({ onClose }: { onClose?: () => void }) {
   const {
     isActive, isMuted, captions, analyser,
     toggleMute, endVoiceSession, toggleVoiceSession,
@@ -476,7 +476,6 @@ export function InteractionBubble() {
   const [mode, setMode] = useState<BubbleMode>('idle');
   const [expanded, setExpanded] = useState(false);
   const [position, setPosition] = useState({ x: 100, y: 100 });
-  const [visible, setVisible] = useState(false);
 
   // Phase B: Bubble accessibility settings
   const [bubbleSettings, setBubbleSettings] = useState({
@@ -589,8 +588,8 @@ export function InteractionBubble() {
   const handleEnd = useCallback(async () => {
     if (isActive) await endVoiceSession();
     setMode('idle');
-    setVisible(false);
-  }, [isActive, endVoiceSession]);
+    if (onClose) onClose();
+  }, [isActive, endVoiceSession, onClose]);
 
   // ── Persist position ───────────────────────────────────────────────────
   const handleDragEnd = useCallback(async (pos: { x: number; y: number }) => {
@@ -623,28 +622,8 @@ export function InteractionBubble() {
 
   return (
     <>
-      {/* Toggle button to show/hide the bubble */}
-      {!visible && (
-        <button
-          data-testid="interaction-bubble-toggle"
-          onClick={() => setVisible(true)}
-          className="fixed bottom-4 right-28 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110 z-40"
-          style={{
-            backgroundColor: 'rgba(14, 14, 20, 0.8)',
-            border: '1px solid var(--border-subtle)',
-            backdropFilter: 'blur(8px)',
-            color: 'var(--steel-silver)',
-          }}
-          title="Show interaction bubble"
-        >
-          <Mic className="w-4 h-4" />
-        </button>
-      )}
-
-      {visible && (
-        <>
-          {/* Constraints ref for drag bounds */}
-          <div className="fixed inset-0 pointer-events-none" ref={() => {}} />
+      {/* Constraints ref for drag bounds */}
+      <div className="fixed inset-0 pointer-events-none" ref={() => {}} />
 
           <motion.div
             data-testid="interaction-bubble"
@@ -775,7 +754,7 @@ export function InteractionBubble() {
                     {expanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
                   </button>
                   <button
-                    onClick={() => { handleEnd(); setVisible(false); }}
+                    onClick={() => { handleEnd(); }}
                     className="p-1 rounded transition-colors hover:bg-white/10"
                     style={{ color: 'var(--muted-silver)' }}
                     title="Close"
@@ -789,8 +768,6 @@ export function InteractionBubble() {
               <BubbleCaption captions={captions} settings={bubbleSettings} />
             </div>
           </motion.div>
-        </>
-      )}
     </>
   );
 }
