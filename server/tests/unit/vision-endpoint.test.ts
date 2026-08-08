@@ -174,12 +174,14 @@ describe('Phase B: Screen Intelligence — Vision endpoint', () => {
     // If there's an error, it should have been sanitized (no base64 blobs)
     // Check for long base64-like strings (50+ chars of base64)
     const base64Pattern = /[A-Za-z0-9+/=]{50,}/;
-    if (base64Pattern.test(allLogs)) {
-      // Log what was found for debugging
-      console.log = originalLog;
-      console.log('WARNING: potential base64 data in logs:', allLogs.match(base64Pattern)?.[0]?.slice(0, 60));
-    }
-    // The log SHOULD mention the image size (metadata only)
-    expect(allLogs).toMatch(/analyzing image.*KB/);
+    expect(!base64Pattern.test(allLogs), 'base64 data found in logs — privacy violation').toBe(true);
+
+    // The log SHOULD mention either the image analysis (success path) OR
+    // the vision error (failure path) — but either way, no image data.
+    // When z-ai SDK is configured: "analyzing image ...KB"
+    // When z-ai SDK is NOT configured (CI): "[orchestrator:vision] error: ..."
+    const hasAnalysisLog = /analyzing image.*KB/.test(allLogs);
+    const hasErrorLog = /\[orchestrator:vision\] error/.test(allLogs);
+    expect(hasAnalysisLog || hasErrorLog, 'expected either analysis log or error log in output').toBe(true);
   });
 });
