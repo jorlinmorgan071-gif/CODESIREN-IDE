@@ -441,8 +441,57 @@ export function CodeEditor() {
         }));
       };
       window.addEventListener('code-siren:request-selection', requestSelectionHandler);
+
+      // Listen for request-selection-for-edit from InlineAI edit-family buttons
+      // (refactor/document/optimize/convert). Sends back code + language + selection range.
+      const requestSelectionForEditHandler = (e: Event) => {
+        const detail = (e as CustomEvent).detail as { mode: string };
+        if (!detail?.mode) return;
+        const selection = _editor.getSelection();
+        if (!selection || selection.isEmpty()) return;
+        const model = _editor.getModel();
+        if (!model) return;
+        const selectedText = model.getValueInRange(selection);
+        if (!selectedText.trim()) return;
+        const language = model.getLanguageId?.() ?? undefined;
+        window.dispatchEvent(new CustomEvent('code-siren:explain', {
+          detail: {
+            code: selectedText,
+            language,
+            editMode: detail.mode,
+            selectionRange: {
+              startLineNumber: selection.startLineNumber,
+              startColumn: selection.startColumn,
+              endLineNumber: selection.endLineNumber,
+              endColumn: selection.endColumn,
+            },
+          },
+        }));
+      };
+      window.addEventListener('code-siren:request-selection-for-edit', requestSelectionForEditHandler);
+
+      // Listen for apply-edit from InlineAI Accept button — applies the edit
+      // via executeEdits() with undo stops (Ctrl+Z reverts).
+      const applyEditHandler = (e: Event) => {
+        const detail = (e as CustomEvent).detail as {
+          range: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
+          newText: string;
+        };
+        if (!detail?.range || !detail.newText) return;
+        _editor.pushUndoStop();
+        _editor.executeEdits('code-siren-refactor', [{
+          range: detail.range,
+          text: detail.newText,
+        }]);
+        _editor.pushUndoStop();
+        console.log('[code-editor] edit applied via executeEdits (undoable via Ctrl+Z)');
+      };
+      window.addEventListener('code-siren:apply-edit', applyEditHandler);
+
       _editor.onDidDispose(() => {
         window.removeEventListener('code-siren:request-selection', requestSelectionHandler);
+        window.removeEventListener('code-siren:request-selection-for-edit', requestSelectionForEditHandler);
+        window.removeEventListener('code-siren:apply-edit', applyEditHandler);
       });
 
       // ── Phase A Step 3: Multi-file model sync (initial pass) ────────

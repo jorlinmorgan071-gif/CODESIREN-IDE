@@ -509,3 +509,107 @@ orchestratorRouter.post('/explain', requireAuth, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── POST /api/orchestrator/refactor ─────────────────────────────────────
+// Phase B: Editor Actions — Edit-family (refactor/document/optimize/convert).
+//
+// Same lightweight pattern as /complete and /explain: direct modelRouter.stream(),
+// no agent dispatch, no context bundle, no trace. No writeProjectFile() gate —
+// in-editor edits are visible + undoable + not-yet-on-disk (per Section 0).
+//
+// Request:
+//   { code: string, mode: 'refactor'|'document'|'optimize'|'convert',
+//     instruction?: string, targetLanguage?: string }
+// Response:
+//   { result: string }
+//
+// Different system prompt per mode. Single shared endpoint. The client shows
+// a diff preview and the user must Accept (executeEdits) or Reject.
+
+const refactorSchema = z.object({
+  code: z.string().min(1).max(20000),
+  mode: z.enum(['refactor', 'document', 'optimize', 'convert']),
+  instruction: z.string().max(2000).optional(),
+  targetLanguage: z.string().max(50).optional(),
+});
+
+const REFACTOR_TIMEOUT_MS = 15_000;
+
+const REFACTOR_SYSTEM_PROMPTS: Record<string, string> = {
+  refactor:
+    'You are a code refactoring engine. The user provides a code snippet. ' +
+    'Refactor it for clarity, readability, and maintainability — without changing ' +
+    'its behavior. Return ONLY the refactored code. No explanation, no markdown ' +
+    'fences, no backticks. Just the raw code.',
+  document:
+    'You are a code documentation engine. The user provides a code snippet. ' +
+    'Add clear, concise JSDoc/TSDoc comments and inline comments where helpful. ' +
+    'Do NOT change the code logic — only add documentation. Return ONLY the ' +
+    'documented code. No explanation, no markdown fences. Just the raw code.',
+  optimize:
+    'You are a code optimization engine. The user provides a code snippet. ' +
+    'Optimize it for performance — reduce complexity, eliminate waste, improve ' +
+    'efficiency — without changing its external behavior. Return ONLY the ' +
+    'optimized code. No explanation, no markdown fences. Just the raw code.',
+  convert:
+    'You are a code conversion engine. The user provides a code snippet in one ' +
+    'language and wants it converted to another. Return ONLY the converted code. ' +
+    'No explanation, no markdown fences. Just the raw code.',
+};
+
+orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
+  const parsed = refactorSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
+
+  const { code, mode, instruction, targetLanguage } = parsed.data;
+
+  const systemPrompt = REFACTOR_SYSTEM_PROMPTS[mode];
+  let userPrompt: string;
+  if (mode === 'convert' && targetLanguage) {
+    userPrompt = `Convert this code to ${targetLanguage}:\n\n${code}`;
+  } else if (instruction) {
+    userPrompt = `${instruction}\n\nCode:\n${code}`;
+  } else {
+    userPrompt = `Code:\n\n${code}`;
+  }
+
+  const abort = new AbortController();
+  const timeoutId = setTimeout(() => abort.abort(), REFACTOR_TIMEOUT_MS);
+
+  try {
+    const chunks: string[] = [];
+
+    const generator = modelRouter.stream({
+      domain: 'ARCHITECT',
+      executionMode: 'single-shot',
+      agentId: `refactor-${mode}`,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+    } as any);
+
+    for await (const chunk of generator) {
+      if (abort.signal.aborted) break;
+      if (chunk.delta) {
+        chunks.push(chunk.delta);
+      }
+    }
+
+    clearTimeout(timeoutId);
+
+    const result = chunks.join('').trim();
+    res.json({ result });
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (abort.signal.aborted) {
+      res.json({ result: '(operation timed out — try again with a shorter selection)' });
+      return;
+    }
+    console.error('[orchestrator:refactor] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
