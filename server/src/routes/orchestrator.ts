@@ -683,8 +683,14 @@ orchestratorRouter.post('/vision', requireAuth, async (req, res) => {
     // PRIVACY: the image dataUri goes out of scope here — no retention
     res.json({ analysis: typeof analysis === 'string' ? analysis : String(analysis) });
   } catch (err: any) {
-    // PRIVACY: do NOT include image data in error messages
-    console.error('[orchestrator:vision] error:', err.message?.slice(0, 200));
-    res.status(500).json({ error: err.message?.slice(0, 200) ?? 'Vision analysis failed' });
+    // PRIVACY: strip any base64 data from error messages before logging.
+    // The z-ai SDK may include request details in error messages.
+    const rawError = err?.message ?? 'Vision analysis failed';
+    const safeError = rawError
+      .replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '(image data redacted)')
+      .replace(/[A-Za-z0-9+/=]{50,}/g, '(base64 redacted)')
+      .slice(0, 200);
+    console.error('[orchestrator:vision] error:', safeError);
+    res.status(500).json({ error: safeError });
   }
 });
