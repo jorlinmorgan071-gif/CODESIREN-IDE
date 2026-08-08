@@ -4,6 +4,7 @@
 //   POST /api/orchestrator/chat          Tier 1 chat (streams via WS)
 //   POST /api/orchestrator/complete      Lightweight code completion (HTTP, non-streaming)
 //   POST /api/orchestrator/explain       Explain selected code (HTTP, non-streaming, read-only)
+//   POST /api/orchestrator/vision        Analyze image/screenshot via z-ai createVision (HTTP)
 //   POST /api/orchestrator/plan          Generate plan from session history
 //   POST /api/orchestrator/plan/:id/approve    Approve + start relay
 //   POST /api/orchestrator/plan/:id/advance    Advance to next milestone
@@ -611,5 +612,79 @@ orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
     }
     console.error('[orchestrator:refactor] error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/orchestrator/vision ───────────────────────────────────────
+// Phase B: Screen Intelligence — image/screenshot analysis via z-ai createVision.
+//
+// Same lightweight family as /complete, /explain, /refactor: direct z-ai SDK
+// call, no agent dispatch, no gate, no trace.
+//
+// PRIVACY (hard requirement, not nice-to-have):
+//   - Image content is NEVER logged (console.log, traces, memory beyond request)
+//   - The image base64 is passed to createVision() and then goes out of scope
+//   - Only the text response is returned to the client
+//   - No image retention of any kind
+//
+// Request:  { image: string (base64 data URI), prompt: string }
+// Response: { analysis: string }
+//
+// The image must be a data URI (e.g. "data:image/png;base64,iVBOR...") or a
+// raw base64 string (which we'll convert to a data URI internally).
+
+const visionSchema = z.object({
+  image: z.string().min(1).max(5_000_000), // max ~5MB base64
+  prompt: z.string().min(1).max(2000),
+});
+
+const VISION_TIMEOUT_MS = 20_000;
+
+orchestratorRouter.post('/vision', requireAuth, async (req, res) => {
+  const parsed = visionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
+
+  const { image, prompt } = parsed.data;
+
+  // Ensure the image is a data URI — createVision expects image_url.url
+  let dataUri = image;
+  if (!dataUri.startsWith('data:')) {
+    dataUri = `data:image/png;base64,${image}`;
+  }
+
+  try {
+    // Use z-ai SDK directly — same as how voice-proxy uses it for ASR/TTS
+    const ZAI = (await import('z-ai-web-dev-sdk')).default;
+    const zai = await ZAI.create();
+
+    // PRIVACY: do NOT log the image data. Log only metadata.
+    console.log(`[orchestrator:vision] analyzing image (${Math.round(dataUri.length / 1024)}KB) with prompt: "${prompt.slice(0, 80)}"`);
+
+    const result = await zai.chat.completions.createVision({
+      model: 'glm-4v-plus', // z-ai's vision model
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: dataUri } },
+          ],
+        },
+      ],
+      thinking: { type: 'disabled' },
+    });
+
+    // Extract text from the response — z-ai returns { choices: [{ message: { content } }] }
+    const analysis = (result as any)?.choices?.[0]?.message?.content ?? '(no analysis returned)';
+
+    // PRIVACY: the image dataUri goes out of scope here — no retention
+    res.json({ analysis: typeof analysis === 'string' ? analysis : String(analysis) });
+  } catch (err: any) {
+    // PRIVACY: do NOT include image data in error messages
+    console.error('[orchestrator:vision] error:', err.message?.slice(0, 200));
+    res.status(500).json({ error: err.message?.slice(0, 200) ?? 'Vision analysis failed' });
   }
 });

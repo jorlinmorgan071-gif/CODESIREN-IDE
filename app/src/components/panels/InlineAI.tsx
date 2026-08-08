@@ -76,6 +76,24 @@ export function InlineAI() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Listen for vision results from ScreenIntelligence (screen share / drag-and-drop / paste)
+  useEffect(() => {
+    const handleVisionResult = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { analysis?: string; error?: string };
+      setDiffPreview(null);
+      setApplyStatus('idle');
+      if (detail?.error) {
+        setError(detail.error);
+        setResponse(null);
+      } else if (detail?.analysis) {
+        setResponse(detail.analysis);
+        setError(null);
+      }
+    };
+    window.addEventListener('code-siren:vision-result', handleVisionResult);
+    return () => window.removeEventListener('code-siren:vision-result', handleVisionResult);
+  }, []);
+
   const runExplain = useCallback(async (code: string, language?: string) => {
     setActiveAction('explain');
     setResponse(null);
