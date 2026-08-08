@@ -23,6 +23,7 @@ import { getToken } from '@/lib/auth';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import type { VRM } from '@pixiv/three-vrm';
+import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -76,55 +77,193 @@ function WaveformRing({ analyser, accentColor }: { analyser: AnalyserNode | null
   );
 }
 
-// ── VRM Bubble Content — the VRM avatar IS the bubble ────────────────────
-// The avatar face fills the entire bubble shape. Breathing + blink animation.
+// ── Blob shadow texture (generated once, reused) ────────────────────────
+const blobShadowCanvas = document.createElement('canvas');
+blobShadowCanvas.width = 128;
+blobShadowCanvas.height = 128;
+const blobCtx = blobShadowCanvas.getContext('2d')!;
+const blobGradient = blobCtx.createRadialGradient(64, 64, 0, 64, 64, 60);
+blobGradient.addColorStop(0, 'rgba(0, 0, 0, 1)');
+blobGradient.addColorStop(0.4, 'rgba(0, 0, 0, 0.6)');
+blobGradient.addColorStop(0.8, 'rgba(0, 0, 0, 0.15)');
+blobGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+blobCtx.fillStyle = blobGradient;
+blobCtx.fillRect(0, 0, 128, 128);
+const blobShadowTexture = new THREE.CanvasTexture(blobShadowCanvas);
+
+// ── VRM Emotion + Lip Sync constants ─────────────────────────────────────
+const EMOTION_BLENDSHAPES: Record<string, Record<string, number>> = {
+  happy:     { happy: 0.7, aa: 0.2 },
+  sad:       { sad: 0.7, oh: 0.15 },
+  angry:     { angry: 0.7, ee: 0.3 },
+  think:     { relaxed: 0.3, oh: 0.1 },
+  surprised: { surprised: 0.8, aa: 0.3 },
+  neutral:   {},
+};
+
+const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
+  A: 'aa', E: 'ee', I: 'ih', O: 'oh', U: 'ou',
+};
+
+// ── VRM Bubble Content — FULL VRM model (face + body + all features) ─────
+// This is a complete copy of FaceView's VRMModel, adapted for the bubble:
+//   - Full VRM model (face, body, hair, clothes — everything)
+//   - Lip sync via wlipsync (MFCC vowel analysis)
+//   - Expressions (happy, sad, angry, think, surprised, neutral)
+//   - Eye tracking (cursor → lookAt)
+//   - Breathing (sine-wave bob + rotation)
+//   - Blink (randomized 3-6s)
+//   - Blob shadow (radial gradient at feet)
+//   - Leak-free switching (VRMUtils.deepDispose)
+//   - All driven by the same VoiceSessionContext audio source
 function VRMBubbleContent({ avatarUrl }: { avatarUrl: string }) {
-  const vrmRef = useRef<VRM | null>(null);
+  const { currentAudioSource, audioContext } = useVoiceSession();
   const groupRef = useRef<THREE.Group>(null);
-  const blinkTimer = useRef(0);
-  const blinkPhase = useRef<'open' | 'closing' | 'opening'>('open');
-  const blinkValue = useRef(0);
+  const vrmRef = useRef<VRM | null>(null);
+  const blinkTimerRef = useRef(0);
+  const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
+  const blinkValueRef = useRef(0);
+  const breathingRef = useRef(0);
+  const currentBlendValues = useRef<Record<string, number>>({});
+  const targetBlendValues = useRef<Record<string, number>>({});
+  const lookAtTarget = useRef(new THREE.Object3D());
+  const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
+  const lipSyncProfileRef = useRef<Profile | null>(null);
+  const prevGltfRef = useRef<{ scene: THREE.Group; url: string } | null>(null);
 
   const gltf = useLoader(GLTFLoader, avatarUrl, (loader: GLTFLoader) => {
     loader.register((parser) => new VRMLoaderPlugin(parser));
   });
 
+  // Leak-free switching
   useEffect(() => {
-    if (gltf?.userData?.vrm) {
-      vrmRef.current = gltf.userData.vrm as VRM;
-      VRMUtils.removeUnnecessaryVertices(gltf.scene);
-    }
+    return () => {
+      if (prevGltfRef.current && prevGltfRef.current.url !== avatarUrl) {
+        try { VRMUtils.deepDispose(prevGltfRef.current.scene); } catch { /* */ }
+        try { useLoader.clear(GLTFLoader, prevGltfRef.current.url); } catch { /* */ }
+      }
+    };
+  }, [avatarUrl]);
+
+  useEffect(() => {
+    if (gltf?.scene) prevGltfRef.current = { scene: gltf.scene, url: avatarUrl };
+  }, [gltf, avatarUrl]);
+
+  useEffect(() => {
+    if (!gltf) return;
+    const vrm = gltf.userData.vrm as VRM | undefined;
+    if (!vrm) return;
+    vrmRef.current = vrm;
+    VRMUtils.removeUnnecessaryVertices(gltf.scene);
+
+    // Enable shadows
+    gltf.scene.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    // Load wlipsync profile
+    fetch('/models/lip-sync-profile.json')
+      .then(res => res.json() as Promise<Profile>)
+      .then(profile => { lipSyncProfileRef.current = profile; })
+      .catch(() => {});
   }, [gltf]);
+
+  // Connect lip sync to audio source
+  useEffect(() => {
+    if (!currentAudioSource || !audioContext || !lipSyncProfileRef.current) return;
+    if (lipSyncNodeRef.current) {
+      try { currentAudioSource.disconnect(lipSyncNodeRef.current); } catch { /* */ }
+    }
+    createWLipSyncNode(audioContext, lipSyncProfileRef.current)
+      .then(node => {
+        lipSyncNodeRef.current = node;
+        currentAudioSource.connect(node);
+      })
+      .catch(() => {});
+
+    return () => {
+      if (lipSyncNodeRef.current && currentAudioSource) {
+        try { currentAudioSource.disconnect(lipSyncNodeRef.current); } catch { /* */ }
+      }
+    };
+  }, [currentAudioSource, audioContext]);
 
   useFrame((state) => {
     const vrm = vrmRef.current;
     if (!vrm || !groupRef.current) return;
     const delta = state.clock.getDelta();
     const t = state.clock.elapsedTime;
+
     vrm.update(delta);
 
     // Breathing
-    groupRef.current.position.y = Math.sin(t * 0.5) * 0.02;
+    breathingRef.current += delta;
+    groupRef.current.position.y = Math.sin(breathingRef.current * 0.5) * 0.02;
+    groupRef.current.rotation.x = Math.sin(breathingRef.current * 0.3) * 0.01;
     groupRef.current.rotation.y = Math.sin(t * 0.1) * 0.05;
 
+    // Eye tracking
+    const mouseX = state.mouse.x * 0.5;
+    const mouseY = state.mouse.y * 0.3;
+    lookAtTarget.current.position.set(mouseX, mouseY + 1, 3);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (vrm.lookAt) (vrm.lookAt as any).target = lookAtTarget.current;
+
     // Blink
-    blinkTimer.current -= delta * 1000;
-    if (blinkPhase.current === 'open' && blinkTimer.current <= 0) {
-      blinkPhase.current = 'closing'; blinkTimer.current = 80;
-    } else if (blinkPhase.current === 'closing') {
-      blinkValue.current = Math.min(1, blinkValue.current + delta * 12);
-      if (blinkValue.current >= 1) { blinkPhase.current = 'opening'; blinkTimer.current = 200; }
-    } else if (blinkPhase.current === 'opening') {
-      blinkValue.current = Math.max(0, blinkValue.current - delta * 5);
-      if (blinkValue.current <= 0) { blinkPhase.current = 'open'; blinkTimer.current = 3000 + Math.random() * 3000; }
+    blinkTimerRef.current -= delta * 1000;
+    if (blinkPhaseRef.current === 'open' && blinkTimerRef.current <= 0) {
+      blinkPhaseRef.current = 'closing'; blinkTimerRef.current = 80;
+    } else if (blinkPhaseRef.current === 'closing') {
+      blinkValueRef.current = Math.min(1, blinkValueRef.current + delta * 12);
+      if (blinkValueRef.current >= 1) { blinkPhaseRef.current = 'opening'; blinkTimerRef.current = 200; }
+    } else if (blinkPhaseRef.current === 'opening') {
+      blinkValueRef.current = Math.max(0, blinkValueRef.current - delta * 5);
+      if (blinkValueRef.current <= 0) { blinkPhaseRef.current = 'open'; blinkTimerRef.current = 3000 + Math.random() * 3000; }
     }
+
+    // Expressions + lip sync
     const expr = vrm.expressionManager;
-    if (expr) { expr.setValue('blink', blinkValue.current); expr.update(); }
+    if (expr) {
+      targetBlendValues.current = { ...EMOTION_BLENDSHAPES['neutral'] ?? {} };
+      targetBlendValues.current['blink'] = blinkValueRef.current;
+
+      const lipSyncNode = lipSyncNodeRef.current;
+      const SILENCE_THRESHOLD = 0.05;
+      if (lipSyncNode && lipSyncNode.weights && lipSyncNode.volume > SILENCE_THRESHOLD) {
+        const weights = lipSyncNode.weights;
+        const volume = lipSyncNode.volume;
+        for (const [vowel, blendshape] of Object.entries(VOWEL_TO_BLENDSHAPE)) {
+          const weight = weights[vowel] ?? 0;
+          const scaled = Math.min(1, weight * volume * 1.5);
+          if (scaled > 0.01) {
+            targetBlendValues.current[blendshape] = Math.max(targetBlendValues.current[blendshape] ?? 0, scaled);
+          }
+        }
+      }
+
+      const allKeys = new Set([...Object.keys(currentBlendValues.current), ...Object.keys(targetBlendValues.current)]);
+      for (const key of allKeys) {
+        const current = currentBlendValues.current[key] ?? 0;
+        const target = targetBlendValues.current[key] ?? 0;
+        const newVal = current + (target - current) * Math.min(1, delta * 8);
+        currentBlendValues.current[key] = newVal;
+        expr.setValue(key, newVal);
+      }
+      expr.update();
+    }
   });
 
   return (
     <group ref={groupRef}>
       <primitive object={gltf.scene} scale={1} position={[0, -1.2, 0]} />
+      {/* Blob shadow at feet */}
+      <mesh position={[0, -1.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.6, 32]} />
+        <meshBasicMaterial transparent opacity={0.5} depthWrite={false} side={THREE.DoubleSide} map={blobShadowTexture} />
+      </mesh>
     </group>
   );
 }
@@ -543,13 +682,13 @@ export function InteractionBubble() {
               {/* Visualization canvas — fills the bubble */}
               <div className="flex-1 relative" style={{ minHeight: 0 }}>
                 <Canvas
-                  camera={{ position: [0, 0, 2], fov: 50 }}
-                  gl={{ alpha: true, antialias: true }}
+                  camera={{ position: [0, 0, 3], fov: 35 }}
+                  gl={{ antialias: true, alpha: true }}
                   style={{ width: '100%', height: '100%' }}
                 >
-                  <ambientLight intensity={0.5} />
-                  <pointLight position={[0, 0, 3]} intensity={1} color={accentColor} />
-                  <pointLight position={[0, 2, 1]} intensity={0.5} color="#0088FF" />
+                  <ambientLight intensity={0.3} />
+                  <pointLight position={[0, 2, 3]} intensity={1} color={accentColor} />
+                  <pointLight position={[0, -2, 1]} intensity={0.5} color="#0088FF" />
                   <BubbleVisualization
                     visual={bubbleSettings.bubbleVisual}
                     analyser={analyser}
