@@ -521,3 +521,63 @@ Stage Summary:
 - Boot reads persisted selection (doesn't always default to Default)
 - 540 tests confirmed passing (categorized runs), 0 failures
 - Typecheck clean (both server + app), lint clean, grep-audit clean
+
+---
+Task ID: phase-c-section-2-investigation
+Agent: main (super-z)
+Task: Phase C Section 2 investigation — GPU acceleration + parallel execution. Determine whether either is genuinely needed given everything built since Phase A Section 8. Investigation only, no implementation.
+
+Work Log:
+- Re-read PERF_BASELINE.md (Phase 5 timing data):
+  - Cold boot 1,332ms, agent latency 19ms (stub), trace lookup 2.2ms,
+    dashboard 35ms total (2-5ms per endpoint), bundle JS 587KB, RSS 103MB
+  - All already at floor or already targeted by Phase 5's own optimization scope
+- Inspected server/sidecars/kokoro/sidecar.py:
+  - Model explicitly loaded `.to("cpu")` (line 90)
+  - requirements.txt pins torch to CPU-only wheel
+    (`pip install --index-url https://download.pytorch.org/whl/cpu torch`)
+  - Provider comment confirms ~1.5-2s for a 12-word sentence on 2-core CPU
+  - First call ~9-10s (lazy model load); subsequent ~2s
+  - TTS invoked once per conversational turn (not in a tight loop)
+- Inspected server/src/orchestration/ghost-scanners.ts + ghost-mode.ts:
+  - 3 scanners registered: performance-anti-patterns (30s, regex 50-200ms),
+    security-secrets (30s, regex+entropy), security-dependencies (5min,
+    npm audit ~1-3s network)
+  - Each scanner at cadence != 30s gets its OWN setInterval (already
+    independent in the event loop). 30s scanners piggyback on heartbeat.
+  - Already non-blocking relative to each other — no parallelism work needed
+- Inspected server/src/orchestration/workflow-runner.ts:
+  - Sequential `for` loop over steps with `await runStep(step)` per iteration
+  - stopOnFailure semantics explicitly require sequential ordering
+    (Phase B's own scope decision — parallel steps break the contract)
+  - Each scheduled workflow already has its own setInterval (already parallel
+    across workflows, sequential within)
+- Test suite timing (from worklog entry phase-a-section-3):
+  - 648 tests in ~96s, spawn-based runner non-blocking (concurrent HTTP
+    request returned in <5s during 95s test run)
+  - Vitest ALREADY does file-level parallelism via worker threads by default
+- grep audit (zero code paths):
+  - `rg cuda|nvidia|torch.cuda|device=cuda` in server/src + app/src:
+    only matches are the NVIDIA Nemotron LLM (cloud API model on
+    OpenRouter), NOT local GPU acceleration
+  - `rg worker_threads|new Worker(` in server/src + app/src:
+    zero matches (no manual threading anywhere)
+- VRM avatar rendering: Three.js WebGL — already GPU-accelerated by the
+  browser natively. Not something the server controls or could accelerate.
+
+Stage Summary:
+- Honest recommendation: DEFER both GPU acceleration AND parallel execution.
+- No real measured bottleneck exists today that either would actually fix.
+- Matches Phase A Section 8's original "nothing here is slow" finding —
+  the answer is still no, even after adding Kokoro/VRM/Playwright/Ghost/
+  workflow. Real CPU-bound work added (Kokoro ~2s) is acceptable for
+  conversational UX (one call per turn, not in tight loops).
+- GPU acceleration: narrow win (Kokoro only), high maintenance burden
+  (CUDA/MPS/CPU branching in sidecar.py), small user subset
+  (NVIDIA GPU owners). Most users on Mac/non-NVIDIA machines get nothing.
+- Parallel execution: nothing to parallelize that isn't already parallel.
+  Ghost scanners already independent. Workflow steps deliberately sequential.
+  Vitest already parallel. Adding Promise.all or worker_threads anywhere
+  would either break correctness (workflow stop-on-failure) or re-do
+  what's already done.
+- No code changes. No new files. No tests added.
