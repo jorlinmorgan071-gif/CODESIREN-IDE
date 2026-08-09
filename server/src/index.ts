@@ -28,6 +28,7 @@ import { systemHealthRouter } from './routes/system-health.js';
 import { ghostModeRouter } from './routes/ghost-mode.js';
 import { avatarRouter } from './routes/avatar.js';
 import { bubbleRouter } from './routes/bubble.js';
+import { workflowRouter } from './routes/workflow.js';
 import { memoryRouter } from './routes/memory.js';
 import { voiceLiveRouter } from './routes/voice-live.js';
 import { orchestratorRouter } from './routes/orchestrator.js';
@@ -148,6 +149,7 @@ async function main() {
   app.use('/api/ghost-mode', ghostModeRouter);
   app.use('/api/avatar', avatarRouter);
   app.use('/api/bubble', bubbleRouter);
+  app.use('/api/workflow', workflowRouter);
   app.use('/api/memory', memoryRouter);
   app.use('/api/voice', voiceLiveRouter);
   app.use('/api/orchestrator', orchestratorRouter);
