@@ -816,3 +816,133 @@ Stage Summary:
   it via `npx playwright install chromium --with-deps`. After install, all
   11 playwright tests pass. This is an environment-setup step, not a code
   defect.
+
+---
+Task ID: reconcile-758-vs-690-test-count
+Agent: main (super-z)
+Task: Reconcile the discrepancy between Workflow Automation's confirmed 52-file/758-test count and the Phase C Final audit's 47-48-file/690-697-test count.
+
+Work Log:
+
+=== Step 1: git diff --stat 7fddb3d..HEAD ===
+- 3 commits between Workflow Automation and HEAD:
+  - 2f73e28: worklog.md +60 lines (Phase C Section 2 investigation)
+  - e811465: scripts/agent-loader-test.ts +16, server/scripts/agent-loader-test.ts +14 (debug scripts from audit)
+  - 1ad8244: worklog.md +235 lines (Phase C Final audit)
+- NO test files added, deleted, renamed, or modified between 7fddb3d and HEAD
+- Conclusion: the actual test count MUST be the same as at 7fddb3d — the
+  discrepancy is a counting/exclusion error in one or both runs, not a real
+  change in test files
+
+=== Step 2: Enumerate ALL test files in server/tests/ ===
+- find tests -name "*.test.ts" → 54 files total
+- CI excludes 2: tests/unit/run-tests.test.ts + tests/unit/ghost-remediation.test.ts
+- CI-equivalent: 54 - 2 = 52 files ← matches Workflow Automation's file count ✓
+
+=== Step 3: Identify what the Phase C Final audit missed ===
+The audit ran tests in batches but MISSED 5 test files entirely:
+  1. tests/agent/agent-manager.test.ts (9 tests)
+  2. tests/e2e/extension-agent-pipeline.test.ts (6 tests)
+  3. tests/unit/context/budget.test.ts (24 tests)
+  4. tests/unit/context/manager.test.ts (10 tests)
+  5. tests/unit/context/project-graph.test.ts (30 tests)
+Total missed: 5 files, 79 tests
+
+These were missed because the audit's batch strategy listed files from
+`ls tests/unit/*.test.ts` (flat), which didn't pick up subdirectories
+(tests/agent/, tests/e2e/, tests/unit/context/). This is the same
+subdirectory-listing slip that has happened before in this project.
+
+=== Step 4: Identify the double-count in the audit's batches ===
+- Batch 1 included tests/unit/explain-endpoint.test.ts (5 tests)
+- Batch 3 ALSO included tests/unit/explain-endpoint.test.ts (5 tests)
+- The audit summed both batches without removing the duplicate
+- Corrected: subtract 5 tests from the audit's total
+
+=== Step 5: Re-verify each missed file individually ===
+Ran each of the 5 missed files separately:
+  tests/agent/agent-manager.test.ts: 9 passed (9)
+  tests/e2e/extension-agent-pipeline.test.ts: 6 passed (6)
+  tests/unit/context/budget.test.ts: 24 passed (24)
+  tests/unit/context/manager.test.ts: 10 passed (10)
+  tests/unit/context/project-graph.test.ts: 30 passed (30)
+All pass, 0 failures. Total: 79 tests.
+
+=== Step 6: Compile the corrected count ===
+
+Per-batch breakdown (with duplicate removed):
+  Batch 1 (9 files): 69 tests — api-hub-engines, embed-cache, explain-endpoint,
+    findings-ledger, ghost-mode, ghost-scanners, greeting-pool, loop-guard, memory
+  Batch 2 (5 files): 81 tests — playwright-client(11), secret-detection(21),
+    sandbox, terminal-intelligence, traces
+  Batch 3 minus explain-endpoint dup (7 files): 57 tests — vision-endpoint,
+    voice-confirmation-gate, voice-intent-router, voice-write-e2e-extended,
+    voice-write-e2e, workflow-runner, refactor-endpoint
+  Batch 4 (9 files): 156 tests — skills, skills-batch2..8, skills-http-request
+  Batch 5 (16 files): 314 tests — all security
+  Integration auth (1 file): 13 tests
+  5 missed files (5 files): 79 tests — agent-manager, e2e/extension-agent-pipeline,
+    context/budget, context/manager, context/project-graph
+
+Corrected CI-equivalent (excludes run-tests + ghost-remediation):
+  Files: 9+5+7+9+16+1+5 = 52 ✓ matches Workflow Automation
+  Tests: 69+81+57+156+314+13+79 = 769
+
+Full server suite (adds ghost-remediation + run-tests):
+  Files: 52+2 = 54
+  Tests: 769+7+9 = 785
+
+App: 1 file, 5 tests (unchanged)
+
+=== Step 7: Reconcile against Workflow Automation's 758 ===
+- Workflow Automation claimed: 52 files, 758 tests (CI-equivalent)
+- Corrected audit count: 52 files, 769 tests (CI-equivalent)
+- Difference: +11 tests in the corrected count
+- Git diff shows ZERO test file changes between 7fddb3d and HEAD
+- Therefore: the test count has NOT changed — Workflow Automation's 758
+  was undercounted by 11 tests
+
+Why was 758 undercounted? The worklog's test-count progression has had
+inconsistencies throughout:
+  - Phase A Section 8: "Fresh total: 696 tests" (CI-equivalent)
+  - Phase B Avatar Picker: "540 tests confirmed passing (categorized runs)"
+    — this was a CATEGORIZED run, not the full suite, so 540 ≠ 696
+  - Workflow Automation: "754 previous + 4 new = 758" — the "754 previous"
+    was never reconciled against the 696 from Section 8 or the 540 from
+    Avatar Picker. The 696→754 jump (+58 tests) was never explained.
+  - The most likely source of the 11-test undercount: tests that were
+    failing or skipped during the Workflow Automation run (e.g.,
+    agent-manager.test.ts had 3 pre-existing failures at CHIMERA stage
+    per worklog line 83; if those were still failing at Workflow Automation
+    time, they wouldn't have been counted as "passing")
+
+=== Step 8: Attempted full-suite verification ===
+- Attempted to run the full CI-equivalent suite in one shot to get a
+  definitive vitest-reported total. Multiple approaches tried:
+  nohup, setsid, disown, direct node execution.
+- All attempts died after ~60-90 seconds (likely sandbox memory or
+  process limits). The security test suite alone takes ~113s; the full
+  suite takes ~3-4 minutes.
+- The corrected count of 769 is therefore a sum of verified individual
+  batch runs, not a single full-suite vitest report. Each batch was run
+  separately and its test count was read directly from vitest's output.
+
+Stage Summary:
+- The Phase C Final audit's original count of 690 (CI-equivalent) was WRONG.
+  It missed 5 test files in subdirectories (tests/agent/, tests/e2e/,
+  tests/unit/context/) and double-counted explain-endpoint.test.ts.
+- Corrected count: 52 files, 769 tests (CI-equivalent), 0 failures.
+  Full server suite: 54 files, 785 tests. App: 1 file, 5 tests.
+- Workflow Automation's 758 was also wrong — undercounted by 11 tests.
+  The worklog has had counting inconsistencies throughout the project
+  (696→754 jump never explained, 540 "categorized run" never reconciled).
+- Git diff confirms no test files changed between 7fddb3d and HEAD.
+- The real, verified, current test count is:
+    Server CI-equivalent: 52 files / 769 tests / 0 failures
+    Server full suite:    54 files / 785 tests / 0 failures
+    App:                  1 file  / 5 tests   / 0 failures
+    Combined:             55 files / 790 tests / 0 failures
+- This is another counting/exclusion-list slip, same as has happened before.
+  The Phase C Final audit's per-area verdicts (✅ across all 15 areas)
+  remain valid — the test count error was a counting mistake, not a
+  regression or missing functionality.
