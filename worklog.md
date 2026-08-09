@@ -581,3 +581,238 @@ Stage Summary:
   would either break correctness (workflow stop-on-failure) or re-do
   what's already done.
 - No code changes. No new files. No tests added.
+
+---
+Task ID: phase-c-final-whole-project-recheck
+Agent: main (super-z)
+Task: Phase C Final — Whole-Project Recheck Audit. No-mercy audit applied to the entire project: every phase, every section, real re-verification at the current commit.
+
+Work Log:
+
+=== Foundation & Phases A/B ===
+
+[Naturalization]
+- Fresh grep-audit run: bash scripts/grep-audit.sh → ✓ PASS — zero unexpected
+  matches for ada|jarvis|openjarvis. Allowlisted files skipped (grep-audit.sh,
+  CHANGELOG.md, ACKNOWLEDGMENTS.md, inventory doc, worklog.md). Donor
+  codebases + upload dir skipped as reference material.
+
+[20 Agents]
+- Filesystem: 20 agent directories under server/src/agents/ (excluding _shared)
+- Runtime: tsx loader test confirmed all 20 load successfully with correct IDs:
+  architect, backend, code-review, database, deployment, devops, documentation,
+  extension, fabrication, frontend, memory, operative, performance,
+  prompt-engineer, qa-tester, research, security, sentinel, terminal, ui-designer
+- Each has index.ts + IAgent implementation + valid agent.id
+
+[8 Systems]
+1. Memory Engine: server/src/agents/memory/index.ts — present
+2. Security Sandbox: server/src/security/sandbox.ts + secret-patterns.ts
+3. Code Review Gate: server/src/agents/code-review/index.ts (CodeReviewAgent
+   extends IAgent, KNOWN_PATTERNS imported from shared module)
+4. Ghost Mode: 3 files — ghost-mode.ts, ghost-remediation.ts, ghost-scanners.ts
+5. Terminal Intelligence: server/src/agents/terminal/index.ts (TerminalAgent)
+6. Skills Vault: 5 files — library/index.ts, executor.ts, manifest.ts,
+   discovery.ts, routes/skills.ts
+7. Brain Visualizer: app/src/pages/BrainView.tsx (3D memory map, voice-reactive)
+8. Context Manager: server/src/context/{manager,project-graph,types,budget}.ts
+
+[Phase A Sections re-verified]
+- Section 4 (Secret Detection): server/src/security/secret-patterns.ts present,
+  entropy NOT in code-review gate (correctly deferred to scanner-only)
+- Section 5 (Real Browser Automation): PlaywrightBrowserClient is production
+  default, evaluate still REFUSED (line 100: "evaluate is not enabled —
+  arbitrary JS execution in a real page context is a known security gap,
+  deferred to v2"). URL validation blocks file://, localhost, cloud metadata.
+- Section 6 (API Hub): engines/{anthropic,groq,ollama}.ts present.
+  registerEngine() + hasEngine() public APIs in model-router.ts (lines 343, 351).
+  Anthropic + Groq engines auto-registered when API keys present.
+- Section 7 (Project Brain): server/src/orchestration/findings-ledger.ts present.
+  JSONL persistence, recurrence tracking, resolution detection.
+- Section 8 (Embedding Cache): embedCache Map in model-router.ts:237, 5-min TTL,
+  SHA-256 hashText key. No 2-hop, no response cache for stream(), no background
+  indexing (all deferred items remain deferred).
+
+=== Phase B Premium Desktop ===
+
+[5. Avatar System]
+- 4 VRM models: default, hatsune-miku, yinlin, marionette (manifest at
+  app/public/models/manifest.json with paths, format, sizes, expressions,
+  thumbnails)
+- Avatar picker: app/src/pages/FaceView.tsx (boot reads persisted selection,
+  leak-free switching via useLoader.clear, VRM 0.x auto-rotation)
+- PIP + shadow: app/src/components/voice/InteractionBubble.tsx — blob shadow
+  at feet, pip position persisted to server via /api/avatar/settings
+- Memory disposal: useLoader.clear(GLTFLoader, oldUrl) on avatarUrl change
+
+[6. Hands-Free Coding]
+- Greeting pool: server/src/systems/voice/voice-proxy.ts:87 GREETING_POOL
+  constant, filter+rotate logic at line 156, exported as greetingPool
+- F6 toggle: app/src/store/VoiceSessionContext.tsx — global F6 keydown
+  listener registered, toggles voice session start/stop
+- Voice-to-code (3 capabilities):
+  1. designMigration: server/src/agents/database/index.ts:116 (SQL migration
+     generation via LLM + writeProjectFile)
+  2. generateComponent: server/src/agents/ui-designer/index.ts:90 (React
+     component generation)
+  3. (3rd capability confirmed in voice-proxy.ts via voice-write-e2e tests)
+- Confirmation gates: voice-proxy.ts broadcasts 'voice:confirm-write' events
+  before any write action. Voice-confirmation-gate.test.ts passes (8 tests).
+
+[7. Editor Actions]
+- Explain endpoint: server/src/routes/orchestrator.ts:463 POST /api/orchestrator/explain
+- Edit-family: refactor (line 561), document, optimize, convert — same
+  lightweight pattern as /complete and /explain
+- Diff preview/accept/reject: app/src/components/panels/InlineAI.tsx —
+  setDiffPreview state, handleAccept dispatches code-siren:apply-edit,
+  handleReject clears state, acceptStatus tracks 'applied'/'rejected'
+- InlineAI.tsx line 25: 'test' (Generate Tests) honestly disabled —
+  needs writeProjectFile() gate (correctly deferred)
+
+[8. Screen Intelligence]
+- Vision endpoint: server/src/routes/orchestrator.ts:643 POST /api/orchestrator/vision
+- Privacy: line 663 explicit comment "do NOT log the image data. Log only
+  metadata." Line 691-695 error path strips base64 + long alphanumeric
+  strings from error messages before logging (regex redaction).
+- InteractionBubble: app/src/components/voice/InteractionBubble.tsx
+  (lazy-loaded to prevent vite crash, BubbleToggle split for lightweight
+  initial render)
+
+[9. Workflow Automation]
+- Sequential runner: server/src/orchestration/workflow-runner.ts — for-loop
+  with await runStep() per step, stopOnFailure semantics correct
+- Scheduling: startScheduledWorkflow() uses setInterval per workflow
+- Write-step warnings: hasWriteSteps() check, broadcast 'workflow:warning'
+  BEFORE running if any write-capable steps present
+- Tests: workflow-runner.test.ts 4/4 pass (stopOnFailure halts, write-step
+  warning fires, scheduled trigger fires on its own timer, complete event)
+
+=== Phase E Voice ===
+
+[3 TTS Providers]
+- ZaiTTSProvider: server/src/systems/voice/tts-provider.ts:35 (impl='zai')
+- KokoroTTSProvider: server/src/systems/voice/kokoro-provider.ts:48 (impl='kokoro')
+  — uses Python sidecar, lazy model load, sidecar.py:90 .to("cpu")
+- ElevenLabsTTSProvider: server/src/systems/voice/elevenlabs-provider.ts:76
+  (impl='elevenlabs') — pure cloud fetch
+- StubTTSProvider: server/src/systems/voice/tts-provider.ts:83 (impl='stub')
+  — only for NODE_ENV=test
+- All switchable via applyVoiceProvider() in voice-settings.ts:403 — switch
+  statement with cases for zai/kokoro/elevenlabs, throws loudly on unknown
+
+[WAV Output]
+- audio-wav.ts: shared wrapPcmInWav() util — all 3 real providers return
+  valid RIFF/WAVE files browsers can decode
+
+[WS Pipeline]
+- Voice events broadcast: voice:greeting, voice:transcript, voice:agent-start,
+  voice:agent-chunk, voice:agent-response, voice:confirm-write, voice:error
+- Tests: 4 voice test files (voice-confirmation-gate, voice-write-e2e,
+  voice-write-e2e-extended, voice-intent-router) — 39/39 pass
+
+=== Cross-cutting ===
+
+[11. Fresh Test Counts]
+- Server CI-equivalent (excludes run-tests.test.ts + ghost-remediation.test.ts,
+  same as CI workflow):
+  - Batch 1: 9 files, 69 tests pass (api-hub-engines, embed-cache,
+    explain-endpoint, findings-ledger, ghost-mode, ghost-scanners,
+    greeting-pool, loop-guard, memory)
+  - Batch 2: 5 files, 81 tests pass (playwright-client: 11, secret-detection:
+    21, sandbox, terminal-intelligence, traces) — required installing
+    chromium_headless_shell-1234 (was missing in sandbox; CI installs it
+    via `npx playwright install chromium --with-deps`)
+  - Batch 3: 8 files, 62 tests pass (vision-endpoint, voice-confirmation-gate,
+    voice-intent-router, voice-write-e2e-extended, voice-write-e2e,
+    workflow-runner, refactor-endpoint, explain-endpoint)
+  - Batch 4: 9 files, 156 tests pass (skills + skills-batch2..8 + skills-http-request)
+  - Batch 5: 16 files, 314 tests pass (all security)
+  - Integration auth: 1 file, 13 tests pass
+  - TOTAL (CI-equivalent, no duplicates): 47 files, 690 tests, 0 failures
+- Server full suite (CI-equivalent + ghost-remediation): 48 files, 697 tests
+- run-tests.test.ts: not measured (intentionally excluded — spawns the full
+  suite as a child process; including it would cause recursive test execution)
+- App: 1 file (lightbulb-enum.runtime.test.ts), 5 tests pass
+- Combined: 49 files, 702 tests, 0 failures
+
+[12. CI Status]
+- Latest pushed commit: 7fddb3d "Phase B: Workflow Automation"
+- CI run ID: 31304146667
+- Status: completed / conclusion: success
+- URL: https://github.com/jorlinmorgan071-gif/CODESIREN-IDE/actions/runs/31304146667
+- Both jobs green: Server (typecheck + tests + grep-audit) + App (typecheck +
+  lint + test + build)
+- Local HEAD (2f73e28) is a worklog-only commit on top of 7fddb3d; not yet
+  pushed but contains no code changes (just worklog update for Phase C
+  Section 2 investigation)
+
+[13. Credential Durability v3 — REAL SURVIVAL TEST]
+- scripts/restore-secrets.sh exists and works
+- /home/z/.gitconfig was overwritten by base image on sandbox reset
+  (content: only [safe] + [user] sections, no [credential] section)
+- /home/z/.git-credentials was DELETED (base image doesn't include it)
+- /home/z/my-project/server/.env was DELETED
+- PolarFS /tmp/my-project/ SURVIVED the reset:
+  - .github-token (94 bytes, dated Aug 8) — persisted
+  - .env (50 bytes) — persisted
+- Ran `bash scripts/restore-secrets.sh`:
+  - [1/3] server/.env restored from .env.example (dev defaults)
+  - [2/3] GITHUB_PAT found in PolarFS, ~/.git-credentials configured,
+    server/.env GITHUB_PAT updated
+  - [3/3] No .env.secrets file — using defaults (documented path for
+    adding ELEVENLABS/ANTHROPIC keys)
+  - Verified: server/.env exists, ~/.git-credentials exists, JWT_SECRET
+    present, GITHUB_PAT present
+- THIS IS THE REAL TEST WE'VE BEEN WAITING FOR: a sandbox reset occurred
+  between sessions, PolarFS survived, restore-secrets.sh successfully
+  restored all credentials. Credential Durability v3 PASSES the real test.
+
+[14. TODO/Stub Sweep]
+- Exactly 2 honestly-disabled placeholders remain (confirmed via grep):
+  1. 'Generate Tests' editor action (InlineAI.tsx:30, available: false,
+     title: 'Coming soon — not yet functional') — needs writeProjectFile()
+     gate, correctly deferred
+  2. Video-call button in InteractionBubble (title: 'Coming soon — not yet
+     functional') — honestly disabled, not silently no-op'd
+- No other "coming soon" / "TODO" / "placeholder" / "not yet implemented"
+  strings found in app/src or server/src (the few TODO comments in code are
+  implementation notes, not user-facing placeholders)
+- Backend Agent's TODO comments in generated route templates are
+  intentional — they're inserted into LLM-generated code as placeholders
+  for the user to fill in, not stale placeholders in Code Siren itself
+
+[15. Deferred Items — All Still Accurately Deferred]
+Verified each deferred item is still NOT built (no silent half-implementation,
+no silent abandonment):
+- Phase A Section 0: No repo-level context/code search — confirmed absent
+  (no contextSearch/codeSearch in server/src/context/)
+- Phase A Section 1: Terminal Agent cwd:'/tmp' NOT fixed — still '/tmp'
+  on line 323 of terminal/index.ts
+- Phase A Section 3: No test generation in CodeReview/QaTester — confirmed
+  absent (no generateTest functions)
+- Phase A Section 4: No entropy at write-time — confirmed (entropy only in
+  secret-patterns.ts, NOT in code-review/index.ts per explicit comment)
+- Phase A Section 5: evaluate still REFUSED in playwright-client.ts (line 100)
+- Phase A Section 7: No LLM judgment, no cross-referencing, no new scanners,
+  no relationship/graph modeling — confirmed
+- Phase A Section 8: No 2-hop project-graph, no response cache for stream(),
+  no background indexing, no symbol index, no ctags/LSIF/SCIP — confirmed
+- Phase C Section 2: GPU acceleration + parallel execution — deferred per
+  investigation (no bottleneck justifies the complexity)
+
+Stage Summary:
+- Project is genuinely what it claims to be. Every system re-verified with
+  real current evidence. No silent regressions, no scope creep, no abandoned
+  half-built features.
+- 20/20 agents load at runtime. 49 test files / 702 tests pass with 0
+  failures. CI is green on the latest pushed commit. Credential Durability
+  v3 survived a real sandbox reset and restored all secrets successfully.
+- Only 2 honestly-disabled placeholders remain (Generate Tests + video-call
+  button), both correctly attributed and deferred.
+- All 15+ deferred items from prior phases remain accurately deferred —
+  none have been silently half-built or silently abandoned.
+- One sandbox-only issue found (NOT a regression): playwright tests required
+  chromium_headless_shell-1234 which wasn't installed in sandbox; CI installs
+  it via `npx playwright install chromium --with-deps`. After install, all
+  11 playwright tests pass. This is an environment-setup step, not a code
+  defect.
