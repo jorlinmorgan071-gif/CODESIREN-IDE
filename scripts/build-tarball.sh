@@ -45,6 +45,12 @@ echo ""
 # The previous broken pattern was --exclude='skills' (no anchor), which
 # matched ANY path component named 'skills' and silently excluded
 # server/src/skills/ from every tarball.
+#
+# CRITICAL: --exclude='./server/.env' and --exclude='**/.env' exclude ALL
+# .env files. .env files contain REAL CREDENTIALS (API keys, JWT secrets,
+# GitHub PATs, etc.) and must NEVER be bundled in a tarball. If the person
+# testing the tarball needs environment variables, they should copy
+# server/.env.example to server/.env and fill in their own values.
 
 tar -czf "$OUTPUT" \
   --exclude='node_modules' \
@@ -71,6 +77,15 @@ tar -czf "$OUTPUT" \
   --exclude='./skills' \
   --exclude='./tool-results' \
   --exclude='./download' \
+  --exclude='./server/.env' \
+  --exclude='./app/.env' \
+  --exclude='./app/.env.local' \
+  --exclude='./app/.env.production' \
+  --exclude='./app/.env.development' \
+  --exclude='.env' \
+  --exclude='.env.local' \
+  --exclude='.env.production' \
+  --exclude='.env.development' \
   app/ server/ scripts/ .github/ \
   README.md SETUP_REPORT.md RELEASE_REPORT.md RELEASE_GUIDE.md \
   TEST_MATRIX.md PERF_BASELINE.md CODEBASE_HEALTH.md \
@@ -156,9 +171,9 @@ echo ""
 
 # Report unexpected extra files
 EXTRA_COUNT=$(echo "$UNEXPECTED_EXTRA" | grep -c . || true)
-# Allowlist: files in tarball but not in git that are EXPECTED (local env,
-# newly-created scripts not yet committed, etc.)
-EXTRA_ALLOWLIST='^scripts/build-tarball\.sh$|^server/\.env$|^server/\.env\.example$'
+# Allowlist: files in tarball but not in git that are EXPECTED.
+# .env files are NEVER allowlisted — they contain real credentials.
+EXTRA_ALLOWLIST='^scripts/build-tarball\.sh$|^server/\.env\.example$|^app/\.env\.example$'
 UNEXPECTED_EXTRA_FILTERED=$(echo "$UNEXPECTED_EXTRA" | grep -vE "$EXTRA_ALLOWLIST" || true)
 UNEXPECTED_EXTRA_FILTERED_COUNT=$(echo "$UNEXPECTED_EXTRA_FILTERED" | grep -c . || true)
 
@@ -170,6 +185,21 @@ if [ "$UNEXPECTED_EXTRA_FILTERED_COUNT" -eq 0 ]; then
 else
   echo "✗ $UNEXPECTED_EXTRA_FILTERED_COUNT unexpected files in tarball but not in git (review):"
   echo "$UNEXPECTED_EXTRA_FILTERED" | head -10
+fi
+echo ""
+
+# CRITICAL: Verify NO .env files are in the tarball
+ENV_FILES_IN_TARBALL=$(echo "$TARBALL_FILES" | grep -E '\.env$|\.env\.local$|\.env\.production$|\.env\.development$' || true)
+ENV_COUNT=$(echo "$ENV_FILES_IN_TARBALL" | grep -c . || true)
+if [ "$ENV_COUNT" -gt 0 ]; then
+  echo "🚨 CRITICAL: $ENV_COUNT .env file(s) found in tarball — CREDENTIALS LEAK:"
+  echo "$ENV_FILES_IN_TARBALL"
+  echo ""
+  echo "  .env files must NEVER be bundled. Rotate any credentials that may"
+  echo "  have been exposed immediately."
+  exit 1
+else
+  echo "✓ 0 .env files in tarball (no credentials leaked)"
 fi
 echo ""
 
