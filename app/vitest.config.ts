@@ -6,9 +6,15 @@
 // The setupFiles option installs browser-API stubs (jsdom doesn't fully
 // implement everything Monaco pokes at module-load time).
 
+import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
   test: {
     // Default environment: jsdom (browser-like). Individual test files
     // can override via the `// @vitest-environment` doc comment.

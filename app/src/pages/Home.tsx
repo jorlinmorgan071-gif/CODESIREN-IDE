@@ -10,7 +10,7 @@ import { Sidebar } from '@/components/sidebar/Sidebar';
 import { Dock } from '@/components/dock/Dock';
 import { Sparkles, PictureInPicture2, Mic, Monitor } from 'lucide-react';
 import { useGestureInput, dispatchGesture, type GestureType } from '@/systems/presence/gesture';
-import type { AgentEvent } from '@/types';
+import type { AgentEvent, ChatSession } from '@/types';
 import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
 import { SensoryFeedbackOverlay } from '@/components/voice/SensoryFeedbackOverlay';
@@ -44,7 +44,7 @@ import { RelayBanner } from '@/components/panels/RelayBanner';
 import { useRelay } from '@/store/RelayContext';
 
 export default function Home() {
-  const { state, toggleInlineAI, toggleAgentPanel, toggleSettings, dispatch } = useApp();
+  const { state, toggleInlineAI, toggleAgentPanel, toggleSettings, dispatch, createChatSession } = useApp();
   const navigate = useNavigate();
   const relay = useRelay();
   const { isActive: voiceActive, toggleVoiceSession } = useVoiceSession();
@@ -363,8 +363,17 @@ export default function Home() {
   };
 
   const handleNewChat = () => {
-    // Create a new chat session
+    // Create a new chat session — the session entry must exist in state
+    // BEFORE it's made active, otherwise ADD_CHAT_MESSAGE / UPDATE_CHAT_MESSAGE
+    // silently no-op (keyed to a sessionId that has no matching session).
     const newChatId = `cs-${Date.now()}`;
+    const newSession: ChatSession = {
+      id: newChatId,
+      name: 'New Chat',
+      messages: [],
+      isActive: false,
+    };
+    createChatSession(newSession);
     dispatch({ type: 'SET_ACTIVE_CHAT', payload: newChatId });
     if (!state.chatPanelVisible) dispatch({ type: 'TOGGLE_CHAT_PANEL' });
     setSidebarExpanded(false);

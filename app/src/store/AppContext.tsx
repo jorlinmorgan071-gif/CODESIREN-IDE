@@ -27,7 +27,7 @@ import { api } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import { getToken, getUser, setAuth, clearAuth } from '@/lib/auth';
 
-interface AppState {
+export interface AppState {
   // Navigation
   activeSidebarTab: SidebarTab;
   sidebarVisible: boolean;
@@ -79,7 +79,7 @@ interface AppState {
   authReady: boolean; // false during initial token check / auto-register
 }
 
-type AppAction =
+export type AppAction =
   | { type: 'SET_SIDEBAR_TAB'; payload: SidebarTab }
   | { type: 'TOGGLE_SIDEBAR' }
   | { type: 'TOGGLE_EXPLORER' }
@@ -91,6 +91,7 @@ type AppAction =
   | { type: 'CLOSE_TAB'; payload: string }
   | { type: 'SET_ACTIVE_FILE'; payload: string }
   | { type: 'SET_ACTIVE_CHAT'; payload: string }
+  | { type: 'CREATE_CHAT_SESSION'; payload: { session: ChatSession } }
   | { type: 'ADD_CHAT_MESSAGE'; payload: { sessionId: string; message: ChatMessage } }
   | { type: 'SET_GHOST_MODE'; payload: GhostMode }
   | { type: 'SET_THEME'; payload: ThemeName }
@@ -109,7 +110,7 @@ type AppAction =
   | { type: 'UPDATE_CHAT_MESSAGE'; payload: { sessionId: string; messageId: string; patch: Partial<ChatMessage> } }
   | { type: 'UPDATE_PROBLEMS'; payload: Problem[] };
 
-const initialState: AppState = {
+export const initialState: AppState = {
   activeSidebarTab: 'explorer',
   sidebarVisible: true,
   explorerVisible: true,
@@ -152,7 +153,7 @@ const initialState: AppState = {
   authReady: false,
 };
 
-function appReducer(state: AppState, action: AppAction): AppState {
+export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'SET_SIDEBAR_TAB':
       return { ...state, activeSidebarTab: action.payload };
@@ -254,6 +255,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
           ...s,
           isActive: s.id === action.payload,
         })),
+      };
+
+    case 'CREATE_CHAT_SESSION':
+      return {
+        ...state,
+        chatSessions: [...state.chatSessions, action.payload.session],
       };
 
     case 'ADD_CHAT_MESSAGE': {
@@ -363,6 +370,7 @@ interface AppContextValue {
   closeTab: (id: string) => void;
   setActiveFile: (id: string) => void;
   setActiveChat: (id: string) => void;
+  createChatSession: (session: ChatSession) => void;
   addChatMessage: (sessionId: string, message: ChatMessage) => void;
   updateChatMessage: (sessionId: string, messageId: string, patch: Partial<ChatMessage>) => void;
   // Phase A — Monaco IDE Intelligence: live diagnostics.
@@ -393,6 +401,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const closeTab = useCallback((id: string) => dispatch({ type: 'CLOSE_TAB', payload: id }), []);
   const setActiveFile = useCallback((id: string) => dispatch({ type: 'SET_ACTIVE_FILE', payload: id }), []);
   const setActiveChat = useCallback((id: string) => dispatch({ type: 'SET_ACTIVE_CHAT', payload: id }), []);
+  const createChatSession = useCallback((session: ChatSession) =>
+    dispatch({ type: 'CREATE_CHAT_SESSION', payload: { session } }), []);
   const addChatMessage = useCallback((sessionId: string, message: ChatMessage) =>
     dispatch({ type: 'ADD_CHAT_MESSAGE', payload: { sessionId, message } }), []);
   const setGhostMode = useCallback((mode: GhostMode) => dispatch({ type: 'SET_GHOST_MODE', payload: mode }), []);
@@ -466,6 +476,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         closeTab,
         setActiveFile,
         setActiveChat,
+        createChatSession,
         addChatMessage,
         updateChatMessage,
         updateProblems,
