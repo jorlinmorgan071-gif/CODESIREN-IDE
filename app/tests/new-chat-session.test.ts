@@ -287,17 +287,17 @@ describe('Directive #1 — New Chat Session-Creation Bug', () => {
   // TEST 5: Multiple new chats — each gets its own session entry,
   // no id collisions, all appear in chatSessions list.
   // ════════════════════════════════════════════════════════════════════
-  it('TEST 5: multiple new chats — each creates a distinct session, no collisions', async () => {
+  it('TEST 5: multiple new chats — each creates a distinct session, no collisions', () => {
     const state0 = JSON.parse(JSON.stringify(initialState));
     const initialSessionCount = state0.chatSessions.length;
 
-    // Create 3 new chats in sequence (with tiny delays to ensure unique Date.now())
+    // Create 3 new chats in sequence. Use a per-iteration counter suffix
+    // to guarantee unique ids regardless of Date.now() resolution (CI
+    // runners can be fast enough that two iterations land in the same ms).
     let state = state0;
     const newChatIds: string[] = [];
     for (let i = 0; i < 3; i++) {
-      // Force unique timestamp by waiting 1ms
-      await new Promise(r => setTimeout(r, 1));
-      const newChatId = `cs-${Date.now()}`;
+      const newChatId = `cs-${Date.now()}-${i}`;
       newChatIds.push(newChatId);
       const newSession: ChatSession = {
         id: newChatId,
