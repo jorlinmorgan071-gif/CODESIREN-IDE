@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { appReducer, initialState } from '../src/store/AppContext';
+import { filterChatSessions, getRecentChats } from '../src/components/sidebar/chat-list-utils';
 import type { ChatMessage, ChatSession } from '../src/types';
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -333,10 +334,13 @@ describe('Directive #1 — New Chat Session-Creation Bug', () => {
   });
 
   // ════════════════════════════════════════════════════════════════════
-  // TEST 6: New session appears in sidebar chat list (no filter hides it).
-  // Simulates the Sidebar's filteredChats + recentChats logic.
+  // TEST 6: New session appears in sidebar chat list — uses the REAL
+  // filterChatSessions + getRecentChats functions imported from
+  // chat-list-utils.ts (the same module Sidebar.tsx imports). No logic
+  // reimplemented in the test — if Sidebar.tsx's filter changes, this
+  // test exercises the same code path and will reflect the change.
   // ════════════════════════════════════════════════════════════════════
-  it('TEST 6: sidebar visibility — new session appears in chat history + recent chats list', () => {
+  it('TEST 6: sidebar visibility — new session appears in chat history + recent chats list (real chat-list-utils)', () => {
     const state0 = JSON.parse(JSON.stringify(initialState));
     const initialSessionCount = state0.chatSessions.length;
 
@@ -351,17 +355,33 @@ describe('Directive #1 — New Chat Session-Creation Bug', () => {
     let state = appReducer(state0, { type: 'CREATE_CHAT_SESSION', payload: { session: newSession } });
     state = appReducer(state, { type: 'SET_ACTIVE_CHAT', payload: newChatId });
 
-    // Sidebar filteredChats logic (empty search → returns all sessions)
-    const filteredChats = state.chatSessions; // no search query
-    expect(filteredChats.length).toBe(initialSessionCount + 1);
+    // ── Sidebar "Chat History" section uses filterChatSessions ──────────
+    // Empty search query → returns ALL sessions (no filter)
+    const filteredChatsEmptySearch = filterChatSessions(state.chatSessions, '');
+    expect(filteredChatsEmptySearch.length).toBe(initialSessionCount + 1);
 
     // New session is in the list
-    const foundInFiltered = filteredChats.find(c => c.id === newChatId);
+    const foundInFiltered = filteredChatsEmptySearch.find(c => c.id === newChatId);
     expect(foundInFiltered).toBeDefined();
     expect(foundInFiltered?.name).toBe('New Chat');
 
-    // Sidebar recentChats logic (slice(0, 5))
-    const recentChats = state.chatSessions.slice(0, 5);
+    // Search by "New" should include the new session (case-insensitive)
+    const filteredByNew = filterChatSessions(state.chatSessions, 'New');
+    const foundByNew = filteredByNew.find(c => c.id === newChatId);
+    expect(foundByNew).toBeDefined();
+
+    // Search by "new" (lowercase) should also match (case-insensitive)
+    const filteredByLower = filterChatSessions(state.chatSessions, 'new');
+    const foundByLower = filteredByLower.find(c => c.id === newChatId);
+    expect(foundByLower).toBeDefined();
+
+    // Search by something that doesn't match should NOT include the new session
+    const filteredByNonMatch = filterChatSessions(state.chatSessions, 'xyz-does-not-exist');
+    const foundByNonMatch = filteredByNonMatch.find(c => c.id === newChatId);
+    expect(foundByNonMatch).toBeUndefined();
+
+    // ── Sidebar "Recent Chats" section uses getRecentChats ──────────────
+    const recentChats = getRecentChats(state.chatSessions);
 
     // With initialState (3 sample sessions) + 1 new = 4 total, new session
     // is at index 3 (pure append), so it's within the first 5
@@ -370,14 +390,76 @@ describe('Directive #1 — New Chat Session-Creation Bug', () => {
       expect(foundInRecent).toBeDefined();
     }
 
-    // Sidebar search by name "New" should include the new session
-    const searchResults = state.chatSessions.filter(c =>
-      c.name.toLowerCase().includes('new')
-    );
-    const foundInSearch = searchResults.find(c => c.id === newChatId);
-    expect(foundInSearch).toBeDefined();
+    // getRecentChats never returns more than 5
+    expect(recentChats.length).toBeLessThanOrEqual(5);
 
-    console.log('  ✓ Sidebar visibility: new session appears in history list, recent chats (if ≤5 total), and search results');
+    console.log('  ✓ Sidebar visibility: real filterChatSessions + getRecentChats confirm new session is visible');
+  });
+
+  // ════════════════════════════════════════════════════════════════════
+  // TEST 6b: Direct unit tests on chat-list-utils.ts — verifies the pure
+  // functions behave correctly independent of the reducer. Catches any
+  // future regression in the filter/sort logic itself.
+  // ════════════════════════════════════════════════════════════════════
+  it('TEST 6b: chat-list-utils — filterChatSessions + getRecentChats contract', () => {
+    const sessions: ChatSession[] = [
+      { id: 'cs1', name: 'Frontend', messages: [], isActive: true },
+      { id: 'cs2', name: 'Backend', messages: [], isActive: false },
+      { id: 'cs3', name: 'Planning', messages: [], isActive: false },
+      { id: 'cs4', name: 'New Chat', messages: [], isActive: false },
+    ];
+
+    // filterChatSessions — empty query returns all (identity, not a copy)
+    const emptyResult = filterChatSessions(sessions, '');
+    expect(emptyResult).toBe(sessions); // same reference (matches Sidebar.tsx behavior)
+    expect(emptyResult.length).toBe(4);
+
+    // filterChatSessions — whitespace-only query returns all
+    const wsResult = filterChatSessions(sessions, '   ');
+    expect(wsResult).toBe(sessions);
+    expect(wsResult.length).toBe(4);
+
+    // filterChatSessions — case-insensitive substring match
+    const newResult = filterChatSessions(sessions, 'new');
+    expect(newResult.length).toBe(1);
+    expect(newResult[0].id).toBe('cs4');
+
+    // filterChatSessions — case-insensitive (uppercase query)
+    const upperResult = filterChatSessions(sessions, 'BACKEND');
+    expect(upperResult.length).toBe(1);
+    expect(upperResult[0].id).toBe('cs2');
+
+    // filterChatSessions — partial substring
+    const partialResult = filterChatSessions(sessions, 'end');
+    expect(partialResult.length).toBe(2); // "Frontend" + "Backend"
+    expect(partialResult.map(s => s.id).sort()).toEqual(['cs1', 'cs2']);
+
+    // filterChatSessions — no match
+    const noResult = filterChatSessions(sessions, 'xyz');
+    expect(noResult.length).toBe(0);
+
+    // getRecentChats — returns first 5 (or fewer if array is shorter)
+    const recent = getRecentChats(sessions);
+    expect(recent.length).toBe(4); // only 4 in the array
+    expect(recent[0].id).toBe('cs1'); // preserves order
+    expect(recent[3].id).toBe('cs4');
+
+    // getRecentChats — with 7 sessions, returns exactly 5
+    const sevenSessions: ChatSession[] = Array.from({ length: 7 }, (_, i) => ({
+      id: `cs-${i}`,
+      name: `Chat ${i}`,
+      messages: [],
+      isActive: i === 0,
+    }));
+    const recentSeven = getRecentChats(sevenSessions);
+    expect(recentSeven.length).toBe(5);
+    expect(recentSeven[4].id).toBe('cs-4'); // 5th element, not 6th or 7th
+
+    // getRecentChats — empty array returns empty
+    const recentEmpty = getRecentChats([]);
+    expect(recentEmpty.length).toBe(0);
+
+    console.log('  ✓ chat-list-utils contract: filter (empty/whitespace/case-insensitive/partial/no-match) + recent (slice/empty/order)');
   });
 
   // ════════════════════════════════════════════════════════════════════

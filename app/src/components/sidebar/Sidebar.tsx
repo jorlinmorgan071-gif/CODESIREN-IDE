@@ -14,6 +14,7 @@ import {
 import { useApp } from '@/store/AppContext';
 import { useRelay } from '@/store/RelayContext';
 import { CardStack, type CardStackItem } from '@/components/ui/card-stack';
+import { filterChatSessions, getRecentChats } from './chat-list-utils';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -47,16 +48,15 @@ export function Sidebar({ expanded, onToggle, onNavigate, onOpenSettings, onNewC
   const [searchQuery, setSearchQuery] = useState('');
   const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
 
-  // Filtered chat sessions for history search
-  const filteredChats = useMemo(() => {
-    if (!searchQuery.trim()) return state.chatSessions;
-    return state.chatSessions.filter(c =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [state.chatSessions, searchQuery]);
+  // Filtered chat sessions for history search — pure function in
+  // chat-list-utils.ts so the logic is testable in isolation.
+  const filteredChats = useMemo(() =>
+    filterChatSessions(state.chatSessions, searchQuery),
+    [state.chatSessions, searchQuery]
+  );
 
-  // Recent chats — compact, max 5
-  const recentChats = state.chatSessions.slice(0, 5);
+  // Recent chats — compact, max 5 — pure slice in chat-list-utils.ts.
+  const recentChats = getRecentChats(state.chatSessions);
 
   // ── Collapsed state: icon rail ────────────────────────────────────────
   if (!expanded) {
