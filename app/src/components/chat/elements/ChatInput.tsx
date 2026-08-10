@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { GlowButton } from '@/components/ui/glow-button';
 import { PremiumTooltip } from '@/components/ui/premium-tooltip';
+import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { AttachmentSpinner } from '@/components/ui/loaders';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -87,6 +88,12 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Siren�
   const [selectedModel, setSelectedModel] = useState('');
   const [providerDropdown, setProviderDropdown] = useState(false);
   const [modelDropdown, setModelDropdown] = useState(false);
+
+  // Live voice session — wired to the "Live conversation" button (Radio icon).
+  // toggleVoiceSession() starts a call if inactive, ends it if active (same
+  // function the F6 hotkey uses). isActive drives the button's color so the
+  // user can see at a glance whether a call is live.
+  const { isActive, toggleVoiceSession } = useVoiceSession();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -387,9 +394,9 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Siren�
 
             <PremiumTooltip text="Live conversation" position="top">
               <button
-                onClick={() => console.log('[chat-input] Live/Face visualizer — built in Face phase')}
+                onClick={() => void toggleVoiceSession()}
                 className="p-1.5 rounded-md transition-colors hover:bg-[var(--surface-raised)]"
-                style={{ color: 'var(--steel-silver)' }}
+                style={{ color: isActive ? 'var(--siren-red)' : 'var(--steel-silver)' }}
               >
                 <Radio className="w-4 h-4" />
               </button>

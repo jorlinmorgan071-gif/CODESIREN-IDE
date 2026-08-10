@@ -1,33 +1,31 @@
-# Pre-Push Verification — New Chat Session-Creation Fix (Path B)
+# Pre-Push Verification — Live Conversation Button Fix
 
 ## What's in this tarball
 
-This tarball contains the full Code Siren IDE working tree with the **New Chat session-creation fix** applied, including the Path B refactor (sidebar filter/sort logic extracted into a testable pure-function module).
+The Code Siren IDE working tree with the **dead "Live conversation" button fix** applied. The button in the chat input toolbar (Radio icon, tooltip "Live conversation") was a `console.log` no-op; it now calls `toggleVoiceSession()` from `VoiceSessionContext` and shows active-state color feedback (siren-red when a call is live, steel-silver when idle).
 
-## Files changed for the fix (5 files in `app/`)
+## Files changed (1 file + 1 new proof script)
 
-1. **`app/src/store/AppContext.tsx`** — added `CREATE_CHAT_SESSION` to the `AppAction` union, added the reducer case (pure append via spread, does NOT touch `activeChatId`), added `createChatSession` action creator + interface entry + provider value. Also exported `appReducer`, `AppState`, `AppAction`, `initialState` for direct test access.
+1. **`app/src/components/chat/elements/ChatInput.tsx`** — 3 surgical changes:
+   - Added `import { useVoiceSession } from '@/store/VoiceSessionContext';`
+   - Added `const { isActive, toggleVoiceSession } = useVoiceSession();` in the component body
+   - Replaced `onClick={() => console.log('[chat-input] Live/Face visualizer — built in Face phase')}` with `onClick={() => void toggleVoiceSession()}`
+   - Changed button `style` from `color: 'var(--steel-silver)'` to `color: isActive ? 'var(--siren-red)' : 'var(--steel-silver)'` (matches the Mic button's `isRecording` pattern)
 
-2. **`app/src/pages/Home.tsx`** — `handleNewChat()` now builds a full `ChatSession` object (`id`, `name: 'New Chat'`, `messages: []`, `isActive: false`) and dispatches `CREATE_CHAT_SESSION` before `SET_ACTIVE_CHAT`.
+2. **`scripts/live-button-click-through-proof.mts`** (NEW) — Playwright headless Chromium proof that clicks the button, verifies `POST /api/voice/live/start` fires, verifies color change to siren-red, clicks again, verifies `POST /api/voice/live/:id/end` fires, verifies color reverts. **4/4 tests pass.**
 
-3. **`app/src/components/sidebar/chat-list-utils.ts`** (NEW) — pure functions `filterChatSessions()` and `getRecentChats()` extracted from Sidebar.tsx so the filter/sort logic is testable in isolation. No behavioral change — same output, just relocated.
-
-4. **`app/src/components/sidebar/Sidebar.tsx`** — imports `filterChatSessions` and `getRecentChats` from `chat-list-utils.ts` instead of inlining the logic. Behavior identical to before.
-
-5. **`app/vitest.config.ts`** — added the `@` path alias (was missing — existing tests didn't import from `src/`, so the alias was never needed until now).
-
-6. **`app/tests/new-chat-session.test.ts`** (NEW) — 8 tests exercising the real `appReducer` + real `initialState` + real `chat-list-utils` functions, no mocks.
+3. **`scripts/identify-second-radio-button.mts`** (NEW) — investigation script that confirmed the "second Radio-icon button" found by the proof is the Dock's "Face" navigation button (`Dock.tsx:46`), not a duplicate or leftover. No fix needed.
 
 ## IMPORTANT: npm install IS NEEDED
 
-**Correction from the previous tarball's instructions:** `package.json` IS unchanged, but `node_modules/` is excluded from the tarball (it would balloon the file to hundreds of MB). You MUST run `npm install` in both `app/` and `server/` after extraction — this only installs existing declared deps, no new packages.
+`package.json` is unchanged, but `node_modules/` is excluded from the tarball. You MUST run `npm install` in both `app/` and `server/` after extraction.
 
 ## How to extract + run
 
 ```bash
 # Extract
-tar -xzf codesiren-new-chat-fix-path-b.tar.gz
-cd codesiren-new-chat-fix-path-b   # or wherever you extracted
+tar -xzf codesiren-live-button-fix.tar.gz
+cd codesiren-live-button-fix   # or wherever you extracted
 
 # Install server deps + run server
 cd server
@@ -41,59 +39,64 @@ npm install                 # installs declared deps (package.json unchanged)
 npm run dev                 # app on http://localhost:3000
 ```
 
-**Note:** VRM avatar model files (90MB) are excluded from this tarball to keep it small. The Face tab won't load 3D avatars, but **that's unrelated to the New Chat fix** — the chat panel + sidebar work fine without them.
+**Note:** VRM avatar model files (90MB) are excluded to keep the tarball small. The Face tab won't load 3D avatars, but **that's unrelated to this fix** — the chat panel + live-call button work fine without them.
 
-## What to verify
+## What Morgan needs to verify manually (Phase D human-confirmation gate)
 
-### Automated tests (fastest — 8 tests, ~1 second)
+The automated Playwright proof passed 4/4, but per Phase D's gate, Morgan must click this live in the real running app before it closes:
 
-```bash
-cd app
-npx vitest run tests/new-chat-session.test.ts --reporter=verbose
-```
+1. Open `http://localhost:3000` in a real browser (Chrome/Firefox/Safari)
+2. Locate the chat input bar at the bottom of the chat panel
+3. Find the **Radio icon button** in the toolbar (between the Camera icon and the Mic icon) — tooltip should say "Live conversation"
+4. **Click it once** — browser should prompt for microphone permission → grant it
+5. **Verify:**
+   - The button's color changes from gray (steel-silver) to red (siren-red)
+   - The browser's mic indicator shows the mic is active
+   - Server logs show `POST /api/voice/live/start` with a 200 response
+6. **Click the same button again** — the call should end
+7. **Verify:**
+   - The button's color reverts from red back to gray
+   - The browser's mic indicator shows the mic is released
+   - Server logs show `POST /api/voice/live/<session-id>/end` with a 200 response
 
-Expected output: 8 tests passing:
-- TEST 1: bug reproduction — SET_ACTIVE_CHAT alone → message silently dropped
-- TEST 2: fix — CREATE_CHAT_SESSION then SET_ACTIVE_CHAT → message renders
-- TEST 3: full flow — New Chat → send message → both user + assistant messages render
-- TEST 4: no cross-contamination — switch new → existing → back → messages isolated
-- TEST 5: multiple new chats — each creates a distinct session, no collisions
-- **TEST 6: sidebar visibility — uses REAL `filterChatSessions` + `getRecentChats` from `chat-list-utils.ts`** (Path B fix — no longer a logic reimplementation)
-- **TEST 6b: chat-list-utils contract — direct unit tests on the extracted pure functions**
-- TEST 7: CREATE_CHAT_SESSION does not touch activeChatId — only SET_ACTIVE_CHAT does
+### Expected vs broken behavior
 
-### Manual browser test (catches what automated tests can't)
+| Step | Expected (with fix) | Broken (before fix) |
+|---|---|---|
+| Click button | Mic permission prompt → call starts → button turns red | Nothing visible; `console.log('[chat-input] Live/Face visualizer — built in Face phase')` in DevTools console only |
+| Click again | Call ends → button reverts to gray | Nothing (another console.log) |
 
-1. Open `http://localhost:3000`
-2. Click "New Chat"
-3. Type a message + press Enter — message should render in the panel
-4. Click an existing chat in the sidebar → switch back to "New Chat" — messages stay isolated
-5. Click "New Chat" 3 times → all 3 appear as separate entries in the sidebar's chat history
+### If something doesn't work
 
-## What was NOT changed (scope boundaries respected)
+- If the button doesn't change color: check browser console for errors from `useVoiceSession` or `VoiceSessionContext`
+- If the call doesn't start: check server is running on `:3001`, check browser is granting mic permission
+- If the call starts but doesn't end on second click: check `isActive` is being updated in the React state (the toggle checks `isActiveRef.current`)
 
-- `ADD_CHAT_MESSAGE` reducer — unchanged
-- `UPDATE_CHAT_MESSAGE` reducer — unchanged
-- `ChatPanel.tsx` WS chunk-handling logic — unchanged
-- `ChatPanel.tsx` `handleSend()` — unchanged
-- `SET_ACTIVE_CHAT` reducer — unchanged
-- Backend (`/api/orchestrator/chat`) — unchanged
-- Any message-handling, streaming, or backend code — unchanged
+## Second Radio-icon button (not a bug)
 
-## Path B refactor detail (what changed since the previous tarball)
+The proof script's selector (`button:has(svg.lucide-radio)`) found 2 matches. Investigation confirmed:
 
-**Before (Path A — previous tarball):** Test 6 reimplemented the Sidebar's filter/sort logic inside the test file. This meant it verified the reducer's output shape was correct for the sidebar to consume, but did NOT prove the real `Sidebar.tsx` component would render the new session — if someone later added a filter like `s.messages.length > 0` to hide empty sessions, the test would still pass while the real component would break.
+- **Button #1** (`ChatInput.tsx:396`) — the "Live conversation" button this fix targets. Tooltip "Live conversation", 28×28px, top-right of chat input.
+- **Button #2** (`Dock.tsx:86`) — the Dock's "Face" navigation button. Tooltip "Face", 40×40px, bottom center dock. Navigates to `/face` route. Uses the same `Radio` icon by design choice (Face page = avatar/voice-call page). Working as intended — no fix needed.
 
-**After (Path B — this tarball):**
-1. Extracted `filterChatSessions()` and `getRecentChats()` from `Sidebar.tsx` into `app/src/components/sidebar/chat-list-utils.ts` (pure functions, no behavioral change).
-2. `Sidebar.tsx` now imports and calls those functions — same output, just relocated.
-3. Test 6 imports `filterChatSessions` + `getRecentChats` from the real `chat-list-utils.ts` module and exercises them directly. If the sidebar's filter logic changes, the test exercises the same code path and will reflect the change.
-4. Added Test 6b — direct contract tests on `chat-list-utils.ts` (empty query, whitespace, case-insensitive, partial match, no match, slice bounds, empty array, ordering).
+The proof script's `.first()` correctly targeted Button #1 for both click scenarios.
 
 ## Verification gates (all green at packaging time)
 
 - **Typecheck:** `tsc --noEmit -p tsconfig.app.json` — clean, 0 errors
-- **Lint:** `eslint` on all 6 touched files — clean, 0 errors
-- **Existing tests:** `lightbulb-enum.runtime.test.ts` 5/5 pass (no regressions)
-- **New tests:** `new-chat-session.test.ts` 8/8 pass
-- **Combined app suite:** 2 files / 13 tests / 0 failures
+- **Lint:** `eslint` on `ChatInput.tsx` — clean, 0 errors
+- **Existing app tests:** `vitest run` — 13/13 pass (no regression)
+- **Playwright click-through proof:** 4/4 pass (button exists, no dead-handler log, call starts on click, call ends on second click, color toggles correctly)
+
+## Out-of-scope (logged for future directive)
+
+The live-call pipeline has no awareness of which chat session or model is active. `startVoiceSession()` POSTs `{}` to `/voice/live/start`; the server's `voiceProxy.startSession(userId, projectId, userDisplayName)` takes no `chatSessionId` or `modelId`. This affects F6, FaceView's button, AND this newly-wired button equally. Separate fix for its own directive.
+
+## What was NOT touched (scope boundaries respected)
+
+- `VoiceSessionContext.tsx` — untouched
+- `server/src/routes/voice-live.ts` — untouched
+- `server/src/systems/voice/voice-proxy.ts` — untouched
+- Button markup, className, icon, tooltip text — all unchanged (only `onClick` + `style.color` value changed)
+- Other toolbar buttons (Camera, Mic, Send, Paperclip) — unchanged
+- Dock.tsx — untouched (the second Radio-icon button is not affected)
