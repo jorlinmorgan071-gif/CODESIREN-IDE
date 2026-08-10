@@ -31,7 +31,11 @@ interface ActiveVoiceSession {
   lastAudioAt: number;
   muted: boolean;
   audioBuffer: Buffer[];  // accumulated audio chunks for current turn
-  zaiInstance: any | null;
+  // NOTE: zaiInstance is intentionally NOT stored on the session anymore.
+  // startSession() must not depend on z-ai (it would 500 on machines
+  // without .z-ai-config, e.g. local dev environments outside Z.ai's
+  // sandbox). processAudio() calls ensureZai() on-demand when ASR is
+  // actually needed, and degrades gracefully via its existing catch block.
   // Phase B: Voice-to-Code-Written v1
   transcriptBuffer: string[];  // accumulated transcripts across turns (for multi-turn context)
   pendingConfirmation: PendingConfirmation | null;  // non-null when awaiting user confirm/cancel
@@ -206,7 +210,15 @@ class VoiceProxy {
    */
   async startSession(userId: string, projectId: string, userDisplayName?: string): Promise<string> {
     const sessionId = `voice-${uuid()}`;
-    await this.ensureZai();
+
+    // NOTE: do NOT call ensureZai() here. startSession() must succeed even
+    // on machines without .z-ai-config (local dev environments outside
+    // Z.ai's sandbox). The z-ai SDK is needed for ASR (when the user
+    // actually speaks) and for z-ai TTS (used by the greeting) — both of
+    // those paths call ensureZai() on-demand and degrade gracefully via
+    // their own try/catch blocks. Eagerly initializing here would 500 the
+    // entire session start on a missing config file, which is the bug
+    // this fixes.
 
     const session: ActiveVoiceSession = {
       id: sessionId,
@@ -217,7 +229,6 @@ class VoiceProxy {
       lastAudioAt: Date.now(),
       muted: false,
       audioBuffer: [],
-      zaiInstance: this.zaiInstance,
       transcriptBuffer: [],
       pendingConfirmation: null,
     };
@@ -831,7 +842,6 @@ class VoiceProxy {
 
     // Clear audio buffer
     session.audioBuffer = [];
-    session.zaiInstance = null;
 
     this.sessions.delete(sessionId);
     console.log(`[voice-proxy] session ended: ${sessionId} — no further audio will be processed`);
