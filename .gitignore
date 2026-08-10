@@ -80,3 +80,6 @@ server/sidecars/kokoro/**/*.pyc
 server/sidecars/kokoro/*.wav
 server/sidecars/kokoro/*.pth
 
+
+# Tarballs + download artifacts — never commit these
+download/
