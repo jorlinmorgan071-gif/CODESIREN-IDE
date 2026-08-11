@@ -107,9 +107,30 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
   // scene graph and calls .dispose() on every geometry, material, and texture.
   const prevGltfRef = useRef<{ scene: THREE.Group; url: string } | null>(null);
 
+  // Keep a ref to the CURRENT avatarUrl so the disposal cleanup can read the
+  // live value instead of the stale one captured in its closure. Without this,
+  // the cleanup's guard (prevGltfRef.current.url !== avatarUrl) compares the
+  // old url against itself — both are the old value captured at effect-setup
+  // time — so disposal never fires and every avatar switch leaks GPU memory.
+  //
+  // CRITICAL: the ref is updated DURING RENDER (not in a useEffect) because
+  // useLoader suspends during render when the URL changes. If we used a
+  // useEffect to update the ref, the effect would never run — useLoader
+  // throws a Promise before effects fire, the component unmounts, and the
+  // cleanup fires with the ref still holding the OLD url. Updating during
+  // render ensures the ref is current by the time the cleanup runs.
+  const currentUrlRef = useRef(avatarUrl);
+  // eslint-disable-next-line react-hooks/refs -- intentional: the ref MUST be current by the time the disposal cleanup fires. useLoader suspends during render when avatarUrl changes, so a useEffect-based update would never run before the cleanup. Updating during render is the documented React pattern for this case (https://react.dev/reference/react/useRef).
+  currentUrlRef.current = avatarUrl;  // synchronous, every render
+
   useEffect(() => {
     return () => {
-      if (prevGltfRef.current && prevGltfRef.current.url !== avatarUrl) {
+      // Read the LIVE avatarUrl from the ref, not the stale closure value.
+      // When avatarUrl changes, React runs this OLD cleanup first; at that
+      // moment currentUrlRef.current is already the NEW url (updated during
+      // the render that triggered this cleanup), so the guard correctly
+      // evaluates to true when the URL genuinely changed.
+      if (prevGltfRef.current && prevGltfRef.current.url !== currentUrlRef.current) {
         try {
           // 1. deepDispose — frees GPU resources (geometries, textures, materials)
           VRMUtils.deepDispose(prevGltfRef.current.scene);
