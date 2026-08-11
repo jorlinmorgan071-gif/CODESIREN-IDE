@@ -166,6 +166,12 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
 
     // Remove unnecessary materials/shaders — use VRM's built-in MToon shader
     VRMUtils.removeUnnecessaryVertices(gltf.scene);
+    // Orient VRM 0.x models to face the camera. VRMUtils.rotateVRM0 checks
+    // the version internally — 0.x models get a 180° Y rotation (they face
+    // +Z by spec, camera looks down -Z), 1.0 models are left untouched
+    // (they already face -Z by spec). All 4 current avatars (1× VRM 1.0
+    // default + 3× VRM 0.x) end up facing the camera correctly.
+    VRMUtils.rotateVRM0(vrm);
     // VRMUtils.combineSkeletons(vrm); // type mismatch — skip for now
 
     // Log available blendshapes
@@ -910,9 +916,9 @@ export default function FaceView() {
           gl={{ antialias: true, alpha: true }}
           onCreated={() => setLoading(false)}
         >
-          <ambientLight intensity={0.3} />
-          <pointLight position={[0, 2, 3]} intensity={1} color="#00BFFF" />
-          <pointLight position={[0, -2, 1]} intensity={0.5} color="#0088FF" />
+          <ambientLight intensity={0.6} />
+          <directionalLight position={[0, 2, 3]} intensity={1.2} color="#FFFFFF" />
+          <directionalLight position={[-2, 1, 2]} intensity={0.4} color="#FFFFFF" />
 
           {/* Fix 2 — Suspense boundary INSIDE the Canvas to catch the
               Promise that useLoader throws while the FBX is loading.
