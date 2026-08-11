@@ -1156,10 +1156,12 @@ export default function FaceView() {
 
         {/* Phase B: Custom avatar upload dialog */}
         {showUploadDialog && (
-          <AvatarUploadDialogLazy
-            onClose={() => setShowUploadDialog(false)}
-            onUploaded={handleAvatarUploaded}
-          />
+          <Suspense fallback={null}>
+            <AvatarUploadDialogLazy
+              onClose={() => setShowUploadDialog(false)}
+              onUploaded={handleAvatarUploaded}
+            />
+          </Suspense>
         )}
 
         {/* Phase B: Delete confirmation dialog */}
