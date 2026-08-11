@@ -64,7 +64,7 @@ async function main() {
   console.log('FULL CONSOLE OUTPUT (TIMING-TRACE + face + errors)');
   console.log('═'.repeat(72));
   for (const log of allLogs) {
-    if (log.text.includes('STEP4-TRACE') || log.text.includes('[face]') || log.text.includes('Context Lost') || log.type === 'error') {
+    if (log.text.includes('PREVIEW-TRACE') || log.text.includes('STEP4-TRACE') || log.text.includes('[face]') || log.text.includes('Context Lost') || log.text.includes('R3F') || log.type === 'error') {
       const t = new Date(log.time).toISOString().slice(11, 23);
       console.log(`  [${t}] [${log.type.toUpperCase()}] ${log.text}`);
     }
