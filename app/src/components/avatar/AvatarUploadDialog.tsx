@@ -514,37 +514,9 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ── 3D preview (reuses the analysis VRM, no re-load) ──────────────────────
-function AnalysisPreview({ analysis }: { analysis: VrmAnalysisResult }) {
-  // We can't use useLoader here because the VRM was loaded imperatively in
-  // analyzeVrmFile(). Instead we render the scene directly via primitive.
-  // The analysis.scene is the live THREE.Group — we just need to mount it
-  // in a Canvas via <primitive object={analysis.scene} />.
-  // But note: the analysis VRM's scene is the source of truth — we must NOT
-  // dispose it while the preview is mounted.
-
-  const groupRef = useRef<THREE.Group>(null!);
-
-  // Center + scale the model to fit the view
-  useEffect(() => {
-    if (!analysis.scene || !groupRef.current) return;
-    const box = new THREE.Box3().setFromObject(analysis.scene);
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const scale = maxDim > 0 ? 2 / maxDim : 1;
-    analysis.scene.scale.setScalar(scale);
-    analysis.scene.position.set(-center.x * scale, -center.y * scale + 0.5, -center.z * scale);
-  }, [analysis.scene]);
-
-  // Animate breathing + blink for live preview
-  const vrmRef = useRef<VRM | null>(null);
-  useEffect(() => {
-    if (analysis.vrm) vrmRef.current = analysis.vrm;
-  }, [analysis.vrm]);
-
+// ── 3D preview animator (MUST be inside <Canvas> — useFrame needs R3F context) ──
+function PreviewAnimator({ vrm, groupRef }: { vrm: VRM | null; groupRef: React.RefObject<THREE.Group> }) {
   useFrame((state) => {
-    const vrm = vrmRef.current;
     if (!vrm) return;
     const delta = state.clock.getDelta();
     vrm.update(delta);
@@ -561,6 +533,29 @@ function AnalysisPreview({ analysis }: { analysis: VrmAnalysisResult }) {
       }
     }
   });
+  return null;
+}
+
+// ── 3D preview (reuses the analysis VRM, no re-load) ──────────────────────
+function AnalysisPreview({ analysis }: { analysis: VrmAnalysisResult }) {
+  const groupRef = useRef<THREE.Group>(null!);
+
+  // Center + scale the model to fit the view
+  useEffect(() => {
+    if (!analysis.scene || !groupRef.current) return;
+    const box = new THREE.Box3().setFromObject(analysis.scene);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const scale = maxDim > 0 ? 2 / maxDim : 1;
+    analysis.scene.scale.setScalar(scale);
+    analysis.scene.position.set(-center.x * scale, -center.y * scale + 0.5, -center.z * scale);
+  }, [analysis.scene]);
+
+  // useFrame is now in PreviewAnimator (inside the Canvas below).
+  // Previously it was called here — OUTSIDE the Canvas — which threw
+  // "R3F: Hooks can only be used within the Canvas component!" on every
+  // render and crashed the WebGL context on dialog unmount.
 
   return (
     <Canvas camera={{ position: [0, 0.5, 3], fov: 35 }} gl={{ antialias: true, alpha: true }}>
@@ -571,6 +566,7 @@ function AnalysisPreview({ analysis }: { analysis: VrmAnalysisResult }) {
         {analysis.scene && (
           <group ref={groupRef}>
             <primitive object={analysis.scene} />
+            <PreviewAnimator vrm={analysis.vrm ?? null} groupRef={groupRef} />
           </group>
         )}
       </Suspense>
