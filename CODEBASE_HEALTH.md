@@ -346,6 +346,19 @@ investigation (if any) is needed before implementation.
   peer connection, signaling server, etc.) that's out of scope for the
   current phase. Honestly disabled, not silently broken.
 
+### VRM analysis thumbnail rendering performance — deferred, performance issue
+- **Status:** Deferred. Not started.
+- **What it is:** `analyzeVrmFile()` in `app/src/lib/vrm-analyzer.ts`
+  takes ~13 seconds for a 23MB VRM file, mostly in the thumbnail rendering
+  step (creating a temporary WebGL renderer, rendering the model, capturing
+  as PNG). The user sees "Analyzing..." for the entire duration, which was
+  initially mistaken for a rejection/hang.
+- **Why deferred:** This is a performance issue, not a correctness bug.
+  The analysis completes correctly — it's just slow for large files.
+  Potential fixes: defer thumbnail generation to a Web Worker, reduce
+  thumbnail resolution, or skip the 3D preview render for files >20MB.
+  Each has tradeoffs that need evaluation. Separate directive needed.
+
 ---
 
 ## 11. Summary

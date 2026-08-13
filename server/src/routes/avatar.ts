@@ -43,16 +43,18 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB
   fileFilter: (_req, file, cb) => {
-    if (!file.originalname.toLowerCase().endsWith('.vrm')) {
+    // Only validate .vrm extension for the 'file' field (the model), not
+    // 'thumbnail' (which is a .png). Without the fieldname check, multer
+    // runs this filter on ALL files in the multipart request — including
+    // the thumbnail — and rejects the entire upload because thumbnail.png
+    // doesn't end with .vrm.
+    if (file.fieldname === 'file' && !file.originalname.toLowerCase().endsWith('.vrm')) {
       cb(new Error('File must be a .vrm file'));
       return;
     }
-    if (file.mimetype !== 'application/octet-stream' &&
-        file.mimetype !== 'model/gltf-binary' &&
-        file.mimetype !== 'application/gltf-buffer') {
-      // Some browsers send 'application/octet-stream' for .vrm — accept it.
-      // The magic-byte check below is the real validator.
-    }
+    // The magic-byte check (isValidVrm) in the route handler below is the
+    // real content validator — extension + MIME type are not reliable
+    // indicators of file content.
     cb(null, true);
   },
 });
