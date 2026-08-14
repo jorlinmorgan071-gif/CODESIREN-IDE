@@ -71,6 +71,7 @@ interface VRMModelProps {
   audioSource: AudioNode | null;
   audioContext: AudioContext | null;
   avatarUrl: string;  // Phase B: dynamic avatar URL
+  onLoaded?: () => void;  // fires when a model finishes loading (every switch, not just initial)
 }
 
 // Vowel → VRM blendshape mapping (per VRM spec + Section 0 findings)
@@ -82,7 +83,7 @@ const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
   U: 'ou',
 };
 
-function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatarUrl }: VRMModelProps) {
+function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatarUrl, onLoaded }: VRMModelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
@@ -197,7 +198,12 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
         console.log('[face] wlipsync profile loaded:', profile.mfccs?.length, 'phonemes');
       })
       .catch(err => console.warn('[face] Failed to load lip-sync profile:', err));
-  }, [gltf]);
+
+    // Notify parent that the model has finished loading. This clears the
+    // loading spinner on avatar switches (onCreated only fires once, on
+    // initial Canvas creation — this effect fires on every model load).
+    onLoaded?.();
+  }, [gltf, onLoaded]);
 
   // Create/connect lip sync node when audio source changes
   useEffect(() => {
@@ -407,6 +413,11 @@ export default function FaceView() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Callback for VRMModel to signal when a model finishes loading. Must be
+  // memoized (useCallback) so VRMModel's [gltf, onLoaded] effect only re-runs
+  // when gltf changes (new model), not on every FaceView re-render.
+  const handleModelLoaded = useCallback(() => setLoading(false), []);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentEmotion, setCurrentEmotion] = useState<EmotionId>('neutral');
 
@@ -935,7 +946,7 @@ export default function FaceView() {
                 setError(`3D model failed to load: ${msg}`);
               }}
             >
-              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} avatarUrl={avatarUrl} />
+              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} avatarUrl={avatarUrl} onLoaded={handleModelLoaded} />
             </FaceErrorBoundary>
           </Suspense>
 
