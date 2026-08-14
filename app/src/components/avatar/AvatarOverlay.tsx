@@ -7,12 +7,11 @@
 // avatar settings API.
 
 import { useState, useEffect, useRef, Suspense, Component, type ReactNode } from 'react';
-import { Canvas, useFrame, useLoader } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { VRMUtils, VRMLoaderPlugin } from '@pixiv/three-vrm';
 import type { VRM } from '@pixiv/three-vrm';
+import { useVRMLoader } from '@/hooks/useVRMLoader';
 import { motion } from 'motion/react';
 import { X, GripHorizontal } from 'lucide-react';
 import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
@@ -62,7 +61,6 @@ interface PipVRMModelProps {
 }
 
 function PipVRMModel({ avatarUrl, currentEmotion, audioSource, audioContext }: PipVRMModelProps) {
-  const groupRef = useRef<THREE.Group>(null);
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
@@ -73,46 +71,41 @@ function PipVRMModel({ avatarUrl, currentEmotion, audioSource, audioContext }: P
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
-  const prevGltfRef = useRef<{ scene: THREE.Group; url: string } | null>(null);
 
-  const gltf = useLoader(GLTFLoader, avatarUrl, (loader: GLTFLoader) => {
-    loader.register((parser) => new VRMLoaderPlugin(parser));
-  });
+  // Shared VRM loading + disposal + orientation + shadow setup
+  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl);
 
+  // Keep vrmRef in sync for useFrame
   useEffect(() => {
-    return () => {
-      if (prevGltfRef.current && prevGltfRef.current.url !== avatarUrl) {
-        try { VRMUtils.deepDispose(prevGltfRef.current.scene); } catch { /* already disposed */ }
-        try { useLoader.clear(GLTFLoader, prevGltfRef.current.url); } catch { /* cache removed */ }
-      }
-    };
-  }, [avatarUrl]);
+    vrmRef.current = vrm ?? null;
+  }, [vrm]);
 
+  // Load wlipsync profile (async, non-blocking) — context-specific
   useEffect(() => {
-    if (gltf?.scene) prevGltfRef.current = { scene: gltf.scene, url: avatarUrl };
-  }, [gltf, avatarUrl]);
-
-  useEffect(() => {
-    if (!gltf) return;
-    const vrm = gltf.userData.vrm as VRM | undefined;
-    if (!vrm) return;
-    vrmRef.current = vrm;
-    VRMUtils.removeUnnecessaryVertices(gltf.scene);
-
     fetch('/models/lip-sync-profile.json')
       .then(res => res.json() as Promise<Profile>)
       .then(profile => { lipSyncProfileRef.current = profile; })
       .catch(() => {});
+  }, []);
 
-    if (audioSource && audioContext && lipSyncProfileRef.current && !lipSyncNodeRef.current) {
-      createWLipSyncNode(audioContext, lipSyncProfileRef.current)
-        .then(node => {
-          lipSyncNodeRef.current = node;
-          audioSource.connect(node);
-        })
-        .catch(() => { /* wlipsync init failed */ });
+  // Create/connect lip sync node when audio source changes
+  useEffect(() => {
+    if (!audioSource || !audioContext || !lipSyncProfileRef.current) return;
+    if (lipSyncNodeRef.current) {
+      try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
     }
-  }, [gltf, audioSource, audioContext]);
+    createWLipSyncNode(audioContext, lipSyncProfileRef.current)
+      .then(node => {
+        lipSyncNodeRef.current = node;
+        audioSource.connect(node);
+      })
+      .catch(() => { /* wlipsync init failed */ });
+    return () => {
+      if (lipSyncNodeRef.current && audioSource) {
+        try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
+      }
+    };
+  }, [audioSource, audioContext]);
 
   useFrame((state) => {
     const vrm = vrmRef.current;
@@ -243,9 +236,9 @@ export function AvatarOverlay({ avatarUrl, position, onClose, onDragEnd }: Avata
         </div>
         <Canvas camera={{ position: [0, 0, 3], fov: 45 }} gl={{ antialias: true, alpha: true }}
           style={{ width: '100%', height: 'calc(100% - 28px)' }}>
-          <ambientLight intensity={0.3} />
-          <pointLight position={[0, 2, 3]} intensity={1} color="#00BFFF" />
-          <pointLight position={[0, -2, 1]} intensity={0.5} color="#0088FF" />
+          <ambientLight intensity={0.6} />
+          <directionalLight position={[0, 2, 3]} intensity={1.2} color="#FFFFFF" />
+          <directionalLight position={[-2, 1, 2]} intensity={0.4} color="#FFFFFF" />
           <Suspense fallback={null}>
             <PipErrorBoundary onError={() => {}}>
               <PipVRMModel avatarUrl={avatarUrl} currentEmotion={currentEmotion}
