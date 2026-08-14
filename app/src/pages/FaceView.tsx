@@ -12,12 +12,11 @@
 //   Eyes: blink (left+right combined), lookAt (eye tracking via look-at bone)
 
 import { useState, useEffect, useRef, useCallback, Suspense, Component, lazy, type ReactNode } from 'react';
-import { Canvas, useFrame, useLoader } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { VRMUtils, VRMLoaderPlugin } from '@pixiv/three-vrm';
 import type { VRM } from '@pixiv/three-vrm';
+import { useVRMLoader } from '@/hooks/useVRMLoader';
 import { ChevronDown, User, Check, Upload, Trash2, Pencil, AlertTriangle } from 'lucide-react';
 import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
@@ -84,7 +83,6 @@ const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
 };
 
 function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatarUrl, onLoaded }: VRMModelProps) {
-  const groupRef = useRef<THREE.Group>(null);
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
@@ -96,101 +94,21 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
 
-  // Load VRM model via GLTFLoader with VRMLoaderPlugin — uses avatarUrl prop
-  const gltf = useLoader(GLTFLoader, avatarUrl, (loader: GLTFLoader) => {
-    loader.register((parser) => new VRMLoaderPlugin(parser));
-  });
+  // Shared VRM loading + disposal + orientation + shadow setup
+  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, onLoaded);
 
-  // Phase B: Leak-free switching — when avatarUrl changes, deepDispose the old
-  // model's GPU resources (geometries, textures, materials) AND clear R3F's
-  // loader cache. useLoader.clear alone does NOT free GPU memory — it only
-  // removes the entry from the cache Map. VRMUtils.deepDispose traverses the
-  // scene graph and calls .dispose() on every geometry, material, and texture.
-  const prevGltfRef = useRef<{ scene: THREE.Group; url: string } | null>(null);
-
-  // Keep a ref to the CURRENT avatarUrl so the disposal cleanup can read the
-  // live value instead of the stale one captured in its closure. Without this,
-  // the cleanup's guard (prevGltfRef.current.url !== avatarUrl) compares the
-  // old url against itself — both are the old value captured at effect-setup
-  // time — so disposal never fires and every avatar switch leaks GPU memory.
-  //
-  // CRITICAL: the ref is updated DURING RENDER (not in a useEffect) because
-  // useLoader suspends during render when the URL changes. If we used a
-  // useEffect to update the ref, the effect would never run — useLoader
-  // throws a Promise before effects fire, the component unmounts, and the
-  // cleanup fires with the ref still holding the OLD url. Updating during
-  // render ensures the ref is current by the time the cleanup runs.
-  const currentUrlRef = useRef(avatarUrl);
-  // eslint-disable-next-line react-hooks/refs -- intentional: the ref MUST be current by the time the disposal cleanup fires. useLoader suspends during render when avatarUrl changes, so a useEffect-based update would never run before the cleanup. Updating during render is the documented React pattern for this case (https://react.dev/reference/react/useRef).
-  currentUrlRef.current = avatarUrl;  // synchronous, every render
-
+  // Keep vrmRef in sync for useFrame
   useEffect(() => {
-    return () => {
-      // Read the LIVE avatarUrl from the ref, not the stale closure value.
-      // When avatarUrl changes, React runs this OLD cleanup first; at that
-      // moment currentUrlRef.current is already the NEW url (updated during
-      // the render that triggered this cleanup), so the guard correctly
-      // evaluates to true when the URL genuinely changed.
-      if (prevGltfRef.current && prevGltfRef.current.url !== currentUrlRef.current) {
-        try {
-          // 1. deepDispose — frees GPU resources (geometries, textures, materials)
-          VRMUtils.deepDispose(prevGltfRef.current.scene);
-          console.log(`[face] deepDispose old avatar: ${prevGltfRef.current.url}`);
-        } catch {
-          // deepDispose may fail if already disposed
-        }
-        try {
-          // 2. useLoader.clear — removes the entry from R3F's loader cache
-          useLoader.clear(GLTFLoader, prevGltfRef.current.url);
-        } catch {
-          // cache entry may already be removed
-        }
-      }
-    };
-  }, [avatarUrl]);
-
-  // Store the current gltf scene for disposal on next switch
-  useEffect(() => {
-    if (gltf?.scene) {
-      prevGltfRef.current = { scene: gltf.scene, url: avatarUrl };
-    }
-  }, [gltf, avatarUrl]);
-
-  useEffect(() => {
-    if (!gltf) return;
-    const vrm = gltf.userData.vrm as VRM | undefined;
-    if (!vrm) {
-      console.error('[face] No VRM data in gltf.userData');
-      return;
-    }
-    vrmRef.current = vrm;
-
-    // Remove unnecessary materials/shaders — use VRM's built-in MToon shader
-    VRMUtils.removeUnnecessaryVertices(gltf.scene);
-    // Orient VRM 0.x models to face the camera. VRMUtils.rotateVRM0 checks
-    // the version internally — 0.x models get a 180° Y rotation (they face
-    // +Z by spec, camera looks down -Z), 1.0 models are left untouched
-    // (they already face -Z by spec). All 4 current avatars (1× VRM 1.0
-    // default + 3× VRM 0.x) end up facing the camera correctly.
-    VRMUtils.rotateVRM0(vrm);
-    // VRMUtils.combineSkeletons(vrm); // type mismatch — skip for now
-
-    // Log available blendshapes
-    if (vrm.expressionManager) {
+    vrmRef.current = vrm ?? null;
+    if (vrm?.expressionManager) {
       const expressions = vrm.expressionManager.expressions;
       console.log(`[face] VRM loaded with ${expressions.length} expressions:`,
         expressions.map(e => e.expressionName).join(', '));
     }
+  }, [vrm]);
 
-    // Enable shadows
-    gltf.scene.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-
-    // Load wlipsync profile (async, non-blocking)
+  // Load wlipsync profile (async, non-blocking) — context-specific
+  useEffect(() => {
     fetch('/models/lip-sync-profile.json')
       .then(res => res.json() as Promise<Profile>)
       .then(profile => {
@@ -198,12 +116,7 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
         console.log('[face] wlipsync profile loaded:', profile.mfccs?.length, 'phonemes');
       })
       .catch(err => console.warn('[face] Failed to load lip-sync profile:', err));
-
-    // Notify parent that the model has finished loading. This clears the
-    // loading spinner on avatar switches (onCreated only fires once, on
-    // initial Canvas creation — this effect fires on every model load).
-    onLoaded?.();
-  }, [gltf, onLoaded]);
+  }, []);
 
   // Create/connect lip sync node when audio source changes
   useEffect(() => {
