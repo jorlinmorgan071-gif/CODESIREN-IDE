@@ -359,6 +359,24 @@ investigation (if any) is needed before implementation.
   thumbnail resolution, or skip the 3D preview render for files >20MB.
   Each has tradeoffs that need evaluation. Separate directive needed.
 
+### PIP/InteractionBubble Canvas mount/unmount on every toggle — deferred, causes WebGL context churn
+- **Status:** Deferred. Not started.
+- **What it is:** AvatarOverlay (PIP) and InteractionBubble conditionally
+  mount/unmount their `<Canvas>` via `{pipEnabled && <AvatarOverlay>}` in
+  Home.tsx. Every toggle creates a new WebGL context (GPU allocation + shader
+  compilation) and destroys the old one (GPU cleanup). Rapid toggling
+  (on/off/on/off in <2s) creates a context churn storm that can freeze the
+  page or exhaust the browser's ~16-context limit.
+- **Why deferred:** The real fix is a visibility-based approach — keep the
+  `<Canvas>` persistently mounted and toggle visibility via CSS (`display:
+  none` / `opacity: 0`) instead of conditional rendering. This preserves
+  the WebGL context across toggles and eliminates the creation/teardown
+  cost. Out of scope for the current VRM-loader consolidation — it's a
+  rendering architecture change, not a VRM loading issue.
+- **Affected files:** `app/src/pages/Home.tsx` (PIP: line 516, Bubble:
+  line 586), `app/src/components/avatar/AvatarOverlay.tsx`,
+  `app/src/components/voice/InteractionBubble.tsx`
+
 ---
 
 ## 11. Summary
