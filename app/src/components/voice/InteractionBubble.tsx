@@ -13,16 +13,15 @@
 
 import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
 import { motion } from 'motion/react';
-import { Canvas, useFrame, useLoader } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { useApp } from '@/store/AppContext';
 import { themes } from '@/store/themes';
 import { Mic, MicOff, PhoneOff, Monitor, Video, Maximize2, Minimize2, X } from 'lucide-react';
 import { getToken } from '@/lib/auth';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import type { VRM } from '@pixiv/three-vrm';
+import { useVRMLoader } from '@/hooks/useVRMLoader';
 import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
@@ -118,7 +117,6 @@ const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
 //   - All driven by the same VoiceSessionContext audio source
 function VRMBubbleContent({ avatarUrl }: { avatarUrl: string }) {
   const { currentAudioSource, audioContext } = useVoiceSession();
-  const groupRef = useRef<THREE.Group>(null);
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
@@ -129,47 +127,22 @@ function VRMBubbleContent({ avatarUrl }: { avatarUrl: string }) {
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
-  const prevGltfRef = useRef<{ scene: THREE.Group; url: string } | null>(null);
 
-  const gltf = useLoader(GLTFLoader, avatarUrl, (loader: GLTFLoader) => {
-    loader.register((parser) => new VRMLoaderPlugin(parser));
-  });
+  // Shared VRM loading + disposal + orientation + shadow setup
+  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl);
 
-  // Leak-free switching
+  // Keep vrmRef in sync for useFrame
   useEffect(() => {
-    return () => {
-      if (prevGltfRef.current && prevGltfRef.current.url !== avatarUrl) {
-        try { VRMUtils.deepDispose(prevGltfRef.current.scene); } catch { /* */ }
-        try { useLoader.clear(GLTFLoader, prevGltfRef.current.url); } catch { /* */ }
-      }
-    };
-  }, [avatarUrl]);
+    vrmRef.current = vrm ?? null;
+  }, [vrm]);
 
+  // Load wlipsync profile (async, non-blocking) — context-specific
   useEffect(() => {
-    if (gltf?.scene) prevGltfRef.current = { scene: gltf.scene, url: avatarUrl };
-  }, [gltf, avatarUrl]);
-
-  useEffect(() => {
-    if (!gltf) return;
-    const vrm = gltf.userData.vrm as VRM | undefined;
-    if (!vrm) return;
-    vrmRef.current = vrm;
-    VRMUtils.removeUnnecessaryVertices(gltf.scene);
-
-    // Enable shadows
-    gltf.scene.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-
-    // Load wlipsync profile
     fetch('/models/lip-sync-profile.json')
       .then(res => res.json() as Promise<Profile>)
       .then(profile => { lipSyncProfileRef.current = profile; })
       .catch(() => {});
-  }, [gltf]);
+  }, []);
 
   // Connect lip sync to audio source
   useEffect(() => {
