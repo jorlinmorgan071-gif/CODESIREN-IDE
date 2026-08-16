@@ -84,6 +84,47 @@ export function useVRMLoader(avatarUrl: string, onLoaded?: () => void): UseVRMLo
     VRMUtils.removeUnnecessaryVertices(gltf.scene);
     VRMUtils.rotateVRM0(vrm);
 
+    // ── Idle pose correction: rotate arms down from T-pose ──
+    // VRM models load in T-pose (arms horizontal). Rotate upper arms down
+    // to a relaxed resting pose (arms at sides, slightly out). Also apply
+    // a slight shoulder raise and very subtle spine lean for natural posture.
+    const humanoid = vrm.humanoid;
+    if (humanoid) {
+      const lArm = humanoid.getNormalizedBoneNode('leftUpperArm');
+      const rArm = humanoid.getNormalizedBoneNode('rightUpperArm');
+      const lShoulder = humanoid.getNormalizedBoneNode('leftShoulder');
+      const rShoulder = humanoid.getNormalizedBoneNode('rightShoulder');
+      const spine = humanoid.getNormalizedBoneNode('spine');
+      if (lArm) lArm.rotation.z = 1.2;       // ~69° — arms down to sides
+      if (rArm) rArm.rotation.z = -1.2;      // mirror
+      if (lShoulder) lShoulder.rotation.z = 0.1;  // ~6° — natural shoulder
+      if (rShoulder) rShoulder.rotation.z = -0.1;  // mirror
+      if (spine) spine.rotation.x = 0.05;    // ~3° — slight relaxed lean
+    }
+
+    // ── Spring bone gravity fix: set gravity on zero-gravity joints ──
+    // Some VRM files (notably Hatsune Miku) ship with gravityPower=0 on all
+    // spring bone joints, causing hair/cloth to float unrealistically. Set
+    // a moderate gravity on joints that currently have none. Joints that
+    // already have non-zero gravity (tuned by the model author) are left
+    // untouched.
+    {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sbm: any = (vrm as any).springBoneManager;
+      if (sbm && sbm.joints) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const jointsArr: any[] = Array.from(sbm.joints);
+        for (const joint of jointsArr) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const s: any = joint.settings;
+          if (s && s.gravityPower === 0) {
+            s.gravityPower = 0.5;
+            s.gravityDir.set(0, -1, 0);
+          }
+        }
+      }
+    }
+
     gltf.scene.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         child.castShadow = true;
