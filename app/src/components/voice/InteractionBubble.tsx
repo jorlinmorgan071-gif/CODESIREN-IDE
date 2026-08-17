@@ -18,7 +18,7 @@ import * as THREE from 'three';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { useApp } from '@/store/AppContext';
 import { themes } from '@/store/themes';
-import { Mic, MicOff, PhoneOff, Monitor, Video, Maximize2, Minimize2, X } from 'lucide-react';
+import { Mic, MicOff, PhoneOff, Monitor, Video, Maximize2, Minimize2, X, Info } from 'lucide-react';
 import { getToken } from '@/lib/auth';
 import type { VRM } from '@pixiv/three-vrm';
 import { useVRMLoader } from '@/hooks/useVRMLoader';
@@ -44,6 +44,8 @@ import {
 } from '@/lib/avatar-compatibility';
 import { applyAvatarPresentationPose, getAvatarGazeTarget } from '@/lib/avatar-compatibility-runtime';
 import { useAvatarCompatibility } from '@/hooks/useAvatarCompatibility';
+import { useAvatarDiagnosticsSnapshot, type AvatarDiagnosticsRuntimeState, type AvatarDiagnosticsViewSnapshot } from '@/hooks/useAvatarDiagnosticsSnapshot';
+import { AvatarDiagnosticsSheetHost } from '@/components/avatar/AvatarDiagnosticsSheetHost';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -122,7 +124,19 @@ const blobShadowTexture = new THREE.CanvasTexture(blobShadowCanvas);
 //   - Blob shadow (radial gradient at feet)
 //   - Leak-free switching (VRMUtils.deepDispose)
 //   - All driven by the same VoiceSessionContext audio source
-function VRMBubbleContent({ avatarUrl, animationRegistry }: { avatarUrl: string; animationRegistry: LocalVrmaRegistry }) {
+function VRMBubbleContent({
+  avatarUrl,
+  animationRegistry,
+  diagnosticsOpen,
+  diagnosticsRefreshToken,
+  onDiagnosticsSnapshot,
+}: {
+  avatarUrl: string;
+  animationRegistry: LocalVrmaRegistry;
+  diagnosticsOpen: boolean;
+  diagnosticsRefreshToken: number;
+  onDiagnosticsSnapshot: (snapshot: AvatarDiagnosticsViewSnapshot) => void;
+}) {
   const { currentAudioSource, audioContext, isActive } = useVoiceSession();
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
@@ -135,6 +149,7 @@ function VRMBubbleContent({ avatarUrl, animationRegistry }: { avatarUrl: string;
   const lipSyncProfileRef = useRef<Profile | null>(null);
   const motionRef = useRef(createAvatarMotionSnapshot(0));
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
+  const diagnosticsRuntimeRef = useRef<AvatarDiagnosticsRuntimeState>({ currentMotionState: 'idle', activeAnimation: null, proceduralFallback: true });
   const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
@@ -144,6 +159,20 @@ function VRMBubbleContent({ avatarUrl, animationRegistry }: { avatarUrl: string;
     () => resolveExpressionAliases(compatibility.profile, capabilities),
     [capabilities, compatibility.profile],
   );
+  const getDiagnosticsRuntimeState = useCallback(() => diagnosticsRuntimeRef.current, []);
+  const { snapshot: diagnosticsSnapshot } = useAvatarDiagnosticsSnapshot({
+    context: 'bubble',
+    compatibility,
+    capabilities,
+    animationRegistry,
+    getRuntimeState: getDiagnosticsRuntimeState,
+    isOpen: diagnosticsOpen,
+    refreshToken: diagnosticsRefreshToken,
+  });
+
+  useEffect(() => {
+    if (diagnosticsSnapshot) onDiagnosticsSnapshot(diagnosticsSnapshot);
+  }, [diagnosticsSnapshot, onDiagnosticsSnapshot]);
 
   // Keep vrmRef in sync for useFrame
   useEffect(() => {
@@ -231,9 +260,15 @@ function VRMBubbleContent({ avatarUrl, animationRegistry }: { avatarUrl: string;
       player?.hasClip(targetState) && isAnimationStateCompatible(compatibility.profile, capabilities, targetState),
     ));
     player?.setState(animationSupported ? requestedState : 'idle');
-    const pose = !player || !animationSupported || shouldUseProceduralMotion(requestedState, loadedStates)
+    const proceduralFallback = !player || !animationSupported || shouldUseProceduralMotion(requestedState, loadedStates);
+    const pose = proceduralFallback
       ? getAvatarMotionPose(requestedState, elapsedSeconds)
       : { verticalOffset: 0, pitchOffset: 0, yawOffset: 0 };
+    diagnosticsRuntimeRef.current = {
+      currentMotionState: requestedState,
+      activeAnimation: proceduralFallback ? null : requestedState,
+      proceduralFallback,
+    };
 
     player?.update(delta);
     vrm.update(delta);
@@ -447,18 +482,21 @@ function OrbVisualization({ analyser, accentColor }: { analyser: AnalyserNode | 
 
 // ── Bubble Visualization Switcher ────────────────────────────────────────
 function BubbleVisualization({
-  visual, analyser, accentColor, avatarUrl, animationRegistry,
+  visual, analyser, accentColor, avatarUrl, animationRegistry, diagnosticsOpen, diagnosticsRefreshToken, onDiagnosticsSnapshot,
 }: {
   visual: string;
   analyser: AnalyserNode | null;
   accentColor: string;
   avatarUrl: string;
   animationRegistry: LocalVrmaRegistry;
+  diagnosticsOpen: boolean;
+  diagnosticsRefreshToken: number;
+  onDiagnosticsSnapshot: (snapshot: AvatarDiagnosticsViewSnapshot) => void;
 }) {
   if (visual === 'vrm' && avatarUrl) {
     return (
       <Suspense fallback={<PulseVisualization analyser={analyser} accentColor={accentColor} />}>
-        <VRMBubbleContent avatarUrl={avatarUrl} animationRegistry={animationRegistry} />
+        <VRMBubbleContent avatarUrl={avatarUrl} animationRegistry={animationRegistry} diagnosticsOpen={diagnosticsOpen} diagnosticsRefreshToken={diagnosticsRefreshToken} onDiagnosticsSnapshot={onDiagnosticsSnapshot} />
       </Suspense>
     );
   }
@@ -530,6 +568,9 @@ export function InteractionBubble({ onClose }: { onClose?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [position, setPosition] = useState({ x: 100, y: 100 });
   const didDragRef = useRef(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticsRefreshToken, setDiagnosticsRefreshToken] = useState(0);
+  const [diagnosticsSnapshot, setDiagnosticsSnapshot] = useState<AvatarDiagnosticsViewSnapshot | null>(null);
 
   // Phase B: Bubble accessibility settings
   const [bubbleSettings, setBubbleSettings] = useState({
@@ -673,6 +714,10 @@ export function InteractionBubble({ onClose }: { onClose?: () => void }) {
   const size = expanded ? 300 : (bubbleSizeMap[bubbleSettings.bubbleSize as keyof typeof bubbleSizeMap] ?? 120);
   const height = expanded ? 400 : (bubbleSizeMap[bubbleSettings.bubbleSize as keyof typeof bubbleSizeMap] ?? 120);
   const borderRadius = expanded ? 12 : (bubbleSettings.bubbleShape === 'circle' ? '50%' : bubbleSettings.bubbleShape === 'rounded' ? 24 : bubbleSettings.bubbleShape === 'squircle' ? '35%' : 12);
+  const bubbleAvatarUrl = bubbleSettings.bubbleAvatarId === 'default'
+    ? '/models/avatars/default/model.vrm'
+    : `/models/avatars/${bubbleSettings.bubbleAvatarId}/model.vrm`;
+  const visibleDiagnosticsSnapshot = diagnosticsSnapshot?.diagnostics.avatarUrl === bubbleAvatarUrl ? diagnosticsSnapshot : null;
 
   return (
     <>
@@ -733,10 +778,11 @@ export function InteractionBubble({ onClose }: { onClose?: () => void }) {
                     visual={bubbleSettings.bubbleVisual}
                     analyser={analyser}
                     accentColor={accentColor}
-                    avatarUrl={bubbleSettings.bubbleAvatarId === 'default'
-                      ? '/models/avatars/default/model.vrm'
-                      : `/models/avatars/${bubbleSettings.bubbleAvatarId}/model.vrm`}
+                    avatarUrl={bubbleAvatarUrl}
                     animationRegistry={animationRegistry}
+                    diagnosticsOpen={diagnosticsOpen}
+                    diagnosticsRefreshToken={diagnosticsRefreshToken}
+                    onDiagnosticsSnapshot={setDiagnosticsSnapshot}
                   />
                 </Canvas>
 
@@ -807,6 +853,19 @@ export function InteractionBubble({ onClose }: { onClose?: () => void }) {
                       <PhoneOff className="w-3 h-3" />
                     </button>
                   )}
+                  {expanded && (
+                    <button
+                      type="button"
+                      title="Open avatar diagnostics"
+                      aria-label="Open avatar diagnostics"
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => { event.stopPropagation(); setDiagnosticsOpen(true); }}
+                      className="p-1 rounded transition-colors hover:bg-white/10"
+                      style={{ color: 'var(--steel-silver)' }}
+                    >
+                      <Info className="w-3 h-3" />
+                    </button>
+                  )}
                   <button
                     onClick={() => setExpanded(!expanded)}
                     className="p-1 rounded transition-colors hover:bg-white/10"
@@ -830,6 +889,13 @@ export function InteractionBubble({ onClose }: { onClose?: () => void }) {
               <BubbleCaption captions={captions} settings={bubbleSettings} />
             </div>
           </motion.div>
+      <AvatarDiagnosticsSheetHost
+        open={diagnosticsOpen}
+        variant="sheet"
+        snapshot={visibleDiagnosticsSnapshot}
+        onOpenChange={setDiagnosticsOpen}
+        onRefresh={() => setDiagnosticsRefreshToken((token) => token + 1)}
+      />
     </>
   );
 }

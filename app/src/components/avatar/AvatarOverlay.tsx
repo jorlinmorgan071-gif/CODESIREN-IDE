@@ -6,14 +6,14 @@
 // 2D drag with viewport bounds. Position + visibility persisted via the
 // avatar settings API.
 
-import { useState, useEffect, useRef, useMemo, Suspense, Component, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Suspense, Component, type ReactNode } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { VRM } from '@pixiv/three-vrm';
 import { useVRMLoader } from '@/hooks/useVRMLoader';
 import { motion } from 'motion/react';
-import { X, GripHorizontal } from 'lucide-react';
+import { X, GripHorizontal, Info } from 'lucide-react';
 import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { wsClient } from '@/lib/ws';
@@ -39,6 +39,8 @@ import {
 } from '@/lib/avatar-compatibility';
 import { applyAvatarPresentationPose, getAvatarGazeTarget } from '@/lib/avatar-compatibility-runtime';
 import { useAvatarCompatibility } from '@/hooks/useAvatarCompatibility';
+import { useAvatarDiagnosticsSnapshot, type AvatarDiagnosticsRuntimeState, type AvatarDiagnosticsViewSnapshot } from '@/hooks/useAvatarDiagnosticsSnapshot';
+import { AvatarDiagnosticsSheetHost } from './AvatarDiagnosticsSheetHost';
 
 type EmotionId = 'happy' | 'sad' | 'angry' | 'think' | 'surprised' | 'neutral';
 
@@ -78,9 +80,12 @@ interface PipVRMModelProps {
   audioSource: AudioNode | null;
   audioContext: AudioContext | null;
   animationRegistry: LocalVrmaRegistry;
+  diagnosticsOpen: boolean;
+  diagnosticsRefreshToken: number;
+  onDiagnosticsSnapshot: (snapshot: AvatarDiagnosticsViewSnapshot) => void;
 }
 
-function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioContext, animationRegistry }: PipVRMModelProps) {
+function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioContext, animationRegistry, diagnosticsOpen, diagnosticsRefreshToken, onDiagnosticsSnapshot }: PipVRMModelProps) {
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
@@ -92,6 +97,7 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
   const lipSyncProfileRef = useRef<Profile | null>(null);
   const motionRef = useRef(createAvatarMotionSnapshot(0));
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
+  const diagnosticsRuntimeRef = useRef<AvatarDiagnosticsRuntimeState>({ currentMotionState: 'idle', activeAnimation: null, proceduralFallback: true });
   const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
@@ -101,6 +107,20 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
     () => resolveExpressionAliases(compatibility.profile, capabilities),
     [capabilities, compatibility.profile],
   );
+  const getDiagnosticsRuntimeState = useCallback(() => diagnosticsRuntimeRef.current, []);
+  const { snapshot: diagnosticsSnapshot } = useAvatarDiagnosticsSnapshot({
+    context: 'pip',
+    compatibility,
+    capabilities,
+    animationRegistry,
+    getRuntimeState: getDiagnosticsRuntimeState,
+    isOpen: diagnosticsOpen,
+    refreshToken: diagnosticsRefreshToken,
+  });
+
+  useEffect(() => {
+    if (diagnosticsSnapshot) onDiagnosticsSnapshot(diagnosticsSnapshot);
+  }, [diagnosticsSnapshot, onDiagnosticsSnapshot]);
 
   // Keep vrmRef in sync for useFrame
   useEffect(() => {
@@ -187,9 +207,15 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
       player?.hasClip(targetState) && isAnimationStateCompatible(compatibility.profile, capabilities, targetState),
     ));
     player?.setState(animationSupported ? requestedState : 'idle');
-    const pose = !player || !animationSupported || shouldUseProceduralMotion(requestedState, loadedStates)
+    const proceduralFallback = !player || !animationSupported || shouldUseProceduralMotion(requestedState, loadedStates);
+    const pose = proceduralFallback
       ? getAvatarMotionPose(requestedState, elapsedSeconds)
       : { verticalOffset: 0, pitchOffset: 0, yawOffset: 0 };
+    diagnosticsRuntimeRef.current = {
+      currentMotionState: requestedState,
+      activeAnimation: proceduralFallback ? null : requestedState,
+      proceduralFallback,
+    };
 
     player?.update(delta);
     vrm.update(delta);
@@ -282,6 +308,10 @@ export function AvatarOverlay({ avatarUrl, position, onClose, onDragEnd }: Avata
   const { currentAudioSource, audioContext, isActive } = useVoiceSession();
   const { animationRegistry } = useLocalVrmaRegistry();
   const [currentEmotion] = useState<EmotionId>('neutral');
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticsRefreshToken, setDiagnosticsRefreshToken] = useState(0);
+  const [diagnosticsSnapshot, setDiagnosticsSnapshot] = useState<AvatarDiagnosticsViewSnapshot | null>(null);
+  const visibleDiagnosticsSnapshot = diagnosticsSnapshot?.diagnostics.avatarUrl === avatarUrl ? diagnosticsSnapshot : null;
 
   useEffect(() => {
     const offAgentChunk = wsClient.on('voice:agent-chunk' as never, () => {});
@@ -323,9 +353,21 @@ export function AvatarOverlay({ avatarUrl, position, onClose, onDragEnd }: Avata
             <GripHorizontal className="w-3 h-3" style={{ color: 'var(--muted-silver)' }} />
             <span className="text-[10px] font-medium" style={{ color: 'var(--steel-silver)' }}>Avatar PIP</span>
           </div>
-          <button onClick={onClose} className="p-0.5 rounded hover:bg-white/10 transition-colors">
-            <X className="w-3 h-3" style={{ color: 'var(--steel-silver)' }} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              title="Open avatar diagnostics"
+              aria-label="Open avatar diagnostics"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => { event.stopPropagation(); setDiagnosticsOpen(true); }}
+              className="p-0.5 rounded hover:bg-white/10 transition-colors"
+            >
+              <Info className="w-3 h-3" style={{ color: 'var(--steel-silver)' }} />
+            </button>
+            <button onClick={onClose} className="p-0.5 rounded hover:bg-white/10 transition-colors">
+              <X className="w-3 h-3" style={{ color: 'var(--steel-silver)' }} />
+            </button>
+          </div>
         </div>
         <Canvas camera={{ position: [0, 0, 3], fov: 45 }} gl={{ antialias: true, alpha: true }}
           style={{ width: '100%', height: 'calc(100% - 28px)' }}>
@@ -335,12 +377,20 @@ export function AvatarOverlay({ avatarUrl, position, onClose, onDragEnd }: Avata
           <Suspense fallback={null}>
             <PipErrorBoundary onError={() => {}}>
               <PipVRMModel avatarUrl={avatarUrl} currentEmotion={currentEmotion} isActive={isActive}
-                audioSource={currentAudioSource} audioContext={audioContext} animationRegistry={animationRegistry} />
+                audioSource={currentAudioSource} audioContext={audioContext} animationRegistry={animationRegistry}
+                diagnosticsOpen={diagnosticsOpen} diagnosticsRefreshToken={diagnosticsRefreshToken} onDiagnosticsSnapshot={setDiagnosticsSnapshot} />
             </PipErrorBoundary>
           </Suspense>
           <OrbitControls enablePan={false} enableZoom={true} minDistance={1.5} maxDistance={6} />
         </Canvas>
       </motion.div>
+      <AvatarDiagnosticsSheetHost
+        open={diagnosticsOpen}
+        variant="sheet"
+        snapshot={visibleDiagnosticsSnapshot}
+        onOpenChange={setDiagnosticsOpen}
+        onRefresh={() => setDiagnosticsRefreshToken((token) => token + 1)}
+      />
     </>
   );
 }

@@ -17,7 +17,7 @@ import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { VRM } from '@pixiv/three-vrm';
 import { useVRMLoader } from '@/hooks/useVRMLoader';
-import { ChevronDown, User, Check, Upload, Trash2, Pencil, AlertTriangle } from 'lucide-react';
+import { ChevronDown, User, Check, Upload, Trash2, Pencil, AlertTriangle, PanelRightOpen } from 'lucide-react';
 import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { useApp } from '@/store/AppContext';
@@ -53,6 +53,8 @@ import {
 } from '@/lib/avatar-compatibility';
 import { applyAvatarPresentationPose, getAvatarGazeTarget } from '@/lib/avatar-compatibility-runtime';
 import { useAvatarCompatibility } from '@/hooks/useAvatarCompatibility';
+import { useAvatarDiagnosticsSnapshot, type AvatarDiagnosticsRuntimeState, type AvatarDiagnosticsViewSnapshot } from '@/hooks/useAvatarDiagnosticsSnapshot';
+import { AvatarDiagnosticsSheetHost } from '@/components/avatar/AvatarDiagnosticsSheetHost';
 
 // Phase B: Lazy-load the upload dialog (heavy: Three.js + VRM analysis)
 const AvatarUploadDialogLazy = lazy(() =>
@@ -101,9 +103,12 @@ interface VRMModelProps {
   animationRegistry: LocalVrmaRegistry;
   onLoaded?: () => void;  // fires when a model finishes loading (every switch, not just initial)
   onAnimationError?: (message: string) => void;
+  diagnosticsOpen: boolean;
+  diagnosticsRefreshToken: number;
+  onDiagnosticsSnapshot: (snapshot: AvatarDiagnosticsViewSnapshot) => void;
 }
 
-function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioContext, avatarUrl, animationRegistry, onLoaded, onAnimationError }: VRMModelProps) {
+function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioContext, avatarUrl, animationRegistry, onLoaded, onAnimationError, diagnosticsOpen, diagnosticsRefreshToken, onDiagnosticsSnapshot }: VRMModelProps) {
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
@@ -115,6 +120,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
   const lipSyncProfileRef = useRef<Profile | null>(null);
   const motionRef = useRef(createAvatarMotionSnapshot(0));
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
+  const diagnosticsRuntimeRef = useRef<AvatarDiagnosticsRuntimeState>({ currentMotionState: 'idle', activeAnimation: null, proceduralFallback: true });
   const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
@@ -124,6 +130,20 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
     () => resolveExpressionAliases(compatibility.profile, capabilities),
     [capabilities, compatibility.profile],
   );
+  const getDiagnosticsRuntimeState = useCallback(() => diagnosticsRuntimeRef.current, []);
+  const { snapshot: diagnosticsSnapshot } = useAvatarDiagnosticsSnapshot({
+    context: 'face',
+    compatibility,
+    capabilities,
+    animationRegistry,
+    getRuntimeState: getDiagnosticsRuntimeState,
+    isOpen: diagnosticsOpen,
+    refreshToken: diagnosticsRefreshToken,
+  });
+
+  useEffect(() => {
+    if (diagnosticsSnapshot) onDiagnosticsSnapshot(diagnosticsSnapshot);
+  }, [diagnosticsSnapshot, onDiagnosticsSnapshot]);
 
   // Keep vrmRef in sync for useFrame
   useEffect(() => {
@@ -253,9 +273,15 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
       player?.hasClip(targetState) && isAnimationStateCompatible(compatibility.profile, capabilities, targetState),
     ));
     player?.setState(animationSupported ? requestedState : 'idle');
-    const pose = !player || !animationSupported || shouldUseProceduralMotion(requestedState, loadedStates)
+    const proceduralFallback = !player || !animationSupported || shouldUseProceduralMotion(requestedState, loadedStates);
+    const pose = proceduralFallback
       ? getAvatarMotionPose(requestedState, elapsedSeconds)
       : { verticalOffset: 0, pitchOffset: 0, yawOffset: 0 };
+    diagnosticsRuntimeRef.current = {
+      currentMotionState: requestedState,
+      activeAnimation: proceduralFallback ? null : requestedState,
+      proceduralFallback,
+    };
 
     // Use the same R3F delta for animation mixing and VRM spring-bone updates.
     player?.update(delta);
@@ -459,6 +485,13 @@ export default function FaceView() {
   } = useLocalVrmaRegistry();
   const [localVrmaTargetState, setLocalVrmaTargetState] = useState<LocalVrmaTargetState>('idle');
   const localVrmaInputRef = useRef<HTMLInputElement>(null);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticsRefreshToken, setDiagnosticsRefreshToken] = useState(0);
+  const [diagnosticsSnapshot, setDiagnosticsSnapshot] = useState<AvatarDiagnosticsViewSnapshot | null>(null);
+  const visibleDiagnosticsSnapshot = useMemo(
+    () => diagnosticsSnapshot?.diagnostics.avatarUrl === avatarUrl ? diagnosticsSnapshot : null,
+    [avatarUrl, diagnosticsSnapshot],
+  );
 
   // Phase B: Voice-to-Code-Written v1 — write confirmation state
   const [pendingWrite, setPendingWrite] = useState<{
@@ -977,7 +1010,16 @@ export default function FaceView() {
         <span className="text-[12px] font-medium" style={{ color: 'var(--bright-silver)' }}>
           Face Avatar {isActive && <span style={{ color: 'var(--siren-red)' }}>• LIVE</span>}
         </span>
-        <div className="w-6" />
+        <button
+          type="button"
+          onClick={() => setDiagnosticsOpen(true)}
+          title="Open avatar diagnostics"
+          aria-label="Open avatar diagnostics"
+          className="rounded-md p-1.5 transition-colors hover:bg-[var(--surface-raised)]"
+          style={{ color: 'var(--steel-silver)' }}
+        >
+          <PanelRightOpen className="w-4 h-4" />
+        </button>
       </div>
 
       {/* 3D Scene */}
@@ -1020,7 +1062,7 @@ export default function FaceView() {
                 setError(`3D model failed to load: ${msg}`);
               }}
             >
-              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} avatarUrl={avatarUrl} animationRegistry={localVrmaRegistry} onLoaded={handleModelLoaded} onAnimationError={setError} />
+              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} avatarUrl={avatarUrl} animationRegistry={localVrmaRegistry} onLoaded={handleModelLoaded} onAnimationError={setError} diagnosticsOpen={diagnosticsOpen} diagnosticsRefreshToken={diagnosticsRefreshToken} onDiagnosticsSnapshot={setDiagnosticsSnapshot} />
             </FaceErrorBoundary>
           </Suspense>
 
@@ -1600,6 +1642,13 @@ export default function FaceView() {
           )}
         </div>
       </div>
+      <AvatarDiagnosticsSheetHost
+        open={diagnosticsOpen}
+        variant="drawer"
+        snapshot={visibleDiagnosticsSnapshot}
+        onOpenChange={setDiagnosticsOpen}
+        onRefresh={() => setDiagnosticsRefreshToken((token) => token + 1)}
+      />
     </div>
   );
 }
