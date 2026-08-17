@@ -50,12 +50,13 @@ describe('session-only VRMA selection', () => {
   it('maps several local sessions by state and replaces only the selected state', () => {
     const idle = { url: 'blob:idle', fileName: 'idle.vrma', sizeBytes: 1, targetState: 'idle' as const };
     const think = { url: 'blob:think', fileName: 'think.vrma', sizeBytes: 1, targetState: 'thinking' as const };
+    const speaking = { url: 'blob:speaking', fileName: 'speaking.vrma', sizeBytes: 1, targetState: 'speaking' as const };
     const replacementIdle = { url: 'blob:idle-2', fileName: 'idle-2.vrma', sizeBytes: 1, targetState: 'idle' as const };
 
-    const registry = setLocalVrmaRegistryEntry(setLocalVrmaRegistryEntry({}, idle), think);
+    const registry = setLocalVrmaRegistryEntry(setLocalVrmaRegistryEntry(setLocalVrmaRegistryEntry({}, idle), think), speaking);
     const replaced = setLocalVrmaRegistryEntry(registry, replacementIdle);
 
-    expect(getLocalVrmaRegistryEntries(replaced)).toEqual([replacementIdle, think]);
-    expect(removeLocalVrmaRegistryEntry(replaced, 'idle')).toEqual({ thinking: think });
+    expect(getLocalVrmaRegistryEntries(replaced)).toEqual([replacementIdle, speaking, think]);
+    expect(removeLocalVrmaRegistryEntry(replaced, 'idle')).toEqual({ speaking, thinking: think });
   });
 });

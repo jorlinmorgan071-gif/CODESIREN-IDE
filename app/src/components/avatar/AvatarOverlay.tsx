@@ -6,7 +6,7 @@
 // 2D drag with viewport bounds. Position + visibility persisted via the
 // avatar settings API.
 
-import { useState, useEffect, useRef, Suspense, Component, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useMemo, Suspense, Component, type ReactNode } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -23,20 +23,32 @@ import {
   getAvatarMotionPose,
   reduceAvatarMotion,
 } from '@/lib/avatar-motion';
+import {
+  getLocalVrmaRegistryEntries,
+  LOCAL_VRMA_TARGET_STATES,
+  type LocalVrmaRegistry,
+} from '@/lib/local-vrma-session';
+import { LocalVrmaPlayer, shouldUseProceduralMotion } from '@/lib/vrma-player';
+import { useLocalVrmaRegistry } from '@/store/LocalVrmaRegistryContext';
+import {
+  detectAvatarCapabilities,
+  isAnimationStateCompatible,
+  resolveExpressionAliases,
+  resolveSemanticExpressionValues,
+  type SemanticExpression,
+} from '@/lib/avatar-compatibility';
+import { applyAvatarPresentationPose, getAvatarGazeTarget } from '@/lib/avatar-compatibility-runtime';
+import { useAvatarCompatibility } from '@/hooks/useAvatarCompatibility';
 
 type EmotionId = 'happy' | 'sad' | 'angry' | 'think' | 'surprised' | 'neutral';
 
-const EMOTION_BLENDSHAPES: Record<EmotionId, Record<string, number>> = {
+const EMOTION_BLENDSHAPES: Record<EmotionId, Partial<Record<SemanticExpression, number>>> = {
   happy:     { happy: 0.8 },
   sad:       { sad: 0.7 },
   angry:     { angry: 0.8 },
   think:     { relaxed: 0.3, surprised: 0.2 },
   surprised: { surprised: 0.9 },
   neutral:   {},
-};
-
-const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
-  A: 'aa', E: 'ee', I: 'ih', O: 'oh', U: 'ou',
 };
 
 const blobShadowCanvas = document.createElement('canvas');
@@ -65,9 +77,10 @@ interface PipVRMModelProps {
   isActive: boolean;
   audioSource: AudioNode | null;
   audioContext: AudioContext | null;
+  animationRegistry: LocalVrmaRegistry;
 }
 
-function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioContext }: PipVRMModelProps) {
+function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioContext, animationRegistry }: PipVRMModelProps) {
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
@@ -78,17 +91,51 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
   const motionRef = useRef(createAvatarMotionSnapshot(0));
+  const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
+  const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
-  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl);
+  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, compatibility);
+  const capabilities = useMemo(() => detectAvatarCapabilities(vrm), [vrm]);
+  const expressionAliases = useMemo(
+    () => resolveExpressionAliases(compatibility.profile, capabilities),
+    [capabilities, compatibility.profile],
+  );
 
   // Keep vrmRef in sync for useFrame
   useEffect(() => {
     vrmRef.current = vrm ?? null;
+    currentBlendValues.current = {};
+    targetBlendValues.current = {};
+    blinkValueRef.current = 0;
+    blinkTimerRef.current = 0;
+    blinkPhaseRef.current = 'open';
+    vrmaPlayerRef.current?.dispose();
+    vrmaPlayerRef.current = vrm ? new LocalVrmaPlayer(vrm) : null;
     if (vrm) {
       motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'model-loaded', nowMs: Date.now() });
     }
+    return () => {
+      vrmaPlayerRef.current?.dispose();
+      vrmaPlayerRef.current = null;
+    };
   }, [vrm]);
+
+  useEffect(() => {
+    const player = vrmaPlayerRef.current;
+    if (!player) return;
+    let cancelled = false;
+    const compatibleSessions = getLocalVrmaRegistryEntries(animationRegistry).filter((session) =>
+      isAnimationStateCompatible(compatibility.profile, capabilities, session.targetState),
+    );
+    player.sync(compatibleSessions).catch((err) => {
+      if (!cancelled) {
+        const detail = err instanceof Error ? err.message : 'Unknown animation loading error.';
+        console.warn(`[pip] Local animation could not load: ${detail}`);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [animationRegistry, capabilities, compatibility.profile, vrm]);
 
   useEffect(() => {
     motionRef.current = reduceAvatarMotion(motionRef.current, {
@@ -132,22 +179,27 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
     const nowMs = t * 1000;
     motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'tick', nowMs });
     const motionSnapshot = motionRef.current;
-    const pose = getAvatarMotionPose(
-      motionSnapshot.state,
-      Math.max(0, (nowMs - motionSnapshot.stateStartedAtMs) / 1000),
-    );
+    const elapsedSeconds = Math.max(0, (nowMs - motionSnapshot.stateStartedAtMs) / 1000);
+    const player = vrmaPlayerRef.current;
+    const requestedState = motionSnapshot.state;
+    const animationSupported = isAnimationStateCompatible(compatibility.profile, capabilities, requestedState);
+    const loadedStates = new Set(LOCAL_VRMA_TARGET_STATES.filter((targetState) =>
+      player?.hasClip(targetState) && isAnimationStateCompatible(compatibility.profile, capabilities, targetState),
+    ));
+    player?.setState(animationSupported ? requestedState : 'idle');
+    const pose = !player || !animationSupported || shouldUseProceduralMotion(requestedState, loadedStates)
+      ? getAvatarMotionPose(requestedState, elapsedSeconds)
+      : { verticalOffset: 0, pitchOffset: 0, yawOffset: 0 };
 
+    player?.update(delta);
     vrm.update(delta);
 
-    groupRef.current.position.y = pose.verticalOffset;
-    groupRef.current.rotation.x = pose.pitchOffset;
-    groupRef.current.rotation.y = pose.yawOffset;
+    applyAvatarPresentationPose(groupRef.current, pose, compatibility.profile);
 
-    const mouseX = state.mouse.x * 0.5;
-    const mouseY = state.mouse.y * 0.3;
-    lookAtTarget.current.position.set(mouseX, mouseY + 1, 3);
+    const [gazeX, gazeY, gazeZ] = getAvatarGazeTarget(state.mouse.x, state.mouse.y, compatibility.profile);
+    lookAtTarget.current.position.set(gazeX, gazeY, gazeZ);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (vrm.lookAt) (vrm.lookAt as any).target = lookAtTarget.current;
+    if (vrm.lookAt && compatibility.profile.gaze.mode !== 'disabled') (vrm.lookAt as any).target = lookAtTarget.current;
 
     blinkTimerRef.current -= delta * 1000;
     if (blinkPhaseRef.current === 'open' && blinkTimerRef.current <= 0) {
@@ -163,17 +215,21 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
     const expr = vrm.expressionManager;
     if (expr) {
       targetBlendValues.current = {
-        ...AVATAR_MOTION_EXPRESSION_TARGETS[motionSnapshot.state],
-        ...(EMOTION_BLENDSHAPES[currentEmotion] ?? {}),
+        ...resolveSemanticExpressionValues(AVATAR_MOTION_EXPRESSION_TARGETS[motionSnapshot.state], expressionAliases),
+        ...resolveSemanticExpressionValues(EMOTION_BLENDSHAPES[currentEmotion], expressionAliases),
       };
-      targetBlendValues.current['blink'] = blinkValueRef.current;
+      const blinkExpression = expressionAliases[compatibility.profile.expressions.blink];
+      if (blinkExpression) targetBlendValues.current[blinkExpression] = blinkValueRef.current;
 
       const lipSyncNode = lipSyncNodeRef.current;
       const SILENCE_THRESHOLD = 0.05;
       if (lipSyncNode && lipSyncNode.weights && lipSyncNode.volume > SILENCE_THRESHOLD) {
         const weights = lipSyncNode.weights;
         const volume = lipSyncNode.volume;
-        for (const [vowel, blendshape] of Object.entries(VOWEL_TO_BLENDSHAPE)) {
+        for (const vowel of ['A', 'E', 'I', 'O', 'U'] as const) {
+          const semantic = compatibility.profile.expressions.mouth[vowel];
+          const blendshape = expressionAliases[semantic];
+          if (!blendshape) continue;
           const weight = weights[vowel] ?? 0;
           const scaled = Math.min(1, weight * volume * 1.5);
           if (scaled > 0.01) {
@@ -201,11 +257,16 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
         motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'user-tap', nowMs: Date.now() });
       }}
     >
-      <primitive object={gltf.scene} scale={1} position={[0, -1.2, 0]} />
-      <mesh position={[0, -1.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <primitive
+        object={gltf.scene}
+        scale={compatibility.profile.transform.scale}
+        position={compatibility.profile.transform.positionOffset}
+        rotation={compatibility.profile.transform.rotationOffset}
+      />
+      {compatibility.profile.rendering.blobShadow && <mesh position={[0, -1.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[0.6, 32]} />
         <meshBasicMaterial transparent opacity={0.5} depthWrite={false} side={THREE.DoubleSide} map={blobShadowTexture} />
-      </mesh>
+      </mesh>}
     </group>
   );
 }
@@ -219,6 +280,7 @@ interface AvatarOverlayProps {
 
 export function AvatarOverlay({ avatarUrl, position, onClose, onDragEnd }: AvatarOverlayProps) {
   const { currentAudioSource, audioContext, isActive } = useVoiceSession();
+  const { animationRegistry } = useLocalVrmaRegistry();
   const [currentEmotion] = useState<EmotionId>('neutral');
 
   useEffect(() => {
@@ -273,7 +335,7 @@ export function AvatarOverlay({ avatarUrl, position, onClose, onDragEnd }: Avata
           <Suspense fallback={null}>
             <PipErrorBoundary onError={() => {}}>
               <PipVRMModel avatarUrl={avatarUrl} currentEmotion={currentEmotion} isActive={isActive}
-                audioSource={currentAudioSource} audioContext={audioContext} />
+                audioSource={currentAudioSource} audioContext={audioContext} animationRegistry={animationRegistry} />
             </PipErrorBoundary>
           </Suspense>
           <OrbitControls enablePan={false} enableZoom={true} minDistance={1.5} maxDistance={6} />

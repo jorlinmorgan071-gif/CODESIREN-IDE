@@ -87,6 +87,12 @@ class WsClient {
 
   send(event: string, payload: unknown): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
+      // Live voice audio is intentionally a raw binary frame. The backend
+      // resolves the active authenticated session from this socket's JWT.
+      if (payload instanceof ArrayBuffer) {
+        this.ws.send(payload);
+        return;
+      }
       this.ws.send(JSON.stringify({ event, payload, ts: Date.now() }));
     }
   }

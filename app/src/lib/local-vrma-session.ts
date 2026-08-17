@@ -8,6 +8,7 @@ export const MAX_LOCAL_VRMA_BYTES = 25 * 1024 * 1024;
 export const LOCAL_VRMA_TARGET_STATES = [
   'idle',
   'listening',
+  'speaking',
   'thinking',
   'celebrate',
   'gesture',

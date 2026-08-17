@@ -11,7 +11,7 @@
 //   Emotions: happy, sad, angry, surprised, relaxed, neutral (expression presets)
 //   Eyes: blink (left+right combined), lookAt (eye tracking via look-at bone)
 
-import { useState, useEffect, useRef, useCallback, Suspense, Component, lazy, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense, Component, lazy, type ReactNode } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -37,17 +37,22 @@ import {
   type LocalVrmSession,
 } from '@/lib/local-vrm-session';
 import {
-  createLocalVrmaSession,
   getLocalVrmaRegistryEntries,
   type LocalVrmaRegistry,
   LOCAL_VRMA_TARGET_STATES,
-  removeLocalVrmaRegistryEntry,
-  revokeLocalVrmaRegistry,
-  revokeLocalVrmaSession,
-  setLocalVrmaRegistryEntry,
   type LocalVrmaTargetState,
 } from '@/lib/local-vrma-session';
 import { LocalVrmaPlayer, shouldUseProceduralMotion } from '@/lib/vrma-player';
+import { useLocalVrmaRegistry } from '@/store/LocalVrmaRegistryContext';
+import {
+  detectAvatarCapabilities,
+  isAnimationStateCompatible,
+  resolveExpressionAliases,
+  resolveSemanticExpressionValues,
+  type SemanticExpression,
+} from '@/lib/avatar-compatibility';
+import { applyAvatarPresentationPose, getAvatarGazeTarget } from '@/lib/avatar-compatibility-runtime';
+import { useAvatarCompatibility } from '@/hooks/useAvatarCompatibility';
 
 // Phase B: Lazy-load the upload dialog (heavy: Three.js + VRM analysis)
 const AvatarUploadDialogLazy = lazy(() =>
@@ -72,12 +77,12 @@ class FaceErrorBoundary extends Component<{ children: ReactNode; onError: (msg: 
 
 type EmotionId = 'happy' | 'sad' | 'angry' | 'think' | 'surprised' | 'neutral';
 
-const EMOTION_BLENDSHAPES: Record<EmotionId, Record<string, number>> = {
-  happy:     { happy: 0.7, aa: 0.2 },
-  sad:       { sad: 0.7, oh: 0.15 },
-  angry:     { angry: 0.7, ee: 0.3 },
-  think:     { relaxed: 0.3, oh: 0.1 },
-  surprised: { surprised: 0.8, aa: 0.3 },
+const EMOTION_BLENDSHAPES: Record<EmotionId, Partial<Record<SemanticExpression, number>>> = {
+  happy:     { happy: 0.7, mouthA: 0.2 },
+  sad:       { sad: 0.7, mouthO: 0.15 },
+  angry:     { angry: 0.7, mouthE: 0.3 },
+  think:     { relaxed: 0.3, mouthO: 0.1 },
+  surprised: { surprised: 0.8, mouthA: 0.3 },
   neutral:   {},
 };
 
@@ -98,15 +103,6 @@ interface VRMModelProps {
   onAnimationError?: (message: string) => void;
 }
 
-// Vowel → VRM blendshape mapping (per VRM spec + Section 0 findings)
-const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
-  A: 'aa',
-  E: 'ee',
-  I: 'ih',
-  O: 'oh',
-  U: 'ou',
-};
-
 function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioContext, avatarUrl, animationRegistry, onLoaded, onAnimationError }: VRMModelProps) {
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
@@ -119,13 +115,24 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
   const lipSyncProfileRef = useRef<Profile | null>(null);
   const motionRef = useRef(createAvatarMotionSnapshot(0));
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
+  const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
-  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, onLoaded);
+  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, compatibility, onLoaded);
+  const capabilities = useMemo(() => detectAvatarCapabilities(vrm), [vrm]);
+  const expressionAliases = useMemo(
+    () => resolveExpressionAliases(compatibility.profile, capabilities),
+    [capabilities, compatibility.profile],
+  );
 
   // Keep vrmRef in sync for useFrame
   useEffect(() => {
     vrmRef.current = vrm ?? null;
+    currentBlendValues.current = {};
+    targetBlendValues.current = {};
+    blinkValueRef.current = 0;
+    blinkTimerRef.current = 0;
+    blinkPhaseRef.current = 'open';
     vrmaPlayerRef.current?.dispose();
     vrmaPlayerRef.current = vrm ? new LocalVrmaPlayer(vrm) : null;
     if (vrm) {
@@ -146,14 +153,17 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
     const player = vrmaPlayerRef.current;
     if (!player) return;
     let cancelled = false;
-    player.sync(getLocalVrmaRegistryEntries(animationRegistry)).catch((err) => {
+    const compatibleSessions = getLocalVrmaRegistryEntries(animationRegistry).filter((session) =>
+      isAnimationStateCompatible(compatibility.profile, capabilities, session.targetState),
+    );
+    player.sync(compatibleSessions).catch((err) => {
       if (!cancelled) {
         const detail = err instanceof Error ? err.message : 'Unknown animation loading error.';
         onAnimationError?.(`Local animation could not load: ${detail}`);
       }
     });
     return () => { cancelled = true; };
-  }, [animationRegistry, vrm, onAnimationError]);
+  }, [animationRegistry, capabilities, compatibility.profile, vrm, onAnimationError]);
 
   useEffect(() => {
     motionRef.current = reduceAvatarMotion(motionRef.current, {
@@ -203,7 +213,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
           const w = lsNode.weights;
           const vol = lsNode.volume || 0;
           const vowelStr = Object.entries(w)
-            .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
+            .filter(([key]) => ['A', 'E', 'I', 'O', 'U'].includes(key))
             .map(([k, v]) => `${k}=${(v as number).toFixed(3)}`)
             .join(' ');
           // Mark silence state for debugging
@@ -237,12 +247,13 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
     const motion = motionRef.current;
     const elapsedSeconds = Math.max(0, (nowMs - motion.stateStartedAtMs) / 1000);
     const player = vrmaPlayerRef.current;
-    const requestedState = isActive && amplitude > 0.05 && player?.hasClip('speaking')
-      ? 'speaking'
-      : motion.state;
-    player?.setState(requestedState);
-    const loadedStates = new Set(LOCAL_VRMA_TARGET_STATES.filter((targetState) => player?.hasClip(targetState)));
-    const pose = !player || shouldUseProceduralMotion(requestedState, loadedStates)
+    const requestedState = isActive && amplitude > 0.05 ? 'speaking' : motion.state;
+    const animationSupported = isAnimationStateCompatible(compatibility.profile, capabilities, requestedState);
+    const loadedStates = new Set(LOCAL_VRMA_TARGET_STATES.filter((targetState) =>
+      player?.hasClip(targetState) && isAnimationStateCompatible(compatibility.profile, capabilities, targetState),
+    ));
+    player?.setState(animationSupported ? requestedState : 'idle');
+    const pose = !player || !animationSupported || shouldUseProceduralMotion(requestedState, loadedStates)
       ? getAvatarMotionPose(requestedState, elapsedSeconds)
       : { verticalOffset: 0, pitchOffset: 0, yawOffset: 0 };
 
@@ -251,15 +262,12 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
     vrm.update(delta);
 
     // ── Controller-owned body pose ──
-    groupRef.current.position.y = pose.verticalOffset;
-    groupRef.current.rotation.x = pose.pitchOffset;
-    groupRef.current.rotation.y = pose.yawOffset;
+    applyAvatarPresentationPose(groupRef.current, pose, compatibility.profile);
 
     // ── Eye tracking: cursor → look-at target ──
-    const mouseX = (state.mouse.x * 0.5);
-    const mouseY = (state.mouse.y * 0.3);
-    lookAtTarget.current.position.set(mouseX, mouseY + 1, 3);
-    if (vrm.lookAt) {
+    const [gazeX, gazeY, gazeZ] = getAvatarGazeTarget(state.mouse.x, state.mouse.y, compatibility.profile);
+    lookAtTarget.current.position.set(gazeX, gazeY, gazeZ);
+    if (vrm.lookAt && compatibility.profile.gaze.mode !== 'disabled') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (vrm.lookAt as any).target = lookAtTarget.current;
     }
@@ -288,12 +296,13 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
     if (expr) {
       // Blend the explicit emotion with the current nonverbal motion state.
       targetBlendValues.current = {
-        ...AVATAR_MOTION_EXPRESSION_TARGETS[motion.state],
-        ...EMOTION_BLENDSHAPES[currentEmotion] ?? {},
+        ...resolveSemanticExpressionValues(AVATAR_MOTION_EXPRESSION_TARGETS[motion.state], expressionAliases),
+        ...resolveSemanticExpressionValues(EMOTION_BLENDSHAPES[currentEmotion], expressionAliases),
       };
 
       // Add blink
-      targetBlendValues.current['blink'] = blinkValueRef.current;
+      const blinkExpression = expressionAliases[compatibility.profile.expressions.blink];
+      if (blinkExpression) targetBlendValues.current[blinkExpression] = blinkValueRef.current;
 
       // ── Real lip sync via wlipsync MFCC vowel analysis ──
       // Note: logging is done via setInterval in the useEffect above (decoupled
@@ -305,7 +314,10 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
         const volume = lipSyncNode.volume;
 
         // Map vowel weights to VRM blendshapes with volume scaling
-        for (const [vowel, blendshape] of Object.entries(VOWEL_TO_BLENDSHAPE)) {
+        for (const vowel of ['A', 'E', 'I', 'O', 'U'] as const) {
+          const semantic = compatibility.profile.expressions.mouth[vowel];
+          const blendshape = expressionAliases[semantic];
+          if (!blendshape) continue;
           const weight = weights[vowel] ?? 0;
           const scaled = Math.min(1, weight * volume * 1.5);
           if (scaled > 0.01) {
@@ -322,8 +334,9 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
         // mouth to neutral. This prevents the "frozen last vowel" issue where
         // wlipsync holds its last non-zero weights after audio ends.
         // Amplitude fallback for when wlipsync node doesn't exist yet:
-        if (!lipSyncNode && amplitude > 0.01) {
-          targetBlendValues.current['aa'] = Math.max(targetBlendValues.current['aa'] ?? 0, amplitude * 0.7);
+        const mouthAExpression = expressionAliases[compatibility.profile.expressions.mouth.A];
+        if (!lipSyncNode && mouthAExpression && amplitude > 0.01) {
+          targetBlendValues.current[mouthAExpression] = Math.max(targetBlendValues.current[mouthAExpression] ?? 0, amplitude * 0.7);
         }
       }
 
@@ -350,7 +363,12 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
         motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'user-tap', nowMs: Date.now() });
       }}
     >
-      <primitive object={gltf.scene} scale={1} position={[0, -1.2, 0]} />
+      <primitive
+        object={gltf.scene}
+        scale={compatibility.profile.transform.scale}
+        position={compatibility.profile.transform.positionOffset}
+        rotation={compatibility.profile.transform.rotationOffset}
+      />
       {/* Phase B: Soft blob shadow — a radial-gradient circle at the avatar's
           feet. Not a real shadow-map (which needs a directional light + ground
           plane + shadow camera). This is the VTuber/desktop-mascot technique:
@@ -359,7 +377,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
           so it lies on the "ground" plane. The shadow follows the groupRef
           (which is animated by the breathing loop), so it stays attached
           during idle movement and future PIP dragging. */}
-      <mesh position={[0, -1.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      {compatibility.profile.rendering.blobShadow && <mesh position={[0, -1.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[0.6, 32]} />
         <meshBasicMaterial
           transparent
@@ -368,7 +386,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
           side={THREE.DoubleSide}
           map={blobShadowTexture}
         />
-      </mesh>
+      </mesh>}
     </group>
   );
 }
@@ -434,10 +452,13 @@ export default function FaceView() {
   const [localVrmSession, setLocalVrmSession] = useState<LocalVrmSession | null>(null);
   const localVrmInputRef = useRef<HTMLInputElement>(null);
   const catalogAvatarFallbackRef = useRef({ url: '/models/sample.vrm', name: 'Default Avatar' });
-  const [localVrmaRegistry, setLocalVrmaRegistry] = useState<LocalVrmaRegistry>({});
+  const {
+    animationRegistry: localVrmaRegistry,
+    addOrReplaceLocalVrma,
+    removeLocalVrma,
+  } = useLocalVrmaRegistry();
   const [localVrmaTargetState, setLocalVrmaTargetState] = useState<LocalVrmaTargetState>('idle');
   const localVrmaInputRef = useRef<HTMLInputElement>(null);
-  const localVrmaRegistryRef = useRef<LocalVrmaRegistry>({});
 
   // Phase B: Voice-to-Code-Written v1 — write confirmation state
   const [pendingWrite, setPendingWrite] = useState<{
@@ -543,14 +564,6 @@ export default function FaceView() {
     return () => revokeLocalVrmSession(localVrmSession);
   }, [localVrmSession]);
 
-  useEffect(() => {
-    localVrmaRegistryRef.current = localVrmaRegistry;
-  }, [localVrmaRegistry]);
-
-  useEffect(() => {
-    return () => revokeLocalVrmaRegistry(localVrmaRegistryRef.current);
-  }, []);
-
   const handleSelectLocalVrm = useCallback((file: File) => {
     try {
       const session = createLocalVrmSession(file);
@@ -579,21 +592,16 @@ export default function FaceView() {
 
   const handleSelectLocalVrma = useCallback((file: File) => {
     try {
-      const session = createLocalVrmaSession(file, localVrmaTargetState);
-      const existing = localVrmaRegistry[localVrmaTargetState];
-      if (existing) revokeLocalVrmaSession(existing);
-      setLocalVrmaRegistry((registry) => setLocalVrmaRegistryEntry(registry, session));
+      addOrReplaceLocalVrma(file, localVrmaTargetState);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The local animation could not be selected.');
     }
-  }, [localVrmaRegistry, localVrmaTargetState]);
+  }, [addOrReplaceLocalVrma, localVrmaTargetState]);
 
   const handleRemoveLocalVrma = useCallback((targetState: LocalVrmaTargetState) => {
-    const session = localVrmaRegistry[targetState];
-    if (session) revokeLocalVrmaSession(session);
-    setLocalVrmaRegistry((registry) => removeLocalVrmaRegistryEntry(registry, targetState));
-  }, [localVrmaRegistry]);
+    removeLocalVrma(targetState);
+  }, [removeLocalVrma]);
 
   // Phase B: Handle avatar selection from picker
   const handleSelectAvatar = async (avatarId: string, name: string) => {

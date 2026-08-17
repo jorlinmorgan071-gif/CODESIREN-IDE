@@ -308,7 +308,10 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
         audioChunksRef.current = [];
 
         const arrayBuffer = await blob.arrayBuffer();
+        // The authenticated WS server accepts raw binary audio, then processes
+        // the accumulated turn only after this explicit existing control event.
         wsClient.send('voice:audio', arrayBuffer);
+        wsClient.send('voice:turn-end', { sessionId: body.sessionId });
       };
 
       recorder.start(1000);
