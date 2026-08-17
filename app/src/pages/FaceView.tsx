@@ -124,7 +124,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
   const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
-  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, compatibility, onLoaded);
+  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, compatibility, 'face', onLoaded);
   const capabilities = useMemo(() => detectAvatarCapabilities(vrm), [vrm]);
   const expressionAliases = useMemo(
     () => resolveExpressionAliases(compatibility.profile, capabilities),
@@ -216,10 +216,17 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
     if (!audioSource || !audioContext || !lipSyncProfileRef.current) return;
     if (lipSyncNodeRef.current) {
       try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
+      lipSyncNodeRef.current = null;
     }
+
+    let cancelled = false;
+    let connectedNode: WLipSyncAudioNode | null = null;
+    let logInterval: ReturnType<typeof setInterval> | null = null;
 
     createWLipSyncNode(audioContext, lipSyncProfileRef.current)
       .then(node => {
+        if (cancelled) return;
+        connectedNode = node;
         lipSyncNodeRef.current = node;
         audioSource.connect(node);
         console.log('[face] wlipsync node created and connected to audio source');
@@ -227,7 +234,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
         // Decoupled logging: setInterval reads weights every 200ms, independent
         // of requestAnimationFrame / useFrame frame rate. This ensures we capture
         // vowel weight values even in headless browsers where rAF runs at 1-5 FPS.
-        const logInterval = setInterval(() => {
+        logInterval = setInterval(() => {
           const lsNode = lipSyncNodeRef.current;
           if (!lsNode || !lsNode.weights) return;
           const w = lsNode.weights;
@@ -241,14 +248,15 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
           console.log(`[face] lip sync: ${vowelStr} vol=${vol.toFixed(3)}${silenceTag}`);
         }, 200);
 
-        // Clear interval when audio source changes or component unmounts
-        return () => clearInterval(logInterval);
       })
       .catch(err => console.warn('[face] Failed to create wlipsync node:', err));
 
     return () => {
-      if (lipSyncNodeRef.current && audioSource) {
-        try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
+      cancelled = true;
+      if (logInterval) clearInterval(logInterval);
+      if (connectedNode) {
+        try { audioSource.disconnect(connectedNode); } catch { /* disconnect may fail */ }
+        if (lipSyncNodeRef.current === connectedNode) lipSyncNodeRef.current = null;
       }
     };
   }, [audioSource, audioContext]);

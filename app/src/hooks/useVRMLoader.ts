@@ -10,6 +10,8 @@
 //   3. VRMUtils.removeUnnecessaryVertices + VRMUtils.rotateVRM0 (orientation
 //      fix applied here once — was missing from PIP + Bubble)
 //   4. Shadow setup (castShadow + receiveShadow traverse)
+//   5. Context-scoped loader cache keys so independently mounted canvases
+//      never attach or animate the same VRM scene instance.
 //
 // What stays in each caller:
 //   - useFrame animation loop (context-specific audio/emotion wiring)
@@ -37,13 +39,22 @@ export interface UseVRMLoaderResult {
   groupRef: React.RefObject<THREE.Group>;
 }
 
+export type AvatarRuntimeContext = 'face' | 'pip' | 'bubble';
+
+export function createAvatarRuntimeLoaderUrl(avatarUrl: string, context: AvatarRuntimeContext): string {
+  return `${avatarUrl}${avatarUrl.includes('#') ? '&' : '#'}codesiren-runtime=${context}`;
+}
+
 export function useVRMLoader(
   avatarUrl: string,
   compatibility: ResolvedAvatarCompatibility,
+  context: AvatarRuntimeContext,
   onLoaded?: () => void,
 ): UseVRMLoaderResult {
+  const loaderUrl = createAvatarRuntimeLoaderUrl(avatarUrl, context);
+
   // 1. Load VRM model via GLTFLoader with VRMLoaderPlugin
-  const gltf = useLoader(GLTFLoader, avatarUrl, (loader: GLTFLoader) => {
+  const gltf = useLoader(GLTFLoader, loaderUrl, (loader: GLTFLoader) => {
     loader.register((parser) => new VRMLoaderPlugin(parser));
   });
 
@@ -52,9 +63,9 @@ export function useVRMLoader(
   // suspends during render when the URL changes. If we used a useEffect to
   // update the ref, the effect would never run before the cleanup fires.
   const prevGltfRef = useRef<{ scene: THREE.Group; url: string } | null>(null);
-  const currentUrlRef = useRef(avatarUrl);
+  const currentUrlRef = useRef(loaderUrl);
   // eslint-disable-next-line react-hooks/refs -- intentional: ref must be current by the time disposal cleanup fires. useLoader suspends during render when avatarUrl changes, so a useEffect-based update would never run before the cleanup.
-  currentUrlRef.current = avatarUrl;
+  currentUrlRef.current = loaderUrl;
 
   useEffect(() => {
     return () => {
@@ -71,13 +82,13 @@ export function useVRMLoader(
         }
       }
     };
-  }, [avatarUrl]);
+  }, [loaderUrl]);
 
   useEffect(() => {
     if (gltf?.scene) {
-      prevGltfRef.current = { scene: gltf.scene, url: avatarUrl };
+      prevGltfRef.current = { scene: gltf.scene, url: loaderUrl };
     }
-  }, [gltf, avatarUrl]);
+  }, [gltf, loaderUrl]);
 
   // 3. Load-time setup: removeUnnecessaryVertices + rotateVRM0 + shadows
   const groupRef = useRef<THREE.Group>(null!);

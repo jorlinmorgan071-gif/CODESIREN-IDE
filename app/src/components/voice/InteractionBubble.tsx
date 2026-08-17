@@ -153,7 +153,7 @@ function VRMBubbleContent({
   const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
-  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, compatibility);
+  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, compatibility, 'bubble');
   const capabilities = useMemo(() => detectAvatarCapabilities(vrm), [vrm]);
   const expressionAliases = useMemo(
     () => resolveExpressionAliases(compatibility.profile, capabilities),
@@ -229,17 +229,24 @@ function VRMBubbleContent({
     if (!currentAudioSource || !audioContext || !lipSyncProfileRef.current) return;
     if (lipSyncNodeRef.current) {
       try { currentAudioSource.disconnect(lipSyncNodeRef.current); } catch { /* */ }
+      lipSyncNodeRef.current = null;
     }
+    let cancelled = false;
+    let connectedNode: WLipSyncAudioNode | null = null;
     createWLipSyncNode(audioContext, lipSyncProfileRef.current)
       .then(node => {
+        if (cancelled) return;
+        connectedNode = node;
         lipSyncNodeRef.current = node;
         currentAudioSource.connect(node);
       })
       .catch(() => {});
 
     return () => {
-      if (lipSyncNodeRef.current && currentAudioSource) {
-        try { currentAudioSource.disconnect(lipSyncNodeRef.current); } catch { /* */ }
+      cancelled = true;
+      if (connectedNode) {
+        try { currentAudioSource.disconnect(connectedNode); } catch { /* */ }
+        if (lipSyncNodeRef.current === connectedNode) lipSyncNodeRef.current = null;
       }
     };
   }, [currentAudioSource, audioContext]);

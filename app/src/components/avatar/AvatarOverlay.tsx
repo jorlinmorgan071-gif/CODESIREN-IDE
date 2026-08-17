@@ -101,7 +101,7 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
   const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
-  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, compatibility);
+  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, compatibility, 'pip');
   const capabilities = useMemo(() => detectAvatarCapabilities(vrm), [vrm]);
   const expressionAliases = useMemo(
     () => resolveExpressionAliases(compatibility.profile, capabilities),
@@ -177,16 +177,23 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
     if (!audioSource || !audioContext || !lipSyncProfileRef.current) return;
     if (lipSyncNodeRef.current) {
       try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
+      lipSyncNodeRef.current = null;
     }
+    let cancelled = false;
+    let connectedNode: WLipSyncAudioNode | null = null;
     createWLipSyncNode(audioContext, lipSyncProfileRef.current)
       .then(node => {
+        if (cancelled) return;
+        connectedNode = node;
         lipSyncNodeRef.current = node;
         audioSource.connect(node);
       })
       .catch(() => { /* wlipsync init failed */ });
     return () => {
-      if (lipSyncNodeRef.current && audioSource) {
-        try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
+      cancelled = true;
+      if (connectedNode) {
+        try { audioSource.disconnect(connectedNode); } catch { /* disconnect may fail */ }
+        if (lipSyncNodeRef.current === connectedNode) lipSyncNodeRef.current = null;
       }
     };
   }, [audioSource, audioContext]);
