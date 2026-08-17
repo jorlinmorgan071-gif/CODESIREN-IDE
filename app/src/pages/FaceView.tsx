@@ -161,11 +161,13 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
   }, [audioSource, audioContext]);
 
   // Animation loop — drives expressions, blink, breathing, lip sync, eye tracking
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const vrm = vrmRef.current;
     if (!vrm || !groupRef.current) return;
 
-    const delta = state.clock.getDelta();
+    // R3F already obtains the shared frame delta before invoking useFrame.
+    // Calling state.clock.getDelta() here would consume a tiny second interval
+    // and make VRM spring-bone recovery appear almost frozen.
     const t = state.clock.elapsedTime;
 
     // Update VRM spring bones + look-at

@@ -516,9 +516,9 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 // ── 3D preview animator (MUST be inside <Canvas> — useFrame needs R3F context) ──
 function PreviewAnimator({ vrm, groupRef }: { vrm: VRM | null; groupRef: React.RefObject<THREE.Group> }) {
-  useFrame((state) => {
+  useFrame((state, delta) => {
     if (!vrm) return;
-    const delta = state.clock.getDelta();
+    // useFrame supplies the frame delta in seconds. Do not re-read the clock.
     vrm.update(delta);
     // Simple breathing
     if (groupRef.current) {

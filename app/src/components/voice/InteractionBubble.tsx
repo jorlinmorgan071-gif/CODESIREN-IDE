@@ -164,10 +164,10 @@ function VRMBubbleContent({ avatarUrl }: { avatarUrl: string }) {
     };
   }, [currentAudioSource, audioContext]);
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const vrm = vrmRef.current;
     if (!vrm || !groupRef.current) return;
-    const delta = state.clock.getDelta();
+    // useFrame supplies the frame delta in seconds. Do not re-read the clock.
     const t = state.clock.elapsedTime;
 
     vrm.update(delta);
