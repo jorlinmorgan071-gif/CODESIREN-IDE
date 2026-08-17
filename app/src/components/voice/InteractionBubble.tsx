@@ -23,6 +23,12 @@ import { getToken } from '@/lib/auth';
 import type { VRM } from '@pixiv/three-vrm';
 import { useVRMLoader } from '@/hooks/useVRMLoader';
 import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
+import {
+  AVATAR_MOTION_EXPRESSION_TARGETS,
+  createAvatarMotionSnapshot,
+  getAvatarMotionPose,
+  reduceAvatarMotion,
+} from '@/lib/avatar-motion';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -90,16 +96,6 @@ blobCtx.fillStyle = blobGradient;
 blobCtx.fillRect(0, 0, 128, 128);
 const blobShadowTexture = new THREE.CanvasTexture(blobShadowCanvas);
 
-// ── VRM Emotion + Lip Sync constants ─────────────────────────────────────
-const EMOTION_BLENDSHAPES: Record<string, Record<string, number>> = {
-  happy:     { happy: 0.7, aa: 0.2 },
-  sad:       { sad: 0.7, oh: 0.15 },
-  angry:     { angry: 0.7, ee: 0.3 },
-  think:     { relaxed: 0.3, oh: 0.1 },
-  surprised: { surprised: 0.8, aa: 0.3 },
-  neutral:   {},
-};
-
 const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
   A: 'aa', E: 'ee', I: 'ih', O: 'oh', U: 'ou',
 };
@@ -116,17 +112,17 @@ const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
 //   - Leak-free switching (VRMUtils.deepDispose)
 //   - All driven by the same VoiceSessionContext audio source
 function VRMBubbleContent({ avatarUrl }: { avatarUrl: string }) {
-  const { currentAudioSource, audioContext } = useVoiceSession();
+  const { currentAudioSource, audioContext, isActive } = useVoiceSession();
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
   const blinkValueRef = useRef(0);
-  const breathingRef = useRef(0);
   const currentBlendValues = useRef<Record<string, number>>({});
   const targetBlendValues = useRef<Record<string, number>>({});
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
+  const motionRef = useRef(createAvatarMotionSnapshot(0));
 
   // Shared VRM loading + disposal + orientation + shadow setup
   const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl);
@@ -134,7 +130,17 @@ function VRMBubbleContent({ avatarUrl }: { avatarUrl: string }) {
   // Keep vrmRef in sync for useFrame
   useEffect(() => {
     vrmRef.current = vrm ?? null;
+    if (vrm) {
+      motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'model-loaded', nowMs: Date.now() });
+    }
   }, [vrm]);
+
+  useEffect(() => {
+    motionRef.current = reduceAvatarMotion(motionRef.current, {
+      type: isActive ? 'voice-started' : 'voice-ended',
+      nowMs: Date.now(),
+    });
+  }, [isActive]);
 
   // Load wlipsync profile (async, non-blocking) — context-specific
   useEffect(() => {
@@ -169,14 +175,19 @@ function VRMBubbleContent({ avatarUrl }: { avatarUrl: string }) {
     if (!vrm || !groupRef.current) return;
     // useFrame supplies the frame delta in seconds. Do not re-read the clock.
     const t = state.clock.elapsedTime;
+    const nowMs = t * 1000;
+    motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'tick', nowMs });
+    const motionSnapshot = motionRef.current;
+    const pose = getAvatarMotionPose(
+      motionSnapshot.state,
+      Math.max(0, (nowMs - motionSnapshot.stateStartedAtMs) / 1000),
+    );
 
     vrm.update(delta);
 
-    // Breathing
-    breathingRef.current += delta;
-    groupRef.current.position.y = Math.sin(breathingRef.current * 0.5) * 0.02;
-    groupRef.current.rotation.x = Math.sin(breathingRef.current * 0.3) * 0.01;
-    groupRef.current.rotation.y = Math.sin(t * 0.1) * 0.05;
+    groupRef.current.position.y = pose.verticalOffset;
+    groupRef.current.rotation.x = pose.pitchOffset;
+    groupRef.current.rotation.y = pose.yawOffset;
 
     // Eye tracking
     const mouseX = state.mouse.x * 0.5;
@@ -200,7 +211,7 @@ function VRMBubbleContent({ avatarUrl }: { avatarUrl: string }) {
     // Expressions + lip sync
     const expr = vrm.expressionManager;
     if (expr) {
-      targetBlendValues.current = { ...EMOTION_BLENDSHAPES['neutral'] ?? {} };
+      targetBlendValues.current = { ...AVATAR_MOTION_EXPRESSION_TARGETS[motionSnapshot.state] };
       targetBlendValues.current['blink'] = blinkValueRef.current;
 
       const lipSyncNode = lipSyncNodeRef.current;
@@ -230,7 +241,12 @@ function VRMBubbleContent({ avatarUrl }: { avatarUrl: string }) {
   });
 
   return (
-    <group ref={groupRef}>
+    <group
+      ref={groupRef}
+      onClick={() => {
+        motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'user-tap', nowMs: Date.now() });
+      }}
+    >
       <primitive object={gltf.scene} scale={1} position={[0, -1.2, 0]} />
       {/* Blob shadow at feet */}
       <mesh position={[0, -1.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>

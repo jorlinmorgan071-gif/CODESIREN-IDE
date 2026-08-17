@@ -17,6 +17,12 @@ import { X, GripHorizontal } from 'lucide-react';
 import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { wsClient } from '@/lib/ws';
+import {
+  AVATAR_MOTION_EXPRESSION_TARGETS,
+  createAvatarMotionSnapshot,
+  getAvatarMotionPose,
+  reduceAvatarMotion,
+} from '@/lib/avatar-motion';
 
 type EmotionId = 'happy' | 'sad' | 'angry' | 'think' | 'surprised' | 'neutral';
 
@@ -56,21 +62,22 @@ class PipErrorBoundary extends Component<{ onError: (msg: string) => void; child
 interface PipVRMModelProps {
   avatarUrl: string;
   currentEmotion: EmotionId;
+  isActive: boolean;
   audioSource: AudioNode | null;
   audioContext: AudioContext | null;
 }
 
-function PipVRMModel({ avatarUrl, currentEmotion, audioSource, audioContext }: PipVRMModelProps) {
+function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioContext }: PipVRMModelProps) {
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
   const blinkValueRef = useRef(0);
-  const breathingRef = useRef(0);
   const currentBlendValues = useRef<Record<string, number>>({});
   const targetBlendValues = useRef<Record<string, number>>({});
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
+  const motionRef = useRef(createAvatarMotionSnapshot(0));
 
   // Shared VRM loading + disposal + orientation + shadow setup
   const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl);
@@ -78,7 +85,17 @@ function PipVRMModel({ avatarUrl, currentEmotion, audioSource, audioContext }: P
   // Keep vrmRef in sync for useFrame
   useEffect(() => {
     vrmRef.current = vrm ?? null;
+    if (vrm) {
+      motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'model-loaded', nowMs: Date.now() });
+    }
   }, [vrm]);
+
+  useEffect(() => {
+    motionRef.current = reduceAvatarMotion(motionRef.current, {
+      type: isActive ? 'voice-started' : 'voice-ended',
+      nowMs: Date.now(),
+    });
+  }, [isActive]);
 
   // Load wlipsync profile (async, non-blocking) — context-specific
   useEffect(() => {
@@ -112,13 +129,19 @@ function PipVRMModel({ avatarUrl, currentEmotion, audioSource, audioContext }: P
     if (!vrm || !groupRef.current) return;
     // useFrame supplies the frame delta in seconds. Do not re-read the clock.
     const t = state.clock.elapsedTime;
+    const nowMs = t * 1000;
+    motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'tick', nowMs });
+    const motionSnapshot = motionRef.current;
+    const pose = getAvatarMotionPose(
+      motionSnapshot.state,
+      Math.max(0, (nowMs - motionSnapshot.stateStartedAtMs) / 1000),
+    );
 
     vrm.update(delta);
 
-    breathingRef.current += delta;
-    groupRef.current.position.y = Math.sin(breathingRef.current * 0.5) * 0.02;
-    groupRef.current.rotation.x = Math.sin(breathingRef.current * 0.3) * 0.01;
-    groupRef.current.rotation.y = Math.sin(t * 0.1) * 0.05;
+    groupRef.current.position.y = pose.verticalOffset;
+    groupRef.current.rotation.x = pose.pitchOffset;
+    groupRef.current.rotation.y = pose.yawOffset;
 
     const mouseX = state.mouse.x * 0.5;
     const mouseY = state.mouse.y * 0.3;
@@ -139,7 +162,10 @@ function PipVRMModel({ avatarUrl, currentEmotion, audioSource, audioContext }: P
 
     const expr = vrm.expressionManager;
     if (expr) {
-      targetBlendValues.current = { ...EMOTION_BLENDSHAPES[currentEmotion] ?? {} };
+      targetBlendValues.current = {
+        ...AVATAR_MOTION_EXPRESSION_TARGETS[motionSnapshot.state],
+        ...(EMOTION_BLENDSHAPES[currentEmotion] ?? {}),
+      };
       targetBlendValues.current['blink'] = blinkValueRef.current;
 
       const lipSyncNode = lipSyncNodeRef.current;
@@ -169,7 +195,12 @@ function PipVRMModel({ avatarUrl, currentEmotion, audioSource, audioContext }: P
   });
 
   return (
-    <group ref={groupRef}>
+    <group
+      ref={groupRef}
+      onClick={() => {
+        motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'user-tap', nowMs: Date.now() });
+      }}
+    >
       <primitive object={gltf.scene} scale={1} position={[0, -1.2, 0]} />
       <mesh position={[0, -1.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[0.6, 32]} />
@@ -187,7 +218,7 @@ interface AvatarOverlayProps {
 }
 
 export function AvatarOverlay({ avatarUrl, position, onClose, onDragEnd }: AvatarOverlayProps) {
-  const { currentAudioSource, audioContext } = useVoiceSession();
+  const { currentAudioSource, audioContext, isActive } = useVoiceSession();
   const [currentEmotion] = useState<EmotionId>('neutral');
 
   useEffect(() => {
@@ -241,7 +272,7 @@ export function AvatarOverlay({ avatarUrl, position, onClose, onDragEnd }: Avata
           <directionalLight position={[-2, 1, 2]} intensity={0.4} color="#FFFFFF" />
           <Suspense fallback={null}>
             <PipErrorBoundary onError={() => {}}>
-              <PipVRMModel avatarUrl={avatarUrl} currentEmotion={currentEmotion}
+              <PipVRMModel avatarUrl={avatarUrl} currentEmotion={currentEmotion} isActive={isActive}
                 audioSource={currentAudioSource} audioContext={audioContext} />
             </PipErrorBoundary>
           </Suspense>

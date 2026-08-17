@@ -25,6 +25,17 @@ import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
 import type { AgentEvent } from '@/types';
 import { Mic, MicOff, PhoneOff, Loader2, Volume2 } from 'lucide-react';
+import {
+  AVATAR_MOTION_EXPRESSION_TARGETS,
+  createAvatarMotionSnapshot,
+  getAvatarMotionPose,
+  reduceAvatarMotion,
+} from '@/lib/avatar-motion';
+import {
+  createLocalVrmSession,
+  revokeLocalVrmSession,
+  type LocalVrmSession,
+} from '@/lib/local-vrm-session';
 
 // Phase B: Lazy-load the upload dialog (heavy: Three.js + VRM analysis)
 const AvatarUploadDialogLazy = lazy(() =>
@@ -82,17 +93,17 @@ const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
   U: 'ou',
 };
 
-function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatarUrl, onLoaded }: VRMModelProps) {
+function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioContext, avatarUrl, onLoaded }: VRMModelProps) {
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
   const blinkValueRef = useRef(0);
-  const breathingRef = useRef(0);
   const currentBlendValues = useRef<Record<string, number>>({});
   const targetBlendValues = useRef<Record<string, number>>({});
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
   const lipSyncProfileRef = useRef<Profile | null>(null);
+  const motionRef = useRef(createAvatarMotionSnapshot(0));
 
   // Shared VRM loading + disposal + orientation + shadow setup
   const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, onLoaded);
@@ -100,12 +111,30 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
   // Keep vrmRef in sync for useFrame
   useEffect(() => {
     vrmRef.current = vrm ?? null;
+    if (vrm) {
+      motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'model-loaded', nowMs: Date.now() });
+    }
     if (vrm?.expressionManager) {
       const expressions = vrm.expressionManager.expressions;
       console.log(`[face] VRM loaded with ${expressions.length} expressions:`,
         expressions.map(e => e.expressionName).join(', '));
     }
   }, [vrm]);
+
+  useEffect(() => {
+    motionRef.current = reduceAvatarMotion(motionRef.current, {
+      type: isActive ? 'voice-started' : 'voice-ended',
+      nowMs: Date.now(),
+    });
+  }, [isActive]);
+
+  useEffect(() => {
+    if (currentEmotion === 'think') {
+      motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'thinking', nowMs: Date.now() });
+    } else if (currentEmotion === 'happy') {
+      motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'celebrate', nowMs: Date.now() });
+    }
+  }, [currentEmotion]);
 
   // Load wlipsync profile (async, non-blocking) — context-specific
   useEffect(() => {
@@ -169,15 +198,22 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
     // Calling state.clock.getDelta() here would consume a tiny second interval
     // and make VRM spring-bone recovery appear almost frozen.
     const t = state.clock.elapsedTime;
+    const nowMs = t * 1000;
+    motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'tick', nowMs });
+    const motion = motionRef.current;
+    const elapsedSeconds = Math.max(0, (nowMs - motion.stateStartedAtMs) / 1000);
+    const pose = getAvatarMotionPose(
+      isActive && amplitude > 0.05 ? 'speaking' : motion.state,
+      elapsedSeconds,
+    );
 
     // Update VRM spring bones + look-at
     vrm.update(delta);
 
-    // ── Idle breathing ──
-    breathingRef.current += delta;
-    groupRef.current.position.y = Math.sin(breathingRef.current * 0.5) * 0.02;
-    groupRef.current.rotation.x = Math.sin(breathingRef.current * 0.3) * 0.01;
-    groupRef.current.rotation.y = Math.sin(t * 0.1) * 0.05;
+    // ── Controller-owned body pose ──
+    groupRef.current.position.y = pose.verticalOffset;
+    groupRef.current.rotation.x = pose.pitchOffset;
+    groupRef.current.rotation.y = pose.yawOffset;
 
     // ── Eye tracking: cursor → look-at target ──
     const mouseX = (state.mouse.x * 0.5);
@@ -210,8 +246,11 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
     // ── Expression system: lerp toward target blendshape values ──
     const expr = vrm.expressionManager;
     if (expr) {
-      // Set target values from current emotion
-      targetBlendValues.current = { ...EMOTION_BLENDSHAPES[currentEmotion] ?? {} };
+      // Blend the explicit emotion with the current nonverbal motion state.
+      targetBlendValues.current = {
+        ...AVATAR_MOTION_EXPRESSION_TARGETS[motion.state],
+        ...EMOTION_BLENDSHAPES[currentEmotion] ?? {},
+      };
 
       // Add blink
       targetBlendValues.current['blink'] = blinkValueRef.current;
@@ -265,7 +304,12 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
   });
 
   return (
-    <group ref={groupRef}>
+    <group
+      ref={groupRef}
+      onClick={() => {
+        motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'user-tap', nowMs: Date.now() });
+      }}
+    >
       <primitive object={gltf.scene} scale={1} position={[0, -1.2, 0]} />
       {/* Phase B: Soft blob shadow — a radial-gradient circle at the avatar's
           feet. Not a real shadow-map (which needs a directional light + ground
@@ -347,6 +391,9 @@ export default function FaceView() {
   const [avatarToRename, setAvatarToRename] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameConflict, setRenameConflict] = useState(false);
+  const [localVrmSession, setLocalVrmSession] = useState<LocalVrmSession | null>(null);
+  const localVrmInputRef = useRef<HTMLInputElement>(null);
+  const catalogAvatarFallbackRef = useRef({ url: '/models/sample.vrm', name: 'Default Avatar' });
 
   // Phase B: Voice-to-Code-Written v1 — write confirmation state
   const [pendingWrite, setPendingWrite] = useState<{
@@ -446,6 +493,38 @@ export default function FaceView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authReady]);
 
+  // A session-only model is represented by a revocable blob URL and is never
+  // added to server settings, the built-in manifest, or custom avatar storage.
+  useEffect(() => {
+    return () => revokeLocalVrmSession(localVrmSession);
+  }, [localVrmSession]);
+
+  const handleSelectLocalVrm = useCallback((file: File) => {
+    try {
+      const session = createLocalVrmSession(file);
+      catalogAvatarFallbackRef.current = { url: avatarUrl, name: currentAvatarName };
+      setLocalVrmSession(session);
+      setAvatarSwitching(true);
+      setShowAvatarPicker(false);
+      setLoading(true);
+      setAvatarUrl(session.url);
+      setCurrentAvatarName(`${session.fileName} · local session`);
+      setCurrentEmotion('neutral');
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The local VRM could not be selected.');
+    }
+  }, [avatarUrl, currentAvatarName]);
+
+  const handleClearLocalVrm = useCallback(() => {
+    setLocalVrmSession(null);
+    setAvatarSwitching(true);
+    setLoading(true);
+    setAvatarUrl(catalogAvatarFallbackRef.current.url);
+    setCurrentAvatarName(catalogAvatarFallbackRef.current.name);
+    setCurrentEmotion('neutral');
+  }, []);
+
   // Phase B: Handle avatar selection from picker
   const handleSelectAvatar = async (avatarId: string, name: string) => {
     // Custom avatars are served by the API server (not vite) because vite
@@ -463,6 +542,7 @@ export default function FaceView() {
 
     setAvatarSwitching(true);
     setShowAvatarPicker(false);
+    setLocalVrmSession(null);
 
     // Persist to server
     const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
@@ -480,6 +560,7 @@ export default function FaceView() {
     // Trigger the switch (useLoader will re-suspend with the new URL)
     setAvatarUrl(newUrl);
     setCurrentAvatarName(name);
+    catalogAvatarFallbackRef.current = { url: newUrl, name };
     setLoading(true); // show loading spinner during switch
 
     // Reset state for new model
@@ -1058,6 +1139,43 @@ export default function FaceView() {
                     </div>
                   );
                 })}
+              </div>
+
+              {/* Session-only local model: no network request, manifest change, or persistence. */}
+              <input
+                ref={localVrmInputRef}
+                type="file"
+                accept=".vrm,model/gltf-binary"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (file) handleSelectLocalVrm(file);
+                }}
+              />
+              <button
+                onClick={() => localVrmInputRef.current?.click()}
+                className="flex items-center justify-center gap-2 px-3 py-2.5 text-[12px] font-medium transition-colors hover:bg-white/5"
+                style={{
+                  borderTop: '1px solid rgba(255,255,255,0.08)',
+                  backgroundColor: 'rgba(255,255,255,0.025)',
+                  color: 'var(--bright-silver)',
+                }}
+              >
+                <Upload className="w-3.5 h-3.5" style={{ color: 'var(--steel-silver)' }} />
+                Use Local VRM This Session
+              </button>
+              {localVrmSession && (
+                <button
+                  onClick={handleClearLocalVrm}
+                  className="px-3 py-2 text-[10px] text-left transition-colors hover:bg-white/5"
+                  style={{ color: 'var(--steel-silver)', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+                >
+                  Remove local model and restore catalog avatar
+                </button>
+              )}
+              <div className="px-3 py-1.5 text-[9px]" style={{ color: 'var(--muted-silver)' }}>
+                Local VRMs stay in this browser session only and are not uploaded, saved, or added to the catalog.
               </div>
 
               {/* Footer: Add Custom Model button */}
