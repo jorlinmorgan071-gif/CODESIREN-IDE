@@ -15,6 +15,7 @@ import { registerSink, broadcast, makeEvent } from './events.js';
 import { wsRateLimit } from '../middleware/rate-limiter.js';
 import { logSecurityEvent } from '../monitoring/security-log.js';
 import { voiceProxy } from '../systems/voice/voice-proxy.js';
+import { isVoiceEventForRecipient } from './voice-event-isolation.js';
 
 interface SessionState {
   ws: WebSocket;
@@ -171,7 +172,11 @@ export function attachWsServer(server: HttpServer): void {
   registerSink((event) => {
     const data = JSON.stringify(event);
     for (const s of sessions) {
-      if (s.ws.readyState === WebSocket.OPEN) {
+      const mayReceive = isVoiceEventForRecipient(event, {
+        userId: s.claims.sub,
+        projectId: s.projectId,
+      }, (sessionId) => voiceProxy.getSession(sessionId));
+      if (s.ws.readyState === WebSocket.OPEN && mayReceive) {
         s.ws.send(data);
       }
     }

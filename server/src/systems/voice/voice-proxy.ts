@@ -843,12 +843,11 @@ class VoiceProxy {
     // Clear audio buffer
     session.audioBuffer = [];
 
-    this.sessions.delete(sessionId);
-    console.log(`[voice-proxy] session ended: ${sessionId} — no further audio will be processed`);
-
     broadcast(makeEvent('voice:session-ended' as any, {
       sessionId, ts: Date.now(),
     }));
+    this.sessions.delete(sessionId);
+    console.log(`[voice-proxy] session ended: ${sessionId} — no further audio will be processed`);
   }
 
   /**
@@ -890,13 +889,15 @@ class VoiceProxy {
 
     const timer = setTimeout(() => {
       console.log(`[voice-proxy] auto-disconnect after ${this.SILENCE_TIMEOUT_MS / 1000}s silence: ${sessionId}`);
-      this.endSession(sessionId);
+      const session = this.sessions.get(sessionId);
+      if (!session) return;
       broadcast(makeEvent('voice:auto-disconnect' as any, {
         sessionId,
         reason: 'silence-timeout',
         timeoutMs: this.SILENCE_TIMEOUT_MS,
         ts: Date.now(),
       }));
+      this.endSession(sessionId);
     }, this.SILENCE_TIMEOUT_MS);
 
     this.silenceTimers.set(sessionId, timer);

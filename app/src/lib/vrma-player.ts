@@ -122,8 +122,9 @@ export class LocalVrmaPlayer {
       if (!session || this.sessionUrls.get(state) !== session.url) this.remove(state);
     }
 
-    const prepared = await Promise.all(sessions.map((session) => this.prepare(session)));
+    const settled = await Promise.allSettled(sessions.map((session) => this.prepare(session)));
     if (!this.syncGate.isCurrent(token)) return [];
+    const prepared = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
     return prepared.map((entry) => entry.alreadyInstalled ? entry.metadata : this.install(entry));
   }
 

@@ -29,3 +29,17 @@ export function canAttachLipSyncNode(
 export function isCurrentAudioNode(current: AudioNode | null, expected: AudioNode): boolean {
   return current === expected;
 }
+
+export function isCurrentVoiceSession(
+  currentGeneration: number,
+  expectedGeneration: number,
+  currentSessionId: string | null,
+  expectedSessionId: string,
+): boolean {
+  return currentGeneration === expectedGeneration && currentSessionId === expectedSessionId;
+}
+
+export function isVoiceEventForSession(payload: unknown, currentSessionId: string | null): boolean {
+  const sessionId = (payload as { sessionId?: unknown } | null)?.sessionId;
+  return typeof sessionId === 'string' && sessionId === currentSessionId;
+}

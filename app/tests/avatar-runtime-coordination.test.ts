@@ -8,6 +8,8 @@ import { LocalVrmaPlayer } from '../src/lib/vrma-player';
 import {
   canAttachLipSyncNode,
   isCurrentAudioNode,
+  isCurrentVoiceSession,
+  isVoiceEventForSession,
   LatestOperationGate,
 } from '../src/lib/runtime-coordination';
 
@@ -66,6 +68,24 @@ describe('Phase 5 runtime coordination', () => {
 
     const installed = (player as unknown as { actions: Map<string, THREE.AnimationAction> }).actions.get('idle');
     expect(installed?.getClip().name).toBe('B');
+    player.dispose();
+  });
+
+  it('installs valid VRMAs when a sibling preparation fails', async () => {
+    vi.spyOn(GLTFLoader.prototype, 'loadAsync').mockImplementation((url: string) => {
+      if (url === 'blob:invalid') return Promise.reject(new Error('invalid VRMA'));
+      return Promise.resolve(vrmaGltf('valid-speaking'));
+    });
+    const player = new LocalVrmaPlayer({ scene: new THREE.Group(), lookAt: null } as never);
+
+    const installed = await player.sync([
+      { id: 'invalid', name: 'invalid', targetState: 'idle' as const, url: 'blob:invalid', createdAt: 1 },
+      { id: 'valid', name: 'valid', targetState: 'speaking' as const, url: 'blob:valid', createdAt: 2 },
+    ]);
+
+    expect(installed.map((entry) => entry.targetState)).toEqual(['speaking']);
+    expect(player.hasClip('idle')).toBe(false);
+    expect(player.hasClip('speaking')).toBe(true);
     player.dispose();
   });
 
@@ -141,5 +161,20 @@ describe('Phase 5 runtime coordination', () => {
     if (gate.isCurrent(startB)) activeSession = 'B';
     if (gate.isCurrent(startA)) activeSession = 'A-failure-cleanup';
     expect(activeSession).toBe('B');
+  });
+
+  it('rejects a mismatched voice event before it can mutate the current client session', () => {
+    expect(isVoiceEventForSession({ sessionId: 'voice-a', text: 'stale' }, 'voice-b')).toBe(false);
+    expect(isVoiceEventForSession({ sessionId: 'voice-b', text: 'current' }, 'voice-b')).toBe(true);
+    expect(isVoiceEventForSession({}, 'voice-b')).toBe(false);
+  });
+
+  it('makes predecessor recorder and silence callbacks no-ops after session B supersedes session A', () => {
+    const generationA = 1;
+    const generationB = 2;
+    const currentSessionId = 'voice-b';
+
+    expect(isCurrentVoiceSession(generationB, generationA, currentSessionId, 'voice-a')).toBe(false);
+    expect(isCurrentVoiceSession(generationB, generationB, currentSessionId, 'voice-b')).toBe(true);
   });
 });

@@ -441,10 +441,9 @@ const blobShadowTexture = new THREE.CanvasTexture(blobShadowCanvas);
 
 export default function FaceView() {
   const {
-    isActive, isMuted, amplitude, sessionId, captions, visemeHint,
+    isActive, isMuted, amplitude, sessionId, captions, visemeHint, voiceActivity,
     toggleMute,
-    setCaption, setVisemeHint, setAudioSource, clearAudioSource,
-    currentAudioSource, audioContext, ensureAudioContext, isCurrentAudioSource,
+    currentAudioSource, audioContext,
     startVoiceSession, endVoiceSession,
     error: voiceError,
   } = useVoiceSession();
@@ -467,6 +466,29 @@ export default function FaceView() {
   const handleModelLoaded = useCallback(() => setLoading(false), []);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentEmotion, setCurrentEmotion] = useState<EmotionId>('neutral');
+
+  useEffect(() => {
+    if (voiceActivity === 'thinking') {
+      setIsProcessing(true);
+      setCurrentEmotion('think');
+    } else if (voiceActivity === 'speaking') {
+      setIsProcessing(false);
+      setCurrentEmotion('happy');
+    } else if (voiceActivity === 'listening') {
+      setIsProcessing(false);
+      setCurrentEmotion('neutral');
+    } else if (voiceActivity === 'error') {
+      setIsProcessing(false);
+      setCurrentEmotion('sad');
+    } else {
+      setIsProcessing(false);
+    }
+  }, [voiceActivity]);
+
+  const isCurrentVoiceEvent = useCallback((event: AgentEvent) => {
+    const payload = event.payload as { sessionId?: unknown };
+    return typeof payload.sessionId === 'string' && payload.sessionId === sessionId;
+  }, [sessionId]);
 
   // Phase B: Avatar picker state
   const [avatarUrl, setAvatarUrl] = useState('/models/sample.vrm'); // default until settings load
@@ -833,121 +855,9 @@ export default function FaceView() {
 
   useEffect(() => {
     if (!authReady) return;
-    const offTranscript = wsClient.on('voice:transcript' as never, (evt: AgentEvent) => {
-      const payload = evt.payload as { text: string; role: string };
-      setCaption('user', payload.text);
-      setCurrentEmotion('neutral');  // user speaking → neutral listening face
-    });
-
-    const offAgentChunk = wsClient.on('voice:agent-chunk' as never, (evt: AgentEvent) => {
-      const payload = evt.payload as { content: string };
-      setIsProcessing(true);
-      setCurrentEmotion('think');  // agent thinking/generating → think expression
-      // Append to agent caption — read current from context
-      setCaption('agent', captions.agent + payload.content);
-    });
-
-    const offAgentResponse = wsClient.on('voice:agent-response' as never, async (evt: AgentEvent) => {
-      const payload = evt.payload as { text: string; audioBase64: string | null };
-      setIsProcessing(false);
-      setCaption('agent', payload.text);
-      setCurrentEmotion('happy');  // response delivered → happy expression
-
-      // Play TTS audio
-      if (payload.audioBase64) {
-        try {
-          // Reuse the VoiceSessionContext's AudioContext — AudioNodes can
-          // only connect within the same context. ensureAudioContext() creates
-          // one if it doesn't exist yet (e.g., greeting arrives before
-          // startSession() has run).
-          const audioCtx = audioContext ?? ensureAudioContext();
-          const audioBuffer = await audioCtx.decodeAudioData(
-            Uint8Array.from(atob(payload.audioBase64), c => c.charCodeAt(0)).buffer
-          );
-          const source = audioCtx.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(audioCtx.destination);
-          source.start();
-
-          // Connect to VoiceSessionContext for amplitude + lip sync driving
-          setAudioSource(source);
-
-          // VRM lip sync: amplitude from the audio source drives the 'aa'
-          // blendshape directly in VRMModel's useFrame loop (via the
-          // amplitude prop from VoiceSessionContext). The old text-based
-          // viseme classification (classifyPhoneme) is no longer needed —
-          // VRM's standardized blendshapes work with amplitude-driven mouth open.
-          // We just need to connect the audio source so VoiceSessionContext
-          // can compute amplitude from it.
-          source.onended = () => {
-            if (isCurrentAudioSource(source)) clearAudioSource();
-            // Don't close audioCtx if it belongs to VoiceSessionContext
-            if (!audioContext) {
-              try { audioCtx.close(); } catch { /* already closed */ }
-            }
-          };
-        } catch (err) {
-          console.error('[face] TTS audio playback failed:', err);
-        }
-      }
-    });
-
-    const offAgentStart = wsClient.on('voice:agent-start' as never, () => {
-      setIsProcessing(true);
-      setCaption('agent', '');
-      setCurrentEmotion('think');  // agent processing → think expression
-    });
-
-    const offError = wsClient.on('voice:error' as never, (evt: AgentEvent) => {
-      const payload = evt.payload as { error: string };
-      setError(payload.error);
-      setIsProcessing(false);
-      setCurrentEmotion('sad');  // error → sad expression
-    });
-
-    const offEnded = wsClient.on('voice:session-ended' as never, () => {
-      clearAudioSource();
-    });
-
-    const offAutoDisconnect = wsClient.on('voice:auto-disconnect' as never, () => {
-      setError('Auto-disconnected after 90 seconds of silence');
-      handleEnd();
-    });
-
-    // Wake greeting — fires once on session start. Shows greeting text as
-    // caption and plays TTS audio if available.
-    const offGreeting = wsClient.on('voice:greeting' as never, async (evt: AgentEvent) => {
-      const payload = evt.payload as { text: string; audioBase64: string | null };
-      setCaption('agent', payload.text);
-
-      if (payload.audioBase64) {
-        try {
-          // Reuse the VoiceSessionContext's AudioContext — AudioNodes can
-          // only connect within the same context. ensureAudioContext() creates
-          // one if it doesn't exist yet.
-          const audioCtx = audioContext ?? ensureAudioContext();
-          const audioBuffer = await audioCtx.decodeAudioData(
-            Uint8Array.from(atob(payload.audioBase64), c => c.charCodeAt(0)).buffer
-          );
-          const source = audioCtx.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(audioCtx.destination);
-          source.start();
-          setAudioSource(source);
-          source.onended = () => {
-            if (isCurrentAudioSource(source)) clearAudioSource();
-            if (!audioContext) {
-              try { audioCtx.close(); } catch { /* already closed */ }
-            }
-          };
-        } catch (err) {
-          console.error('[face] greeting audio playback failed:', err);
-        }
-      }
-    });
-
     // Phase B: Voice-to-Code-Written v1 — confirmation gate WS listeners
     const offConfirmWrite = wsClient.on('voice:confirm-write' as never, (evt: AgentEvent) => {
+      if (!isCurrentVoiceEvent(evt)) return;
       const payload = evt.payload as {
         confirmId: string;
         proposedAction: string;
@@ -965,11 +875,13 @@ export default function FaceView() {
       setWriteResult(null);
     });
 
-    const offWriteConfirmed = wsClient.on('voice:write-confirmed' as never, () => {
+    const offWriteConfirmed = wsClient.on('voice:write-confirmed' as never, (evt: AgentEvent) => {
+      if (!isCurrentVoiceEvent(evt)) return;
       setPendingWrite(null);  // hide the confirmation panel
     });
 
     const offWriteCancelled = wsClient.on('voice:write-cancelled' as never, (evt: AgentEvent) => {
+      if (!isCurrentVoiceEvent(evt)) return;
       const payload = evt.payload as { reason: 'user-cancel' | 'timeout' };
       setPendingWrite(null);
       if (payload.reason === 'timeout') {
@@ -978,6 +890,7 @@ export default function FaceView() {
     });
 
     const offWriteResult = wsClient.on('voice:write-result' as never, (evt: AgentEvent) => {
+      if (!isCurrentVoiceEvent(evt)) return;
       const payload = evt.payload as {
         success: boolean;
         filePath: string | null;
@@ -991,21 +904,12 @@ export default function FaceView() {
     });
 
     return () => {
-      offTranscript();
-      offAgentChunk();
-      offAgentResponse();
-      offAgentStart();
-      offError();
-      offEnded();
-      offAutoDisconnect();
-      offGreeting();
       offConfirmWrite();
       offWriteConfirmed();
       offWriteCancelled();
       offWriteResult();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setCaption, setVisemeHint, setAudioSource, clearAudioSource, handleEnd, authReady]);
+  }, [authReady, isCurrentVoiceEvent]);
 
   // ── Navigate back ─────────────────────────────────────────────────────
   const handleBack = useCallback(() => {

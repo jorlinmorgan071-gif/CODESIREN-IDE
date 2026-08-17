@@ -687,6 +687,7 @@ export function InteractionBubble({ onClose }: { onClose?: () => void }) {
           }),
         });
         const data = await res.json() as { analysis: string };
+        if (!isCurrent()) return;
         window.dispatchEvent(new CustomEvent('code-siren:vision-result', {
           detail: { analysis: data.analysis },
         }));
