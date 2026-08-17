@@ -11,7 +11,7 @@
 //   Emotions: happy, sad, angry, surprised, relaxed, neutral (expression presets)
 //   Eyes: blink (left+right combined), lookAt (eye tracking via look-at bone)
 
-import { useState, useEffect, useRef, useCallback, useMemo, Suspense, Component, lazy, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -55,6 +55,8 @@ import { applyAvatarPresentationPose, getAvatarGazeTarget } from '@/lib/avatar-c
 import { useAvatarCompatibility } from '@/hooks/useAvatarCompatibility';
 import { useAvatarDiagnosticsSnapshot, type AvatarDiagnosticsRuntimeState, type AvatarDiagnosticsViewSnapshot } from '@/hooks/useAvatarDiagnosticsSnapshot';
 import { AvatarDiagnosticsSheetHost } from '@/components/avatar/AvatarDiagnosticsSheetHost';
+import { AvatarRuntimeErrorBoundary } from '@/components/avatar/AvatarRuntimeErrorBoundary';
+import { canAttachLipSyncNode, LatestOperationGate } from '@/lib/runtime-coordination';
 
 // Phase B: Lazy-load the upload dialog (heavy: Three.js + VRM analysis)
 const AvatarUploadDialogLazy = lazy(() =>
@@ -62,15 +64,6 @@ const AvatarUploadDialogLazy = lazy(() =>
 );
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
-
-// ── FaceErrorBoundary ────────────────────────────────────────────────────
-
-class FaceErrorBoundary extends Component<{ children: ReactNode; onError: (msg: string) => void }, { hasError: boolean }> {
-  state = { hasError: false };
-  static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(err: Error) { this.props.onError(err.message); }
-  render() { return this.state.hasError ? null : this.props.children; }
-}
 
 // ── VRM Emotion System ───────────────────────────────────────────────────
 // Reimplementation of AIRI's emotion→blendshape mapping in plain TypeScript.
@@ -117,7 +110,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
   const targetBlendValues = useRef<Record<string, number>>({});
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
-  const lipSyncProfileRef = useRef<Profile | null>(null);
+  const [lipSyncProfile, setLipSyncProfile] = useState<Profile | null>(null);
   const motionRef = useRef(createAvatarMotionSnapshot(0));
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
   const diagnosticsRuntimeRef = useRef<AvatarDiagnosticsRuntimeState>({ currentMotionState: 'idle', activeAnimation: null, proceduralFallback: true });
@@ -202,18 +195,21 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
 
   // Load wlipsync profile (async, non-blocking) — context-specific
   useEffect(() => {
+    let cancelled = false;
     fetch('/models/lip-sync-profile.json')
       .then(res => res.json() as Promise<Profile>)
       .then(profile => {
-        lipSyncProfileRef.current = profile;
+        if (cancelled) return;
+        setLipSyncProfile(profile);
         console.log('[face] wlipsync profile loaded:', profile.mfccs?.length, 'phonemes');
       })
       .catch(err => console.warn('[face] Failed to load lip-sync profile:', err));
+    return () => { cancelled = true; };
   }, []);
 
   // Create/connect lip sync node when audio source changes
   useEffect(() => {
-    if (!audioSource || !audioContext || !lipSyncProfileRef.current) return;
+    if (!canAttachLipSyncNode(audioSource, audioContext, lipSyncProfile) || !audioContext || !lipSyncProfile) return;
     if (lipSyncNodeRef.current) {
       try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
       lipSyncNodeRef.current = null;
@@ -223,7 +219,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
     let connectedNode: WLipSyncAudioNode | null = null;
     let logInterval: ReturnType<typeof setInterval> | null = null;
 
-    createWLipSyncNode(audioContext, lipSyncProfileRef.current)
+    createWLipSyncNode(audioContext, lipSyncProfile)
       .then(node => {
         if (cancelled) return;
         connectedNode = node;
@@ -259,7 +255,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
         if (lipSyncNodeRef.current === connectedNode) lipSyncNodeRef.current = null;
       }
     };
-  }, [audioSource, audioContext]);
+  }, [audioSource, audioContext, lipSyncProfile]);
 
   // Animation loop — drives expressions, blink, breathing, lip sync, eye tracking
   useFrame((state, delta) => {
@@ -448,7 +444,7 @@ export default function FaceView() {
     isActive, isMuted, amplitude, sessionId, captions, visemeHint,
     toggleMute,
     setCaption, setVisemeHint, setAudioSource, clearAudioSource,
-    currentAudioSource, audioContext, ensureAudioContext,
+    currentAudioSource, audioContext, ensureAudioContext, isCurrentAudioSource,
     startVoiceSession, endVoiceSession,
     error: voiceError,
   } = useVoiceSession();
@@ -485,6 +481,7 @@ export default function FaceView() {
   const [renameConflict, setRenameConflict] = useState(false);
   const [localVrmSession, setLocalVrmSession] = useState<LocalVrmSession | null>(null);
   const localVrmInputRef = useRef<HTMLInputElement>(null);
+  const avatarSelectionGateRef = useRef(new LatestOperationGate());
   const catalogAvatarFallbackRef = useRef({ url: '/models/sample.vrm', name: 'Default Avatar' });
   const {
     animationRegistry: localVrmaRegistry,
@@ -554,6 +551,7 @@ export default function FaceView() {
     if (!authReady) return;
     const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
     const token = getToken() ?? '';
+    const selectionToken = avatarSelectionGateRef.current.begin();
 
     // Fetch manifest (list of available avatars)
     fetch(`${API_BASE}/avatar/manifest`, {
@@ -581,6 +579,7 @@ export default function FaceView() {
     })
       .then((r) => r.json())
       .then((data) => {
+        if (!avatarSelectionGateRef.current.isCurrent(selectionToken)) return;
         if (data.settings?.selectedAvatarId) {
           const id = data.settings.selectedAvatarId as string;
           const manifestEntry = avatarList.find((a) => a.id === id);
@@ -607,6 +606,7 @@ export default function FaceView() {
 
   const handleSelectLocalVrm = useCallback((file: File) => {
     try {
+      avatarSelectionGateRef.current.invalidate();
       const session = createLocalVrmSession(file);
       catalogAvatarFallbackRef.current = { url: avatarUrl, name: currentAvatarName };
       setLocalVrmSession(session);
@@ -623,6 +623,7 @@ export default function FaceView() {
   }, [avatarUrl, currentAvatarName]);
 
   const handleClearLocalVrm = useCallback(() => {
+    avatarSelectionGateRef.current.invalidate();
     setLocalVrmSession(null);
     setAvatarSwitching(true);
     setLoading(true);
@@ -659,6 +660,8 @@ export default function FaceView() {
       return;
     }
 
+    const selectionToken = avatarSelectionGateRef.current.begin();
+
     setAvatarSwitching(true);
     setShowAvatarPicker(false);
     setLocalVrmSession(null);
@@ -675,6 +678,8 @@ export default function FaceView() {
     } catch (err) {
       console.warn('[face] failed to persist avatar selection:', err);
     }
+
+    if (!avatarSelectionGateRef.current.isCurrent(selectionToken)) return;
 
     // Trigger the switch (useLoader will re-suspend with the new URL)
     setAvatarUrl(newUrl);
@@ -875,7 +880,7 @@ export default function FaceView() {
           // We just need to connect the audio source so VoiceSessionContext
           // can compute amplitude from it.
           source.onended = () => {
-            clearAudioSource();
+            if (isCurrentAudioSource(source)) clearAudioSource();
             // Don't close audioCtx if it belongs to VoiceSessionContext
             if (!audioContext) {
               try { audioCtx.close(); } catch { /* already closed */ }
@@ -930,7 +935,7 @@ export default function FaceView() {
           source.start();
           setAudioSource(source);
           source.onended = () => {
-            clearAudioSource();
+            if (isCurrentAudioSource(source)) clearAudioSource();
             if (!audioContext) {
               try { audioCtx.close(); } catch { /* already closed */ }
             }
@@ -1064,14 +1069,15 @@ export default function FaceView() {
               loading spinner, and surfaces a clear error message
               rather than crashing the Canvas silently. */}
           <Suspense fallback={null}>
-            <FaceErrorBoundary
+            <AvatarRuntimeErrorBoundary
+              avatarIdentity={avatarUrl}
               onError={(msg) => {
                 setLoading(false);
                 setError(`3D model failed to load: ${msg}`);
               }}
             >
               <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} avatarUrl={avatarUrl} animationRegistry={localVrmaRegistry} onLoaded={handleModelLoaded} onAnimationError={setError} diagnosticsOpen={diagnosticsOpen} diagnosticsRefreshToken={diagnosticsRefreshToken} onDiagnosticsSnapshot={setDiagnosticsSnapshot} />
-            </FaceErrorBoundary>
+            </AvatarRuntimeErrorBoundary>
           </Suspense>
 
           <OrbitControls enablePan={false} enableZoom={true} minDistance={1.5} maxDistance={6} />

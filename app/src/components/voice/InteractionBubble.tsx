@@ -46,6 +46,8 @@ import { applyAvatarPresentationPose, getAvatarGazeTarget } from '@/lib/avatar-c
 import { useAvatarCompatibility } from '@/hooks/useAvatarCompatibility';
 import { useAvatarDiagnosticsSnapshot, type AvatarDiagnosticsRuntimeState, type AvatarDiagnosticsViewSnapshot } from '@/hooks/useAvatarDiagnosticsSnapshot';
 import { AvatarDiagnosticsSheetHost } from '@/components/avatar/AvatarDiagnosticsSheetHost';
+import { AvatarRuntimeErrorBoundary } from '@/components/avatar/AvatarRuntimeErrorBoundary';
+import { canAttachLipSyncNode, LatestOperationGate } from '@/lib/runtime-coordination';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -146,7 +148,7 @@ function VRMBubbleContent({
   const targetBlendValues = useRef<Record<string, number>>({});
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
-  const lipSyncProfileRef = useRef<Profile | null>(null);
+  const [lipSyncProfile, setLipSyncProfile] = useState<Profile | null>(null);
   const motionRef = useRef(createAvatarMotionSnapshot(0));
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
   const diagnosticsRuntimeRef = useRef<AvatarDiagnosticsRuntimeState>({ currentMotionState: 'idle', activeAnimation: null, proceduralFallback: true });
@@ -218,22 +220,24 @@ function VRMBubbleContent({
 
   // Load wlipsync profile (async, non-blocking) — context-specific
   useEffect(() => {
+    let cancelled = false;
     fetch('/models/lip-sync-profile.json')
       .then(res => res.json() as Promise<Profile>)
-      .then(profile => { lipSyncProfileRef.current = profile; })
+      .then(profile => { if (!cancelled) setLipSyncProfile(profile); })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   // Connect lip sync to audio source
   useEffect(() => {
-    if (!currentAudioSource || !audioContext || !lipSyncProfileRef.current) return;
+    if (!canAttachLipSyncNode(currentAudioSource, audioContext, lipSyncProfile) || !audioContext || !lipSyncProfile) return;
     if (lipSyncNodeRef.current) {
       try { currentAudioSource.disconnect(lipSyncNodeRef.current); } catch { /* */ }
       lipSyncNodeRef.current = null;
     }
     let cancelled = false;
     let connectedNode: WLipSyncAudioNode | null = null;
-    createWLipSyncNode(audioContext, lipSyncProfileRef.current)
+    createWLipSyncNode(audioContext, lipSyncProfile)
       .then(node => {
         if (cancelled) return;
         connectedNode = node;
@@ -249,7 +253,7 @@ function VRMBubbleContent({
         if (lipSyncNodeRef.current === connectedNode) lipSyncNodeRef.current = null;
       }
     };
-  }, [currentAudioSource, audioContext]);
+  }, [currentAudioSource, audioContext, lipSyncProfile]);
 
   useFrame((state, delta) => {
     const vrm = vrmRef.current;
@@ -503,7 +507,9 @@ function BubbleVisualization({
   if (visual === 'vrm' && avatarUrl) {
     return (
       <Suspense fallback={<PulseVisualization analyser={analyser} accentColor={accentColor} />}>
-        <VRMBubbleContent avatarUrl={avatarUrl} animationRegistry={animationRegistry} diagnosticsOpen={diagnosticsOpen} diagnosticsRefreshToken={diagnosticsRefreshToken} onDiagnosticsSnapshot={onDiagnosticsSnapshot} />
+        <AvatarRuntimeErrorBoundary avatarIdentity={avatarUrl}>
+          <VRMBubbleContent avatarUrl={avatarUrl} animationRegistry={animationRegistry} diagnosticsOpen={diagnosticsOpen} diagnosticsRefreshToken={diagnosticsRefreshToken} onDiagnosticsSnapshot={onDiagnosticsSnapshot} />
+        </AvatarRuntimeErrorBoundary>
       </Suspense>
     );
   }
@@ -575,6 +581,7 @@ export function InteractionBubble({ onClose }: { onClose?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [position, setPosition] = useState({ x: 100, y: 100 });
   const didDragRef = useRef(false);
+  const modeOperationGateRef = useRef(new LatestOperationGate());
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [diagnosticsRefreshToken, setDiagnosticsRefreshToken] = useState(0);
   const [diagnosticsSnapshot, setDiagnosticsSnapshot] = useState<AvatarDiagnosticsViewSnapshot | null>(null);
@@ -627,15 +634,19 @@ export function InteractionBubble({ onClose }: { onClose?: () => void }) {
 
   // ── Mode switching: end previous mode before starting new ──────────────
   const switchMode = useCallback(async (newMode: BubbleMode) => {
+    const token = modeOperationGateRef.current.begin();
+    const isCurrent = () => modeOperationGateRef.current.isCurrent(token);
     // End current mode's resources
     if (mode === 'voice-call' && isActive && newMode !== 'voice-call') {
       await endVoiceSession();
     }
+    if (!isCurrent()) return;
 
     // Start new mode
     if (newMode === 'voice-call' && !isActive) {
       await toggleVoiceSession();
     }
+    if (!isCurrent()) return;
 
     if (newMode === 'screen-share') {
       // Trigger screen share (same pattern as Home.tsx)
@@ -644,11 +655,19 @@ export function InteractionBubble({ onClose }: { onClose?: () => void }) {
           video: { frameRate: 1 },
           audio: false,
         });
+        if (!isCurrent()) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
         const video = document.createElement('video');
         video.srcObject = stream;
         video.muted = true;
         await video.play();
         await new Promise(r => requestAnimationFrame(() => r(null)));
+        if (!isCurrent()) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
         const canvas = document.createElement('canvas');
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -679,19 +698,25 @@ export function InteractionBubble({ onClose }: { onClose?: () => void }) {
         console.error('[bubble] screen share failed:', err);
       }
       // Return to idle after screen share (it's a one-shot, not a session)
-      setMode('idle');
+      if (isCurrent()) setMode('idle');
       return;
     }
 
-    setMode(newMode);
+    if (isCurrent()) setMode(newMode);
   }, [mode, isActive, endVoiceSession, toggleVoiceSession, state.inlineAIVisible]);
 
   // ── Handle end ─────────────────────────────────────────────────────────
   const handleEnd = useCallback(async () => {
+    modeOperationGateRef.current.invalidate();
     if (isActive) await endVoiceSession();
     setMode('idle');
     if (onClose) onClose();
   }, [isActive, endVoiceSession, onClose]);
+
+  useEffect(() => {
+    const operationGate = modeOperationGateRef.current;
+    return () => { operationGate.invalidate(); };
+  }, []);
 
   // ── Persist position ───────────────────────────────────────────────────
   const handleDragEnd = useCallback(async (pos: { x: number; y: number }) => {

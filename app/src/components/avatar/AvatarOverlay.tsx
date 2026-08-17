@@ -6,7 +6,7 @@
 // 2D drag with viewport bounds. Position + visibility persisted via the
 // avatar settings API.
 
-import { useState, useEffect, useRef, useMemo, useCallback, Suspense, Component, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Suspense } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -41,6 +41,8 @@ import { applyAvatarPresentationPose, getAvatarGazeTarget } from '@/lib/avatar-c
 import { useAvatarCompatibility } from '@/hooks/useAvatarCompatibility';
 import { useAvatarDiagnosticsSnapshot, type AvatarDiagnosticsRuntimeState, type AvatarDiagnosticsViewSnapshot } from '@/hooks/useAvatarDiagnosticsSnapshot';
 import { AvatarDiagnosticsSheetHost } from './AvatarDiagnosticsSheetHost';
+import { AvatarRuntimeErrorBoundary } from './AvatarRuntimeErrorBoundary';
+import { canAttachLipSyncNode } from '@/lib/runtime-coordination';
 
 type EmotionId = 'happy' | 'sad' | 'angry' | 'think' | 'surprised' | 'neutral';
 
@@ -66,13 +68,6 @@ blobCtx.fillStyle = blobGradient;
 blobCtx.fillRect(0, 0, 128, 128);
 const blobShadowTexture = new THREE.CanvasTexture(blobShadowCanvas);
 
-class PipErrorBoundary extends Component<{ onError: (msg: string) => void; children: ReactNode }, { hasError: boolean }> {
-  state = { hasError: false };
-  static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(err: Error) { this.props.onError(err.message); }
-  render() { return this.state.hasError ? null : this.props.children; }
-}
-
 interface PipVRMModelProps {
   avatarUrl: string;
   currentEmotion: EmotionId;
@@ -94,7 +89,7 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
   const targetBlendValues = useRef<Record<string, number>>({});
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
-  const lipSyncProfileRef = useRef<Profile | null>(null);
+  const [lipSyncProfile, setLipSyncProfile] = useState<Profile | null>(null);
   const motionRef = useRef(createAvatarMotionSnapshot(0));
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
   const diagnosticsRuntimeRef = useRef<AvatarDiagnosticsRuntimeState>({ currentMotionState: 'idle', activeAnimation: null, proceduralFallback: true });
@@ -166,22 +161,24 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
 
   // Load wlipsync profile (async, non-blocking) — context-specific
   useEffect(() => {
+    let cancelled = false;
     fetch('/models/lip-sync-profile.json')
       .then(res => res.json() as Promise<Profile>)
-      .then(profile => { lipSyncProfileRef.current = profile; })
+      .then(profile => { if (!cancelled) setLipSyncProfile(profile); })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   // Create/connect lip sync node when audio source changes
   useEffect(() => {
-    if (!audioSource || !audioContext || !lipSyncProfileRef.current) return;
+    if (!canAttachLipSyncNode(audioSource, audioContext, lipSyncProfile) || !audioContext || !lipSyncProfile) return;
     if (lipSyncNodeRef.current) {
       try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
       lipSyncNodeRef.current = null;
     }
     let cancelled = false;
     let connectedNode: WLipSyncAudioNode | null = null;
-    createWLipSyncNode(audioContext, lipSyncProfileRef.current)
+    createWLipSyncNode(audioContext, lipSyncProfile)
       .then(node => {
         if (cancelled) return;
         connectedNode = node;
@@ -196,7 +193,7 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
         if (lipSyncNodeRef.current === connectedNode) lipSyncNodeRef.current = null;
       }
     };
-  }, [audioSource, audioContext]);
+  }, [audioSource, audioContext, lipSyncProfile]);
 
   useFrame((state, delta) => {
     const vrm = vrmRef.current;
@@ -382,11 +379,11 @@ export function AvatarOverlay({ avatarUrl, position, onClose, onDragEnd }: Avata
           <directionalLight position={[0, 2, 3]} intensity={1.2} color="#FFFFFF" />
           <directionalLight position={[-2, 1, 2]} intensity={0.4} color="#FFFFFF" />
           <Suspense fallback={null}>
-            <PipErrorBoundary onError={() => {}}>
+            <AvatarRuntimeErrorBoundary avatarIdentity={avatarUrl}>
               <PipVRMModel avatarUrl={avatarUrl} currentEmotion={currentEmotion} isActive={isActive}
                 audioSource={currentAudioSource} audioContext={audioContext} animationRegistry={animationRegistry}
                 diagnosticsOpen={diagnosticsOpen} diagnosticsRefreshToken={diagnosticsRefreshToken} onDiagnosticsSnapshot={setDiagnosticsSnapshot} />
-            </PipErrorBoundary>
+            </AvatarRuntimeErrorBoundary>
           </Suspense>
           <OrbitControls enablePan={false} enableZoom={true} minDistance={1.5} maxDistance={6} />
         </Canvas>

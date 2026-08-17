@@ -8,6 +8,7 @@ import {
 } from '@pixiv/three-vrm-animation';
 import type { AvatarMotionState } from './avatar-motion';
 import type { LocalVrmaSession } from './local-vrma-session';
+import { LatestOperationGate } from './runtime-coordination';
 
 const CROSSFADE_SECONDS = 0.22;
 
@@ -23,6 +24,13 @@ export interface LoadedVrmaClip {
   durationSeconds: number;
 }
 
+interface PreparedVrmaClip {
+  session: LocalVrmaSession;
+  clip: THREE.AnimationClip;
+  metadata: LoadedVrmaClip;
+  alreadyInstalled: boolean;
+}
+
 // Each instance belongs to one loaded VRM. The caller creates a fresh player
 // whenever the avatar changes and disposes it with the model view.
 export class LocalVrmaPlayer {
@@ -32,6 +40,7 @@ export class LocalVrmaPlayer {
   private readonly loadedClipMetadata = new Map<AvatarMotionState, LoadedVrmaClip>();
   private readonly lookAtProxy: VRMLookAtQuaternionProxy | null;
   private readonly vrm: VRM;
+  private readonly syncGate = new LatestOperationGate();
   private activeState: AvatarMotionState | null = null;
 
   constructor(vrm: VRM) {
@@ -44,10 +53,13 @@ export class LocalVrmaPlayer {
     }
   }
 
-  async load(session: LocalVrmaSession): Promise<LoadedVrmaClip> {
+  private async prepare(session: LocalVrmaSession): Promise<PreparedVrmaClip> {
     const loadedUrl = this.sessionUrls.get(session.targetState);
     const loadedMetadata = this.loadedClipMetadata.get(session.targetState);
-    if (loadedUrl === session.url && loadedMetadata) return loadedMetadata;
+    const loadedAction = this.actions.get(session.targetState);
+    if (loadedUrl === session.url && loadedMetadata && loadedAction) {
+      return { session, clip: loadedAction.getClip(), metadata: loadedMetadata, alreadyInstalled: true };
+    }
 
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
@@ -60,6 +72,16 @@ export class LocalVrmaPlayer {
     }
 
     const clip = createVRMAnimationClip(vrmAnimation as Parameters<typeof createVRMAnimationClip>[0], this.vrm);
+    return {
+      session,
+      clip,
+      metadata: { targetState: session.targetState, durationSeconds: clip.duration },
+      alreadyInstalled: false,
+    };
+  }
+
+  private install(prepared: PreparedVrmaClip): LoadedVrmaClip {
+    const { session, clip, metadata } = prepared;
     const previous = this.actions.get(session.targetState);
     if (previous) {
       previous.stop();
@@ -75,7 +97,6 @@ export class LocalVrmaPlayer {
       action.reset().fadeIn(CROSSFADE_SECONDS).play();
     }
 
-    const metadata = { targetState: session.targetState, durationSeconds: clip.duration };
     this.sessionUrls.set(session.targetState, session.url);
     this.loadedClipMetadata.set(session.targetState, metadata);
     return metadata;
@@ -94,12 +115,16 @@ export class LocalVrmaPlayer {
   }
 
   async sync(sessions: readonly LocalVrmaSession[]): Promise<LoadedVrmaClip[]> {
+    const token = this.syncGate.begin();
     const desired = new Map(sessions.map((session) => [session.targetState, session]));
     for (const state of this.actions.keys()) {
       const session = desired.get(state as LocalVrmaSession['targetState']);
       if (!session || this.sessionUrls.get(state) !== session.url) this.remove(state);
     }
-    return Promise.all(sessions.map((session) => this.load(session)));
+
+    const prepared = await Promise.all(sessions.map((session) => this.prepare(session)));
+    if (!this.syncGate.isCurrent(token)) return [];
+    return prepared.map((entry) => entry.alreadyInstalled ? entry.metadata : this.install(entry));
   }
 
   hasClip(state: AvatarMotionState): boolean {
@@ -121,6 +146,7 @@ export class LocalVrmaPlayer {
   }
 
   dispose(): void {
+    this.syncGate.invalidate();
     for (const action of this.actions.values()) {
       action.stop();
       this.mixer.uncacheClip(action.getClip());

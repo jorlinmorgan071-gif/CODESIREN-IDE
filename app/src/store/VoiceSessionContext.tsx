@@ -23,6 +23,7 @@
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
+import { isCurrentAudioNode, LatestOperationGate } from '@/lib/runtime-coordination';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -55,6 +56,7 @@ interface VoiceSessionContextValue extends VoiceSessionState {
   setVisemeHint: (hint: string) => void;
   setAudioSource: (source: AudioNode) => void;
   clearAudioSource: () => void;
+  isCurrentAudioSource: (source: AudioNode) => boolean;
   ensureAudioContext: () => AudioContext;
   currentAudioSource: AudioNode | null;
   audioContext: AudioContext | null;
@@ -87,6 +89,7 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const currentSourceRef = useRef<AudioNode | null>(null);
+  const startOperationGateRef = useRef(new LatestOperationGate());
   const rafRef = useRef<number | null>(null);
 
   // Phase B: Mic capture + recorder + silence detection refs.
@@ -200,6 +203,8 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
     setCurrentAudioSource(null);
   }, []);
 
+  const isCurrentAudioSource = useCallback((source: AudioNode) => isCurrentAudioNode(currentSourceRef.current, source), []);
+
   // ── Phase B: Full lifecycle (getUserMedia + recorder + silence) ────────
   // This logic was lifted from FaceView.handleStart/handleEnd so the F6
   // hotkey can trigger it from anywhere. FaceView's button now calls these
@@ -220,6 +225,7 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
 
   // Internal end (used by auto-end timer to avoid circular dep on endVoiceSession)
   const endVoiceSessionInternal = useCallback(async () => {
+    startOperationGateRef.current.invalidate();
     // Stop recording
     if (mediaRecorderRef.current) {
       try {
@@ -278,6 +284,20 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
 
   // Full start: POST /voice/live/start + getUserMedia + recorder + silence detection
   const startVoiceSession = useCallback(async () => {
+    const operation = startOperationGateRef.current.begin();
+    const isCurrent = () => startOperationGateRef.current.isCurrent(operation);
+    let startedSessionId: string | null = null;
+    let acquiredStream: MediaStream | null = null;
+    const endStaleRemoteSession = async (sid: string) => {
+      try {
+        const token = getToken();
+        await fetch(`${API_BASE}/voice/live/${sid}/end`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch { /* server may already have cleaned up */ }
+    };
+
     setError(null);
     try {
       const token = getToken();
@@ -288,10 +308,21 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = await res.json() as { sessionId: string };
+      startedSessionId = body.sessionId;
+      if (!isCurrent()) {
+        await endStaleRemoteSession(body.sessionId);
+        return;
+      }
       startSession(body.sessionId);
 
       // Start recording from microphone
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      acquiredStream = stream;
+      if (!isCurrent()) {
+        stream.getTracks().forEach(track => track.stop());
+        await endStaleRemoteSession(body.sessionId);
+        return;
+      }
       mediaStreamRef.current = stream;
       const recorder = new MediaRecorder(stream);
       audioChunksRef.current = [];
@@ -383,12 +414,31 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
       };
       checkSilence();
     } catch (err) {
+      if (!isCurrent()) {
+        if (acquiredStream) acquiredStream.getTracks().forEach(track => track.stop());
+        if (startedSessionId) await endStaleRemoteSession(startedSessionId);
+        return;
+      }
+      if (acquiredStream) acquiredStream.getTracks().forEach(track => track.stop());
+      if (mediaRecorderRef.current) {
+        try { mediaRecorderRef.current.stop(); } catch { /* */ }
+        mediaRecorderRef.current = null;
+      }
+      if (mediaStreamRef.current === acquiredStream) mediaStreamRef.current = null;
+      clearAudioSource();
+      if (startedSessionId) await endStaleRemoteSession(startedSessionId);
+      endSession();
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
       console.error('[voice-session] start failed:', msg);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startSession, setAudioSource, resetAutoEndTimer]);
+  }, [startSession, setAudioSource, resetAutoEndTimer, clearAudioSource, endSession]);
+
+  useEffect(() => {
+    const operationGate = startOperationGateRef.current;
+    return () => { operationGate.invalidate(); };
+  }, []);
 
   // Full end: stop recorder + close AudioContext + POST /voice/live/:id/end
   const endVoiceSession = useCallback(async () => {
@@ -425,14 +475,14 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
     isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint, error,
     startVoiceSession, endVoiceSession, toggleVoiceSession,
     startSession, endSession, toggleMute, setCaption, setVisemeHint,
-    setAudioSource, clearAudioSource, ensureAudioContext,
+    setAudioSource, clearAudioSource, isCurrentAudioSource, ensureAudioContext,
     currentAudioSource,
     audioContext: audioContextState,
     analyser: analyserRef.current,
   }), [isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint, error,
     startVoiceSession, endVoiceSession, toggleVoiceSession,
     startSession, endSession, toggleMute, setCaption, setVisemeHint,
-    setAudioSource, clearAudioSource, ensureAudioContext, currentAudioSource, audioContextState]);
+    setAudioSource, clearAudioSource, isCurrentAudioSource, ensureAudioContext, currentAudioSource, audioContextState]);
 
   return (
     <VoiceSessionContext.Provider value={value}>
