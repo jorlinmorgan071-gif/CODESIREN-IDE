@@ -105,7 +105,9 @@ export function useVRMLoader(avatarUrl: string, onLoaded?: () => void): UseVRMLo
     // ── Spring bone gravity fix: set gravity on zero-gravity joints ──
     // Some VRM files (notably Hatsune Miku) ship with gravityPower=0 on all
     // spring bone joints, causing hair/cloth to float unrealistically. Set
-    // a moderate gravity on joints that currently have none. Joints that
+    // a visible gravity (1.0, matching VRM spec reference) on joints that
+    // currently have none. Also set dragForce=0.5 if the joint's drag is 0
+    // (most joints already have reasonable drag like 0.4). Joints that
     // already have non-zero gravity (tuned by the model author) are left
     // untouched.
     {
@@ -118,8 +120,11 @@ export function useVRMLoader(avatarUrl: string, onLoaded?: () => void): UseVRMLo
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const s: any = joint.settings;
           if (s && s.gravityPower === 0) {
-            s.gravityPower = 0.5;
+            s.gravityPower = 1.0;
             s.gravityDir.set(0, -1, 0);
+            if (s.dragForce === 0) {
+              s.dragForce = 0.5;
+            }
           }
         }
       }
