@@ -25,6 +25,8 @@ export interface LocalVrmaSession {
   targetState: LocalVrmaTargetState;
 }
 
+export type LocalVrmaRegistry = Partial<Record<LocalVrmaTargetState, LocalVrmaSession>>;
+
 export function validateLocalVrmaFile(file: Pick<File, 'name' | 'size'>): string | null {
   if (!/\.vrma$/i.test(file.name)) {
     return 'Choose a VRM Animation (.vrma) file.';
@@ -53,5 +55,33 @@ export function createLocalVrmaSession(file: File, targetState: LocalVrmaTargetS
 export function revokeLocalVrmaSession(session: LocalVrmaSession | null): void {
   if (session?.url.startsWith('blob:')) {
     URL.revokeObjectURL(session.url);
+  }
+}
+
+export function getLocalVrmaRegistryEntries(registry: LocalVrmaRegistry): LocalVrmaSession[] {
+  return LOCAL_VRMA_TARGET_STATES
+    .map((state) => registry[state])
+    .filter((session): session is LocalVrmaSession => Boolean(session));
+}
+
+export function setLocalVrmaRegistryEntry(
+  registry: LocalVrmaRegistry,
+  session: LocalVrmaSession,
+): LocalVrmaRegistry {
+  return { ...registry, [session.targetState]: session };
+}
+
+export function removeLocalVrmaRegistryEntry(
+  registry: LocalVrmaRegistry,
+  targetState: LocalVrmaTargetState,
+): LocalVrmaRegistry {
+  const remaining = { ...registry };
+  delete remaining[targetState];
+  return remaining;
+}
+
+export function revokeLocalVrmaRegistry(registry: LocalVrmaRegistry): void {
+  for (const session of getLocalVrmaRegistryEntries(registry)) {
+    revokeLocalVrmaSession(session);
   }
 }

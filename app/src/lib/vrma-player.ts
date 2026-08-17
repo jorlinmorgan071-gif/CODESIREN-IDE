@@ -28,6 +28,8 @@ export interface LoadedVrmaClip {
 export class LocalVrmaPlayer {
   private readonly mixer: THREE.AnimationMixer;
   private readonly actions = new Map<AvatarMotionState, THREE.AnimationAction>();
+  private readonly sessionUrls = new Map<AvatarMotionState, string>();
+  private readonly loadedClipMetadata = new Map<AvatarMotionState, LoadedVrmaClip>();
   private readonly lookAtProxy: VRMLookAtQuaternionProxy | null;
   private readonly vrm: VRM;
   private activeState: AvatarMotionState | null = null;
@@ -43,6 +45,10 @@ export class LocalVrmaPlayer {
   }
 
   async load(session: LocalVrmaSession): Promise<LoadedVrmaClip> {
+    const loadedUrl = this.sessionUrls.get(session.targetState);
+    const loadedMetadata = this.loadedClipMetadata.get(session.targetState);
+    if (loadedUrl === session.url && loadedMetadata) return loadedMetadata;
+
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
 
@@ -69,7 +75,31 @@ export class LocalVrmaPlayer {
       action.reset().fadeIn(CROSSFADE_SECONDS).play();
     }
 
-    return { targetState: session.targetState, durationSeconds: clip.duration };
+    const metadata = { targetState: session.targetState, durationSeconds: clip.duration };
+    this.sessionUrls.set(session.targetState, session.url);
+    this.loadedClipMetadata.set(session.targetState, metadata);
+    return metadata;
+  }
+
+  remove(state: AvatarMotionState): void {
+    const action = this.actions.get(state);
+    if (action) {
+      action.stop();
+      this.mixer.uncacheClip(action.getClip());
+    }
+    this.actions.delete(state);
+    this.sessionUrls.delete(state);
+    this.loadedClipMetadata.delete(state);
+    if (this.activeState === state) this.activeState = null;
+  }
+
+  async sync(sessions: readonly LocalVrmaSession[]): Promise<LoadedVrmaClip[]> {
+    const desired = new Map(sessions.map((session) => [session.targetState, session]));
+    for (const state of this.actions.keys()) {
+      const session = desired.get(state as LocalVrmaSession['targetState']);
+      if (!session || this.sessionUrls.get(state) !== session.url) this.remove(state);
+    }
+    return Promise.all(sessions.map((session) => this.load(session)));
   }
 
   hasClip(state: AvatarMotionState): boolean {
@@ -96,6 +126,8 @@ export class LocalVrmaPlayer {
       this.mixer.uncacheClip(action.getClip());
     }
     this.actions.clear();
+    this.sessionUrls.clear();
+    this.loadedClipMetadata.clear();
     this.mixer.stopAllAction();
     if (this.lookAtProxy) this.vrm.scene.remove(this.lookAtProxy);
   }

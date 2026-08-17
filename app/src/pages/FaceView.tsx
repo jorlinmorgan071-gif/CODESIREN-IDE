@@ -38,9 +38,13 @@ import {
 } from '@/lib/local-vrm-session';
 import {
   createLocalVrmaSession,
-  type LocalVrmaSession,
+  getLocalVrmaRegistryEntries,
+  type LocalVrmaRegistry,
   LOCAL_VRMA_TARGET_STATES,
+  removeLocalVrmaRegistryEntry,
+  revokeLocalVrmaRegistry,
   revokeLocalVrmaSession,
+  setLocalVrmaRegistryEntry,
   type LocalVrmaTargetState,
 } from '@/lib/local-vrma-session';
 import { LocalVrmaPlayer, shouldUseProceduralMotion } from '@/lib/vrma-player';
@@ -89,7 +93,7 @@ interface VRMModelProps {
   audioSource: AudioNode | null;
   audioContext: AudioContext | null;
   avatarUrl: string;  // Phase B: dynamic avatar URL
-  animationSession: LocalVrmaSession | null;
+  animationRegistry: LocalVrmaRegistry;
   onLoaded?: () => void;  // fires when a model finishes loading (every switch, not just initial)
   onAnimationError?: (message: string) => void;
 }
@@ -103,7 +107,7 @@ const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
   U: 'ou',
 };
 
-function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioContext, avatarUrl, animationSession, onLoaded, onAnimationError }: VRMModelProps) {
+function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioContext, avatarUrl, animationRegistry, onLoaded, onAnimationError }: VRMModelProps) {
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
@@ -140,16 +144,16 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
 
   useEffect(() => {
     const player = vrmaPlayerRef.current;
-    if (!player || !animationSession) return;
+    if (!player) return;
     let cancelled = false;
-    player.load(animationSession).catch((err) => {
+    player.sync(getLocalVrmaRegistryEntries(animationRegistry)).catch((err) => {
       if (!cancelled) {
         const detail = err instanceof Error ? err.message : 'Unknown animation loading error.';
         onAnimationError?.(`Local animation could not load: ${detail}`);
       }
     });
     return () => { cancelled = true; };
-  }, [animationSession, vrm, onAnimationError]);
+  }, [animationRegistry, vrm, onAnimationError]);
 
   useEffect(() => {
     motionRef.current = reduceAvatarMotion(motionRef.current, {
@@ -430,9 +434,10 @@ export default function FaceView() {
   const [localVrmSession, setLocalVrmSession] = useState<LocalVrmSession | null>(null);
   const localVrmInputRef = useRef<HTMLInputElement>(null);
   const catalogAvatarFallbackRef = useRef({ url: '/models/sample.vrm', name: 'Default Avatar' });
-  const [localVrmaSession, setLocalVrmaSession] = useState<LocalVrmaSession | null>(null);
+  const [localVrmaRegistry, setLocalVrmaRegistry] = useState<LocalVrmaRegistry>({});
   const [localVrmaTargetState, setLocalVrmaTargetState] = useState<LocalVrmaTargetState>('idle');
   const localVrmaInputRef = useRef<HTMLInputElement>(null);
+  const localVrmaRegistryRef = useRef<LocalVrmaRegistry>({});
 
   // Phase B: Voice-to-Code-Written v1 — write confirmation state
   const [pendingWrite, setPendingWrite] = useState<{
@@ -539,8 +544,12 @@ export default function FaceView() {
   }, [localVrmSession]);
 
   useEffect(() => {
-    return () => revokeLocalVrmaSession(localVrmaSession);
-  }, [localVrmaSession]);
+    localVrmaRegistryRef.current = localVrmaRegistry;
+  }, [localVrmaRegistry]);
+
+  useEffect(() => {
+    return () => revokeLocalVrmaRegistry(localVrmaRegistryRef.current);
+  }, []);
 
   const handleSelectLocalVrm = useCallback((file: File) => {
     try {
@@ -570,16 +579,21 @@ export default function FaceView() {
 
   const handleSelectLocalVrma = useCallback((file: File) => {
     try {
-      setLocalVrmaSession(createLocalVrmaSession(file, localVrmaTargetState));
+      const session = createLocalVrmaSession(file, localVrmaTargetState);
+      const existing = localVrmaRegistry[localVrmaTargetState];
+      if (existing) revokeLocalVrmaSession(existing);
+      setLocalVrmaRegistry((registry) => setLocalVrmaRegistryEntry(registry, session));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The local animation could not be selected.');
     }
-  }, [localVrmaTargetState]);
+  }, [localVrmaRegistry, localVrmaTargetState]);
 
-  const handleClearLocalVrma = useCallback(() => {
-    setLocalVrmaSession(null);
-  }, []);
+  const handleRemoveLocalVrma = useCallback((targetState: LocalVrmaTargetState) => {
+    const session = localVrmaRegistry[targetState];
+    if (session) revokeLocalVrmaSession(session);
+    setLocalVrmaRegistry((registry) => removeLocalVrmaRegistryEntry(registry, targetState));
+  }, [localVrmaRegistry]);
 
   // Phase B: Handle avatar selection from picker
   const handleSelectAvatar = async (avatarId: string, name: string) => {
@@ -998,7 +1012,7 @@ export default function FaceView() {
                 setError(`3D model failed to load: ${msg}`);
               }}
             >
-              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} avatarUrl={avatarUrl} animationSession={localVrmaSession} onLoaded={handleModelLoaded} onAnimationError={setError} />
+              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} avatarUrl={avatarUrl} animationRegistry={localVrmaRegistry} onLoaded={handleModelLoaded} onAnimationError={setError} />
             </FaceErrorBoundary>
           </Suspense>
 
@@ -1266,19 +1280,29 @@ export default function FaceView() {
                   style={{ backgroundColor: 'rgba(67, 56, 202, 0.14)', color: 'var(--bright-silver)' }}
                 >
                   <Upload className="w-3 h-3" style={{ color: 'var(--steel-silver)' }} />
-                  Use Local .VRMA Animation
+                  Add or Replace Local .VRMA
                 </button>
-                {localVrmaSession && (
-                  <button
-                    onClick={handleClearLocalVrma}
-                    className="w-full text-left text-[9px] hover:underline"
-                    style={{ color: 'var(--steel-silver)' }}
-                  >
-                    Remove “{localVrmaSession.fileName}” from this session
-                  </button>
+                {getLocalVrmaRegistryEntries(localVrmaRegistry).length > 0 && (
+                  <div className="space-y-1 pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="text-[9px] uppercase tracking-wide" style={{ color: 'var(--muted-silver)' }}>Local animation library</div>
+                    {getLocalVrmaRegistryEntries(localVrmaRegistry).map((session) => (
+                      <div key={session.targetState} className="flex items-center gap-2 rounded px-2 py-1" style={{ backgroundColor: 'rgba(255,255,255,0.035)' }}>
+                        <span className="min-w-0 flex-1 truncate text-[9px]" style={{ color: 'var(--bright-silver)' }}>
+                          <span style={{ color: 'var(--steel-silver)' }}>{session.targetState}</span> · {session.fileName}
+                        </span>
+                        <button
+                          onClick={() => handleRemoveLocalVrma(session.targetState)}
+                          className="text-[9px] hover:underline"
+                          style={{ color: 'var(--siren-red)' }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 )}
                 <p className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>
-                  Local animations are not uploaded, saved, or added to the catalog.
+                  Local animations are not uploaded, saved, or added to the catalog. Replacing one state leaves other mappings active.
                 </p>
               </div>
 

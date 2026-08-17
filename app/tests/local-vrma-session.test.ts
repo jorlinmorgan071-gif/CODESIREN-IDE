@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  getLocalVrmaRegistryEntries,
   MAX_LOCAL_VRMA_BYTES,
+  removeLocalVrmaRegistryEntry,
   createLocalVrmaSession,
   revokeLocalVrmaSession,
+  setLocalVrmaRegistryEntry,
   validateLocalVrmaFile,
 } from '../src/lib/local-vrma-session';
 import { shouldUseProceduralMotion } from '../src/lib/vrma-player';
@@ -43,5 +46,16 @@ describe('session-only VRMA selection', () => {
     expect(shouldUseProceduralMotion('idle', loadedStates)).toBe(false);
     expect(shouldUseProceduralMotion('thinking', loadedStates)).toBe(true);
   });
-});
 
+  it('maps several local sessions by state and replaces only the selected state', () => {
+    const idle = { url: 'blob:idle', fileName: 'idle.vrma', sizeBytes: 1, targetState: 'idle' as const };
+    const think = { url: 'blob:think', fileName: 'think.vrma', sizeBytes: 1, targetState: 'thinking' as const };
+    const replacementIdle = { url: 'blob:idle-2', fileName: 'idle-2.vrma', sizeBytes: 1, targetState: 'idle' as const };
+
+    const registry = setLocalVrmaRegistryEntry(setLocalVrmaRegistryEntry({}, idle), think);
+    const replaced = setLocalVrmaRegistryEntry(registry, replacementIdle);
+
+    expect(getLocalVrmaRegistryEntries(replaced)).toEqual([replacementIdle, think]);
+    expect(removeLocalVrmaRegistryEntry(replaced, 'idle')).toEqual({ thinking: think });
+  });
+});
