@@ -212,6 +212,53 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
     setCurrentAudioSource(null);
   }, []);
 
+  const releaseLocalVoiceResources = useCallback((updateReactState: boolean) => {
+    if (mediaRecorderRef.current) {
+      try {
+        if (mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop();
+      } catch { /* */ }
+      mediaRecorderRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try { audioContextRef.current.close(); } catch { /* */ }
+      audioContextRef.current = null;
+      analyserRef.current = null;
+    }
+    silenceAnalyserRef.current = null;
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    silenceTimerRef.current = null;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    if (silenceRafRef.current) cancelAnimationFrame(silenceRafRef.current);
+    silenceRafRef.current = null;
+    if (recorderRestartTimerRef.current) clearTimeout(recorderRestartTimerRef.current);
+    recorderRestartTimerRef.current = null;
+    if (autoEndTimerRef.current) clearTimeout(autoEndTimerRef.current);
+    autoEndTimerRef.current = null;
+    if (currentSourceRef.current) {
+      try { currentSourceRef.current.disconnect(); } catch { /* */ }
+      currentSourceRef.current = null;
+    }
+    if (updateReactState) {
+      setCurrentAudioSource(null);
+      setAudioContextState(null);
+    }
+  }, []);
+
+  const terminateRemoteSession = useCallback(async (sid: string) => {
+    try {
+      const token = getToken();
+      await fetch(`${API_BASE}/voice/live/${sid}/end`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch { /* server may already have cleaned up */ }
+  }, []);
+
   const isCurrentAudioSource = useCallback((source: AudioNode) => isCurrentAudioNode(currentSourceRef.current, source), []);
 
   // ── Phase B: Full lifecycle (getUserMedia + recorder + silence) ────────
@@ -234,73 +281,17 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
 
   // Internal end (used by auto-end timer to avoid circular dep on endVoiceSession)
   const endVoiceSessionInternal = useCallback(async () => {
+    const sidToTerminate = currentSessionIdRef.current ?? sessionId;
+    // This eligibility revocation must happen before the first await: late A
+    // events and callbacks must not be able to mutate a stopped or newer B.
+    currentSessionIdRef.current = null;
+    isActiveRef.current = false;
     startOperationGateRef.current.invalidate();
     sessionGenerationRef.current += 1;
-    // Stop recording
-    if (mediaRecorderRef.current) {
-      try {
-        if (mediaRecorderRef.current.state === 'recording') {
-          mediaRecorderRef.current.stop();
-        }
-      } catch { /* */ }
-      mediaRecorderRef.current = null;
-    }
-
-    // Stop all media tracks
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(t => t.stop());
-      mediaStreamRef.current = null;
-    }
-
-    // Close the shared AudioContext (used for both silence detection + amplitude).
-    // Note: ensureAudioContext() will create a fresh one on next start.
-    if (audioContextRef.current) {
-      try { audioContextRef.current.close(); } catch { /* */ }
-      audioContextRef.current = null;
-      analyserRef.current = null;  // amplitude analyser lives in this context
-    }
-
-    // Clear silence analyser
-    silenceAnalyserRef.current = null;
-
-    // Clear silence timer
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-
-    if (silenceRafRef.current) {
-      cancelAnimationFrame(silenceRafRef.current);
-      silenceRafRef.current = null;
-    }
-
-    if (recorderRestartTimerRef.current) {
-      clearTimeout(recorderRestartTimerRef.current);
-      recorderRestartTimerRef.current = null;
-    }
-
-    // Clear auto-end timer
-    if (autoEndTimerRef.current) {
-      clearTimeout(autoEndTimerRef.current);
-      autoEndTimerRef.current = null;
-    }
-
-    clearAudioSource();
-
-    // Tell server to end the session
-    const currentSid = sessionId;
-    if (currentSid) {
-      try {
-        const token = getToken();
-        await fetch(`${API_BASE}/voice/live/${currentSid}/end`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch { /* server may have already cleaned up */ }
-    }
-
+    releaseLocalVoiceResources(true);
     endSession();
-  }, [sessionId, endSession, clearAudioSource]);
+    if (sidToTerminate) await terminateRemoteSession(sidToTerminate);
+  }, [sessionId, endSession, releaseLocalVoiceResources, terminateRemoteSession]);
 
   // Full start: POST /voice/live/start + getUserMedia + recorder + silence detection
   const startVoiceSession = useCallback(async () => {
@@ -547,8 +538,16 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     const operationGate = startOperationGateRef.current;
-    return () => { operationGate.invalidate(); };
-  }, []);
+    return () => {
+      const sidToTerminate = currentSessionIdRef.current;
+      currentSessionIdRef.current = null;
+      isActiveRef.current = false;
+      operationGate.invalidate();
+      sessionGenerationRef.current += 1;
+      releaseLocalVoiceResources(false);
+      if (sidToTerminate) void terminateRemoteSession(sidToTerminate);
+    };
+  }, [releaseLocalVoiceResources, terminateRemoteSession]);
 
   // Full end: stop recorder + close AudioContext + POST /voice/live/:id/end
   const endVoiceSession = useCallback(async () => {

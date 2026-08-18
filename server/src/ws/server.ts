@@ -175,7 +175,7 @@ export function attachWsServer(server: HttpServer): void {
       const mayReceive = isVoiceEventForRecipient(event, {
         userId: s.claims.sub,
         projectId: s.projectId,
-      }, (sessionId) => voiceProxy.getSession(sessionId));
+      }, (sessionId) => voiceProxy.getSession(sessionId), (taskId) => voiceProxy.getVoiceTaskOwner(taskId));
       if (s.ws.readyState === WebSocket.OPEN && mayReceive) {
         s.ws.send(data);
       }

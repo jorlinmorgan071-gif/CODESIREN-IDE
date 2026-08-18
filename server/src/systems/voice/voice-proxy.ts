@@ -192,6 +192,7 @@ export type { GreetingVariant, GreetingTone, TimeTag };
 
 class VoiceProxy {
   private sessions = new Map<string, ActiveVoiceSession>();
+  private voiceTaskOwners = new Map<string, Pick<ActiveVoiceSession, 'userId' | 'projectId'>>();
   private silenceTimers = new Map<string, NodeJS.Timeout>();
   private zaiInstance: any | null = null;
   private readonly SILENCE_TIMEOUT_MS = 90_000;  // 90 seconds of silence
@@ -475,6 +476,7 @@ class VoiceProxy {
       origin: 'voice',  // ← the ONLY field that differs from typed chat
       createdAt: Date.now(),
     };
+    this.voiceTaskOwners.set(taskId, { userId: session.userId, projectId: session.projectId });
 
     // Step 3: Send through AgentManager.executeAndWait() — the real pipeline.
     //
@@ -541,6 +543,7 @@ class VoiceProxy {
     } finally {
       // Always unsubscribe the sink — even on error — to avoid leaks
       unsubscribeSink();
+      this.voiceTaskOwners.delete(taskId);
     }
 
     // Step 4: TTS — text to speech via TTSProvider interface
@@ -855,6 +858,10 @@ class VoiceProxy {
    */
   getSession(sessionId: string): ActiveVoiceSession | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  getVoiceTaskOwner(taskId: string): Pick<ActiveVoiceSession, 'userId' | 'projectId'> | undefined {
+    return this.voiceTaskOwners.get(taskId);
   }
 
   /**

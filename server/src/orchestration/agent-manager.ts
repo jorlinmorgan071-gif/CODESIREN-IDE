@@ -326,6 +326,7 @@ class AgentManager {
     broadcast(makeEvent('agent:start', {
       agentId: agent.id,
       taskId: task.id,
+      voiceOrigin: task.origin === 'voice',
       taskType: task.type,
       description: task.description,
     }));
@@ -335,14 +336,17 @@ class AgentManager {
       trustScore: agent.trustScore,
     }));
 
-    // Also emit relay:milestone-start so the frontend can show "M03 working"
-    // in the dock + status bar (directive Section 2.3).
-    broadcast(makeEvent('relay:milestone-start' as any, {
-      agentId: agent.id,
-      taskId: task.id,
-      taskType: task.type,
-      description: task.description,
-    }));
+    // Voice task descriptions are private transcripts. Their scoped voice:*
+    // stream already exposes lifecycle state to the owner, so do not place the
+    // transcript-bearing relay milestone event on the generic global channel.
+    if (task.origin !== 'voice') {
+      broadcast(makeEvent('relay:milestone-start' as any, {
+        agentId: agent.id,
+        taskId: task.id,
+        taskType: task.type,
+        description: task.description,
+      }));
+    }
 
     const chunks: string[] = [];
     const filesTouched = new Set<string>();
@@ -353,6 +357,7 @@ class AgentManager {
         broadcast(makeEvent('agent:chunk', {
           agentId: agent.id,
           taskId: task.id,
+          voiceOrigin: task.origin === 'voice',
           type: chunk.type,
           content: chunk.content,
           meta: chunk.meta,
@@ -375,6 +380,7 @@ class AgentManager {
       broadcast(makeEvent('agent:complete', {
         agentId: agent.id,
         taskId: task.id,
+        voiceOrigin: task.origin === 'voice',
         result: error ? 'error' : 'ok',
         duration: Date.now() - task.createdAt,
       }));
@@ -385,6 +391,7 @@ class AgentManager {
       broadcast(makeEvent('agent:error', {
         agentId: agent.id,
         taskId: task.id,
+        voiceOrigin: task.origin === 'voice',
         error: err.message,
         recoverable: true,
       }));
@@ -415,4 +422,3 @@ class AgentManager {
 }
 
 export const agentManager = new AgentManager();
-
