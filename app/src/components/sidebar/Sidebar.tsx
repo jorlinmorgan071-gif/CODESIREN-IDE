@@ -32,11 +32,7 @@ interface SidebarProps {
 // ── Placeholder news data for Discover ───────────────────────────────────
 
 const DISCOVER_ITEMS: CardStackItem[] = [
-  { id: 1, title: 'AI Models Get Smaller, Faster', description: 'New quantization techniques cut model size by 80% with minimal quality loss.', tag: 'AI' },
-  { id: 2, title: 'The Rise of Local-First AI', description: 'Why running models on your own hardware is making a comeback.', tag: 'Tech' },
-  { id: 3, title: 'Code Generation Reaches New Milestone', description: 'Latest benchmarks show AI matching senior devs on real-world tasks.', tag: 'Dev' },
-  { id: 4, title: 'Open Source LLMs Close the Gap', description: 'Community models now compete with proprietary giants on key metrics.', tag: 'Open Source' },
-  { id: 5, title: 'The Future of IDEs', description: 'How AI-native editors are reshaping the developer experience.', tag: 'Dev Tools' },
+  { id: 1, title: 'Discover — Coming Soon', description: 'Live tech and AI news will appear here in a future update.', tag: 'Coming Soon' },
 ];
 
 // ── Main Sidebar component ───────────────────────────────────────────────
