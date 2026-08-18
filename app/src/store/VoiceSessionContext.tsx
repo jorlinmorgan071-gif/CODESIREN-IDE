@@ -23,6 +23,8 @@
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
+import { isCurrentAudioNode, isCurrentVoiceSession, isVoiceEventForSession, LatestOperationGate } from '@/lib/runtime-coordination';
+import type { AgentEvent } from '@/types';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -40,6 +42,7 @@ interface VoiceSessionState {
   captions: Caption;
   visemeHint: string;  // 'open' | 'front' | 'rounded' | 'bilabial' | 'rest'
   error: string | null;  // last start/end error
+  voiceActivity: 'idle' | 'listening' | 'thinking' | 'speaking' | 'error';
 }
 
 interface VoiceSessionContextValue extends VoiceSessionState {
@@ -55,6 +58,7 @@ interface VoiceSessionContextValue extends VoiceSessionState {
   setVisemeHint: (hint: string) => void;
   setAudioSource: (source: AudioNode) => void;
   clearAudioSource: () => void;
+  isCurrentAudioSource: (source: AudioNode) => boolean;
   ensureAudioContext: () => AudioContext;
   currentAudioSource: AudioNode | null;
   audioContext: AudioContext | null;
@@ -82,18 +86,23 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
   const [currentAudioSource, setCurrentAudioSource] = useState<AudioNode | null>(null);
   const [audioContextState, setAudioContextState] = useState<AudioContext | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [voiceActivity, setVoiceActivity] = useState<VoiceSessionState['voiceActivity']>('idle');
 
   // Web Audio API — AnalyserNode for real amplitude extraction
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const currentSourceRef = useRef<AudioNode | null>(null);
+  const startOperationGateRef = useRef(new LatestOperationGate());
+  const sessionGenerationRef = useRef(0);
+  const currentSessionIdRef = useRef<string | null>(null);
   const rafRef = useRef<number | null>(null);
+  const silenceRafRef = useRef<number | null>(null);
+  const recorderRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Phase B: Mic capture + recorder + silence detection refs.
   // Previously lived in FaceView as local refs; now in the context so the
   // F6 hotkey can start/stop the mic from anywhere.
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const silenceAnalyserRef = useRef<AnalyserNode | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);  // kept for recorder restart
@@ -150,18 +159,21 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
   // Low-level session state setters (existing — used by WS handlers in FaceView)
   const startSession = useCallback((sid: string) => {
     ensureAudioContext();
+    currentSessionIdRef.current = sid;
     setIsActive(true);
     setStartedAt(Date.now());
     setSessionId(sid);
   }, [ensureAudioContext]);
 
   const endSession = useCallback(() => {
+    currentSessionIdRef.current = null;
     setIsActive(false);
     setStartedAt(null);
     setSessionId(null);
     setAmplitude(0);
     setCaptions({ user: '', agent: '' });
     setVisemeHint('rest');
+    setVoiceActivity('idle');
 
     if (currentSourceRef.current) {
       try { currentSourceRef.current.disconnect(); } catch { /* */ }
@@ -200,6 +212,55 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
     setCurrentAudioSource(null);
   }, []);
 
+  const releaseLocalVoiceResources = useCallback((updateReactState: boolean) => {
+    if (mediaRecorderRef.current) {
+      try {
+        if (mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop();
+      } catch { /* */ }
+      mediaRecorderRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try { audioContextRef.current.close(); } catch { /* */ }
+      audioContextRef.current = null;
+      analyserRef.current = null;
+    }
+    silenceAnalyserRef.current = null;
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    silenceTimerRef.current = null;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    if (silenceRafRef.current) cancelAnimationFrame(silenceRafRef.current);
+    silenceRafRef.current = null;
+    if (recorderRestartTimerRef.current) clearTimeout(recorderRestartTimerRef.current);
+    recorderRestartTimerRef.current = null;
+    if (autoEndTimerRef.current) clearTimeout(autoEndTimerRef.current);
+    autoEndTimerRef.current = null;
+    if (currentSourceRef.current) {
+      try { currentSourceRef.current.disconnect(); } catch { /* */ }
+      currentSourceRef.current = null;
+    }
+    if (updateReactState) {
+      setCurrentAudioSource(null);
+      setAudioContextState(null);
+    }
+  }, []);
+
+  const terminateRemoteSession = useCallback(async (sid: string) => {
+    try {
+      const token = getToken();
+      await fetch(`${API_BASE}/voice/live/${sid}/end`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch { /* server may already have cleaned up */ }
+  }, []);
+
+  const isCurrentAudioSource = useCallback((source: AudioNode) => isCurrentAudioNode(currentSourceRef.current, source), []);
+
   // ── Phase B: Full lifecycle (getUserMedia + recorder + silence) ────────
   // This logic was lifted from FaceView.handleStart/handleEnd so the F6
   // hotkey can trigger it from anywhere. FaceView's button now calls these
@@ -220,64 +281,34 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
 
   // Internal end (used by auto-end timer to avoid circular dep on endVoiceSession)
   const endVoiceSessionInternal = useCallback(async () => {
-    // Stop recording
-    if (mediaRecorderRef.current) {
-      try {
-        if (mediaRecorderRef.current.state === 'recording') {
-          mediaRecorderRef.current.stop();
-        }
-      } catch { /* */ }
-      mediaRecorderRef.current = null;
-    }
-
-    // Stop all media tracks
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(t => t.stop());
-      mediaStreamRef.current = null;
-    }
-
-    // Close the shared AudioContext (used for both silence detection + amplitude).
-    // Note: ensureAudioContext() will create a fresh one on next start.
-    if (audioContextRef.current) {
-      try { audioContextRef.current.close(); } catch { /* */ }
-      audioContextRef.current = null;
-      analyserRef.current = null;  // amplitude analyser lives in this context
-    }
-
-    // Clear silence analyser
-    silenceAnalyserRef.current = null;
-
-    // Clear silence timer
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-
-    // Clear auto-end timer
-    if (autoEndTimerRef.current) {
-      clearTimeout(autoEndTimerRef.current);
-      autoEndTimerRef.current = null;
-    }
-
-    clearAudioSource();
-
-    // Tell server to end the session
-    const currentSid = sessionId;
-    if (currentSid) {
-      try {
-        const token = getToken();
-        await fetch(`${API_BASE}/voice/live/${currentSid}/end`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch { /* server may have already cleaned up */ }
-    }
-
+    const sidToTerminate = currentSessionIdRef.current ?? sessionId;
+    // This eligibility revocation must happen before the first await: late A
+    // events and callbacks must not be able to mutate a stopped or newer B.
+    currentSessionIdRef.current = null;
+    isActiveRef.current = false;
+    startOperationGateRef.current.invalidate();
+    sessionGenerationRef.current += 1;
+    releaseLocalVoiceResources(true);
     endSession();
-  }, [sessionId, endSession, clearAudioSource]);
+    if (sidToTerminate) await terminateRemoteSession(sidToTerminate);
+  }, [sessionId, endSession, releaseLocalVoiceResources, terminateRemoteSession]);
 
   // Full start: POST /voice/live/start + getUserMedia + recorder + silence detection
   const startVoiceSession = useCallback(async () => {
+    const operation = startOperationGateRef.current.begin();
+    const isCurrent = () => startOperationGateRef.current.isCurrent(operation);
+    let startedSessionId: string | null = null;
+    let acquiredStream: MediaStream | null = null;
+    const endStaleRemoteSession = async (sid: string) => {
+      try {
+        const token = getToken();
+        await fetch(`${API_BASE}/voice/live/${sid}/end`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch { /* server may already have cleaned up */ }
+    };
+
     setError(null);
     try {
       const token = getToken();
@@ -288,27 +319,46 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = await res.json() as { sessionId: string };
+      startedSessionId = body.sessionId;
+      if (!isCurrent()) {
+        await endStaleRemoteSession(body.sessionId);
+        return;
+      }
+      const sessionGeneration = sessionGenerationRef.current + 1;
+      sessionGenerationRef.current = sessionGeneration;
       startSession(body.sessionId);
 
       // Start recording from microphone
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      acquiredStream = stream;
+      if (!isCurrent()) {
+        stream.getTracks().forEach(track => track.stop());
+        await endStaleRemoteSession(body.sessionId);
+        return;
+      }
       mediaStreamRef.current = stream;
       const recorder = new MediaRecorder(stream);
-      audioChunksRef.current = [];
+      const sessionChunks: Blob[] = [];
+      const ownsCurrentSession = () => isCurrent()
+        && isCurrentVoiceSession(sessionGenerationRef.current, sessionGeneration, currentSessionIdRef.current, body.sessionId);
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
+        if (ownsCurrentSession() && e.data.size > 0) {
+          sessionChunks.push(e.data);
         }
       };
 
       recorder.onstop = async () => {
-        if (audioChunksRef.current.length === 0) return;
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        audioChunksRef.current = [];
+        if (!ownsCurrentSession() || sessionChunks.length === 0) return;
+        const blob = new Blob(sessionChunks, { type: 'audio/webm' });
+        sessionChunks.length = 0;
 
         const arrayBuffer = await blob.arrayBuffer();
+        if (!ownsCurrentSession()) return;
+        // The authenticated WS server accepts raw binary audio, then processes
+        // the accumulated turn only after this explicit existing control event.
         wsClient.send('voice:audio', arrayBuffer);
+        wsClient.send('voice:turn-end', { sessionId: body.sessionId });
       };
 
       recorder.start(1000);
@@ -336,7 +386,7 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
 
       // Silence detection loop
       const checkSilence = () => {
-        if (!silenceAnalyserRef.current || !isActiveRef.current) return;
+        if (!ownsCurrentSession() || !silenceAnalyserRef.current || !isActiveRef.current) return;
         const data = new Uint8Array(silenceAnalyserRef.current.frequencyBinCount);
         silenceAnalyserRef.current.getByteFrequencyData(data);
         let sum = 0;
@@ -351,20 +401,22 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
         if (avg < 10) {  // silence threshold
           if (silenceTimerRef.current === null) {
             silenceTimerRef.current = setTimeout(() => {
+              if (!ownsCurrentSession()) return;
               // Turn end detected — stop recording, send audio, restart
               if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
                 mediaRecorderRef.current.stop();
                 mediaRecorderRef.current = null;
               }
               // Restart recording for next turn
-              setTimeout(() => {
-                if (isActiveRef.current && mediaRecorderRef.current === null && mediaStreamRef.current) {
+              recorderRestartTimerRef.current = setTimeout(() => {
+                if (ownsCurrentSession() && isActiveRef.current && mediaRecorderRef.current === null && mediaStreamRef.current) {
                   const newRecorder = new MediaRecorder(mediaStreamRef.current);
                   newRecorder.ondataavailable = recorder.ondataavailable;
                   newRecorder.onstop = recorder.onstop;
                   newRecorder.start(1000);
                   mediaRecorderRef.current = newRecorder;
                 }
+                recorderRestartTimerRef.current = null;
               }, 500);
               silenceTimerRef.current = null;
             }, 1500);  // 1.5s of silence = turn end
@@ -376,16 +428,126 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
           }
         }
 
-        requestAnimationFrame(checkSilence);
+        silenceRafRef.current = requestAnimationFrame(checkSilence);
       };
       checkSilence();
     } catch (err) {
+      if (!isCurrent()) {
+        if (acquiredStream) acquiredStream.getTracks().forEach(track => track.stop());
+        if (startedSessionId) await endStaleRemoteSession(startedSessionId);
+        return;
+      }
+      if (acquiredStream) acquiredStream.getTracks().forEach(track => track.stop());
+      if (mediaRecorderRef.current) {
+        try { mediaRecorderRef.current.stop(); } catch { /* */ }
+        mediaRecorderRef.current = null;
+      }
+      if (mediaStreamRef.current === acquiredStream) mediaStreamRef.current = null;
+      clearAudioSource();
+      if (startedSessionId) await endStaleRemoteSession(startedSessionId);
+      endSession();
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
       console.error('[voice-session] start failed:', msg);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startSession, setAudioSource, resetAutoEndTimer]);
+  }, [startSession, setAudioSource, resetAutoEndTimer, clearAudioSource, endSession]);
+
+  const isEventForCurrentSession = useCallback((event: AgentEvent): boolean => {
+    const payload = event.payload as { sessionId?: unknown };
+    return isActiveRef.current && isVoiceEventForSession(payload, currentSessionIdRef.current);
+  }, []);
+
+  const playSessionAudio = useCallback(async (audioBase64: string, eventSessionId: string) => {
+    const generation = sessionGenerationRef.current;
+    const ownsCurrentSession = () => isCurrentVoiceSession(
+      sessionGenerationRef.current,
+      generation,
+      currentSessionIdRef.current,
+      eventSessionId,
+    );
+    try {
+      const audioCtx = ensureAudioContext();
+      const buffer = await audioCtx.decodeAudioData(
+        Uint8Array.from(atob(audioBase64), char => char.charCodeAt(0)).buffer,
+      );
+      if (!ownsCurrentSession()) return;
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+      source.start();
+      setAudioSource(source);
+      source.onended = () => {
+        if (ownsCurrentSession() && isCurrentAudioNode(currentSourceRef.current, source)) clearAudioSource();
+      };
+    } catch (err) {
+      if (ownsCurrentSession()) console.error('[voice-session] response audio playback failed:', err);
+    }
+  }, [clearAudioSource, ensureAudioContext, setAudioSource]);
+
+  useEffect(() => {
+    const offTranscript = wsClient.on('voice:transcript' as never, (event: AgentEvent) => {
+      if (!isEventForCurrentSession(event)) return;
+      const payload = event.payload as { text: string };
+      setCaption('user', payload.text);
+      setVoiceActivity('listening');
+    });
+    const offAgentStart = wsClient.on('voice:agent-start' as never, (event: AgentEvent) => {
+      if (!isEventForCurrentSession(event)) return;
+      setCaption('agent', '');
+      setVoiceActivity('thinking');
+    });
+    const offAgentChunk = wsClient.on('voice:agent-chunk' as never, (event: AgentEvent) => {
+      if (!isEventForCurrentSession(event)) return;
+      const payload = event.payload as { content: string };
+      setCaptions(previous => ({ ...previous, agent: previous.agent + payload.content }));
+      setVoiceActivity('thinking');
+    });
+    const offAgentResponse = wsClient.on('voice:agent-response' as never, (event: AgentEvent) => {
+      if (!isEventForCurrentSession(event)) return;
+      const payload = event.payload as { sessionId: string; text: string; audioBase64: string | null };
+      setCaption('agent', payload.text);
+      setVoiceActivity('speaking');
+      if (payload.audioBase64) void playSessionAudio(payload.audioBase64, payload.sessionId);
+    });
+    const offGreeting = wsClient.on('voice:greeting' as never, (event: AgentEvent) => {
+      if (!isEventForCurrentSession(event)) return;
+      const payload = event.payload as { sessionId: string; text: string; audioBase64: string | null };
+      setCaption('agent', payload.text);
+      if (payload.audioBase64) void playSessionAudio(payload.audioBase64, payload.sessionId);
+    });
+    const offError = wsClient.on('voice:error' as never, (event: AgentEvent) => {
+      if (!isEventForCurrentSession(event)) return;
+      const payload = event.payload as { error: string };
+      setError(payload.error);
+      setVoiceActivity('error');
+    });
+    const offEnded = wsClient.on('voice:session-ended' as never, (event: AgentEvent) => {
+      if (!isEventForCurrentSession(event)) return;
+      void endVoiceSessionInternal();
+    });
+    const offAutoDisconnect = wsClient.on('voice:auto-disconnect' as never, (event: AgentEvent) => {
+      if (!isEventForCurrentSession(event)) return;
+      setError('Auto-disconnected after 90 seconds of silence');
+      void endVoiceSessionInternal();
+    });
+    return () => {
+      offTranscript(); offAgentStart(); offAgentChunk(); offAgentResponse(); offGreeting(); offError(); offEnded(); offAutoDisconnect();
+    };
+  }, [endVoiceSessionInternal, isEventForCurrentSession, playSessionAudio, sessionId, setCaption]);
+
+  useEffect(() => {
+    const operationGate = startOperationGateRef.current;
+    return () => {
+      const sidToTerminate = currentSessionIdRef.current;
+      currentSessionIdRef.current = null;
+      isActiveRef.current = false;
+      operationGate.invalidate();
+      sessionGenerationRef.current += 1;
+      releaseLocalVoiceResources(false);
+      if (sidToTerminate) void terminateRemoteSession(sidToTerminate);
+    };
+  }, [releaseLocalVoiceResources, terminateRemoteSession]);
 
   // Full end: stop recorder + close AudioContext + POST /voice/live/:id/end
   const endVoiceSession = useCallback(async () => {
@@ -419,17 +581,17 @@ export function VoiceSessionProvider({ children }: { children: React.ReactNode }
   }, [toggleVoiceSession]);
 
   const value = useMemo(() => ({
-    isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint, error,
+    isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint, error, voiceActivity,
     startVoiceSession, endVoiceSession, toggleVoiceSession,
     startSession, endSession, toggleMute, setCaption, setVisemeHint,
-    setAudioSource, clearAudioSource, ensureAudioContext,
+    setAudioSource, clearAudioSource, isCurrentAudioSource, ensureAudioContext,
     currentAudioSource,
     audioContext: audioContextState,
     analyser: analyserRef.current,
-  }), [isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint, error,
+  }), [isActive, isMuted, startedAt, amplitude, sessionId, captions, visemeHint, error, voiceActivity,
     startVoiceSession, endVoiceSession, toggleVoiceSession,
     startSession, endSession, toggleMute, setCaption, setVisemeHint,
-    setAudioSource, clearAudioSource, ensureAudioContext, currentAudioSource, audioContextState]);
+    setAudioSource, clearAudioSource, isCurrentAudioSource, ensureAudioContext, currentAudioSource, audioContextState]);
 
   return (
     <VoiceSessionContext.Provider value={value}>

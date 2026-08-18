@@ -11,13 +11,13 @@
 //   Emotions: happy, sad, angry, surprised, relaxed, neutral (expression presets)
 //   Eyes: blink (left+right combined), lookAt (eye tracking via look-at bone)
 
-import { useState, useEffect, useRef, useCallback, Suspense, Component, lazy, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { VRM } from '@pixiv/three-vrm';
 import { useVRMLoader } from '@/hooks/useVRMLoader';
-import { ChevronDown, User, Check, Upload, Trash2, Pencil, AlertTriangle } from 'lucide-react';
+import { ChevronDown, User, Check, Upload, Trash2, Pencil, AlertTriangle, PanelRightOpen } from 'lucide-react';
 import { createWLipSyncNode, type WLipSyncAudioNode, type Profile } from 'wlipsync';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { useApp } from '@/store/AppContext';
@@ -25,6 +25,38 @@ import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
 import type { AgentEvent } from '@/types';
 import { Mic, MicOff, PhoneOff, Loader2, Volume2 } from 'lucide-react';
+import {
+  AVATAR_MOTION_EXPRESSION_TARGETS,
+  createAvatarMotionSnapshot,
+  getAvatarMotionPose,
+  reduceAvatarMotion,
+} from '@/lib/avatar-motion';
+import {
+  createLocalVrmSession,
+  revokeLocalVrmSession,
+  type LocalVrmSession,
+} from '@/lib/local-vrm-session';
+import {
+  getLocalVrmaRegistryEntries,
+  type LocalVrmaRegistry,
+  LOCAL_VRMA_TARGET_STATES,
+  type LocalVrmaTargetState,
+} from '@/lib/local-vrma-session';
+import { LocalVrmaPlayer, shouldUseProceduralMotion } from '@/lib/vrma-player';
+import { useLocalVrmaRegistry } from '@/store/LocalVrmaRegistryContext';
+import {
+  detectAvatarCapabilities,
+  isAnimationStateCompatible,
+  resolveExpressionAliases,
+  resolveSemanticExpressionValues,
+  type SemanticExpression,
+} from '@/lib/avatar-compatibility';
+import { applyAvatarPresentationPose, getAvatarGazeTarget } from '@/lib/avatar-compatibility-runtime';
+import { useAvatarCompatibility } from '@/hooks/useAvatarCompatibility';
+import { useAvatarDiagnosticsSnapshot, type AvatarDiagnosticsRuntimeState, type AvatarDiagnosticsViewSnapshot } from '@/hooks/useAvatarDiagnosticsSnapshot';
+import { AvatarDiagnosticsSheetHost } from '@/components/avatar/AvatarDiagnosticsSheetHost';
+import { AvatarRuntimeErrorBoundary } from '@/components/avatar/AvatarRuntimeErrorBoundary';
+import { canAttachLipSyncNode, LatestOperationGate } from '@/lib/runtime-coordination';
 
 // Phase B: Lazy-load the upload dialog (heavy: Three.js + VRM analysis)
 const AvatarUploadDialogLazy = lazy(() =>
@@ -33,15 +65,6 @@ const AvatarUploadDialogLazy = lazy(() =>
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
-// ── FaceErrorBoundary ────────────────────────────────────────────────────
-
-class FaceErrorBoundary extends Component<{ children: ReactNode; onError: (msg: string) => void }, { hasError: boolean }> {
-  state = { hasError: false };
-  static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(err: Error) { this.props.onError(err.message); }
-  render() { return this.state.hasError ? null : this.props.children; }
-}
-
 // ── VRM Emotion System ───────────────────────────────────────────────────
 // Reimplementation of AIRI's emotion→blendshape mapping in plain TypeScript.
 // VRM blendshapes use standardized names: happy, sad, angry, surprised, relaxed, neutral.
@@ -49,12 +72,12 @@ class FaceErrorBoundary extends Component<{ children: ReactNode; onError: (msg: 
 
 type EmotionId = 'happy' | 'sad' | 'angry' | 'think' | 'surprised' | 'neutral';
 
-const EMOTION_BLENDSHAPES: Record<EmotionId, Record<string, number>> = {
-  happy:     { happy: 0.7, aa: 0.2 },
-  sad:       { sad: 0.7, oh: 0.15 },
-  angry:     { angry: 0.7, ee: 0.3 },
-  think:     { relaxed: 0.3, oh: 0.1 },
-  surprised: { surprised: 0.8, aa: 0.3 },
+const EMOTION_BLENDSHAPES: Record<EmotionId, Partial<Record<SemanticExpression, number>>> = {
+  happy:     { happy: 0.7, mouthA: 0.2 },
+  sad:       { sad: 0.7, mouthO: 0.15 },
+  angry:     { angry: 0.7, mouthE: 0.3 },
+  think:     { relaxed: 0.3, mouthO: 0.1 },
+  surprised: { surprised: 0.8, mouthA: 0.3 },
   neutral:   {},
 };
 
@@ -70,63 +93,136 @@ interface VRMModelProps {
   audioSource: AudioNode | null;
   audioContext: AudioContext | null;
   avatarUrl: string;  // Phase B: dynamic avatar URL
+  animationRegistry: LocalVrmaRegistry;
   onLoaded?: () => void;  // fires when a model finishes loading (every switch, not just initial)
+  onAnimationError?: (message: string) => void;
+  diagnosticsOpen: boolean;
+  diagnosticsRefreshToken: number;
+  onDiagnosticsSnapshot: (snapshot: AvatarDiagnosticsViewSnapshot) => void;
 }
 
-// Vowel → VRM blendshape mapping (per VRM spec + Section 0 findings)
-const VOWEL_TO_BLENDSHAPE: Record<string, string> = {
-  A: 'aa',
-  E: 'ee',
-  I: 'ih',
-  O: 'oh',
-  U: 'ou',
-};
-
-function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatarUrl, onLoaded }: VRMModelProps) {
+function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioContext, avatarUrl, animationRegistry, onLoaded, onAnimationError, diagnosticsOpen, diagnosticsRefreshToken, onDiagnosticsSnapshot }: VRMModelProps) {
   const vrmRef = useRef<VRM | null>(null);
   const blinkTimerRef = useRef(0);
   const blinkPhaseRef = useRef<'open' | 'closing' | 'opening'>('open');
   const blinkValueRef = useRef(0);
-  const breathingRef = useRef(0);
   const currentBlendValues = useRef<Record<string, number>>({});
   const targetBlendValues = useRef<Record<string, number>>({});
   const lookAtTarget = useRef(new THREE.Object3D());
   const lipSyncNodeRef = useRef<WLipSyncAudioNode | null>(null);
-  const lipSyncProfileRef = useRef<Profile | null>(null);
+  const [lipSyncProfile, setLipSyncProfile] = useState<Profile | null>(null);
+  const motionRef = useRef(createAvatarMotionSnapshot(0));
+  const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
+  const diagnosticsRuntimeRef = useRef<AvatarDiagnosticsRuntimeState>({ currentMotionState: 'idle', activeAnimation: null, proceduralFallback: true });
+  const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
-  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, onLoaded);
+  const { gltf, vrm, groupRef } = useVRMLoader(avatarUrl, compatibility, 'face', onLoaded);
+  const capabilities = useMemo(() => detectAvatarCapabilities(vrm), [vrm]);
+  const expressionAliases = useMemo(
+    () => resolveExpressionAliases(compatibility.profile, capabilities),
+    [capabilities, compatibility.profile],
+  );
+  const getDiagnosticsRuntimeState = useCallback(() => diagnosticsRuntimeRef.current, []);
+  const { snapshot: diagnosticsSnapshot } = useAvatarDiagnosticsSnapshot({
+    context: 'face',
+    compatibility,
+    capabilities,
+    animationRegistry,
+    getRuntimeState: getDiagnosticsRuntimeState,
+    isOpen: diagnosticsOpen,
+    refreshToken: diagnosticsRefreshToken,
+  });
+
+  useEffect(() => {
+    if (diagnosticsSnapshot) onDiagnosticsSnapshot(diagnosticsSnapshot);
+  }, [diagnosticsSnapshot, onDiagnosticsSnapshot]);
 
   // Keep vrmRef in sync for useFrame
   useEffect(() => {
     vrmRef.current = vrm ?? null;
+    currentBlendValues.current = {};
+    targetBlendValues.current = {};
+    blinkValueRef.current = 0;
+    blinkTimerRef.current = 0;
+    blinkPhaseRef.current = 'open';
+    vrmaPlayerRef.current?.dispose();
+    vrmaPlayerRef.current = vrm ? new LocalVrmaPlayer(vrm) : null;
+    if (vrm) {
+      motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'model-loaded', nowMs: Date.now() });
+    }
     if (vrm?.expressionManager) {
       const expressions = vrm.expressionManager.expressions;
       console.log(`[face] VRM loaded with ${expressions.length} expressions:`,
         expressions.map(e => e.expressionName).join(', '));
     }
+    return () => {
+      vrmaPlayerRef.current?.dispose();
+      vrmaPlayerRef.current = null;
+    };
   }, [vrm]);
+
+  useEffect(() => {
+    const player = vrmaPlayerRef.current;
+    if (!player) return;
+    let cancelled = false;
+    const compatibleSessions = getLocalVrmaRegistryEntries(animationRegistry).filter((session) =>
+      isAnimationStateCompatible(compatibility.profile, capabilities, session.targetState),
+    );
+    player.sync(compatibleSessions).catch((err) => {
+      if (!cancelled) {
+        const detail = err instanceof Error ? err.message : 'Unknown animation loading error.';
+        onAnimationError?.(`Local animation could not load: ${detail}`);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [animationRegistry, capabilities, compatibility.profile, vrm, onAnimationError]);
+
+  useEffect(() => {
+    motionRef.current = reduceAvatarMotion(motionRef.current, {
+      type: isActive ? 'voice-started' : 'voice-ended',
+      nowMs: Date.now(),
+    });
+  }, [isActive]);
+
+  useEffect(() => {
+    if (currentEmotion === 'think') {
+      motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'thinking', nowMs: Date.now() });
+    } else if (currentEmotion === 'happy') {
+      motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'celebrate', nowMs: Date.now() });
+    }
+  }, [currentEmotion]);
 
   // Load wlipsync profile (async, non-blocking) — context-specific
   useEffect(() => {
+    let cancelled = false;
     fetch('/models/lip-sync-profile.json')
       .then(res => res.json() as Promise<Profile>)
       .then(profile => {
-        lipSyncProfileRef.current = profile;
+        if (cancelled) return;
+        setLipSyncProfile(profile);
         console.log('[face] wlipsync profile loaded:', profile.mfccs?.length, 'phonemes');
       })
       .catch(err => console.warn('[face] Failed to load lip-sync profile:', err));
+    return () => { cancelled = true; };
   }, []);
 
   // Create/connect lip sync node when audio source changes
   useEffect(() => {
-    if (!audioSource || !audioContext || !lipSyncProfileRef.current) return;
+    if (!canAttachLipSyncNode(audioSource, audioContext, lipSyncProfile) || !audioContext || !lipSyncProfile) return;
     if (lipSyncNodeRef.current) {
       try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
+      lipSyncNodeRef.current = null;
     }
 
-    createWLipSyncNode(audioContext, lipSyncProfileRef.current)
+    let cancelled = false;
+    let connectedNode: WLipSyncAudioNode | null = null;
+    let logInterval: ReturnType<typeof setInterval> | null = null;
+
+    createWLipSyncNode(audioContext, lipSyncProfile)
       .then(node => {
+        if (cancelled) return;
+        connectedNode = node;
         lipSyncNodeRef.current = node;
         audioSource.connect(node);
         console.log('[face] wlipsync node created and connected to audio source');
@@ -134,13 +230,13 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
         // Decoupled logging: setInterval reads weights every 200ms, independent
         // of requestAnimationFrame / useFrame frame rate. This ensures we capture
         // vowel weight values even in headless browsers where rAF runs at 1-5 FPS.
-        const logInterval = setInterval(() => {
+        logInterval = setInterval(() => {
           const lsNode = lipSyncNodeRef.current;
           if (!lsNode || !lsNode.weights) return;
           const w = lsNode.weights;
           const vol = lsNode.volume || 0;
           const vowelStr = Object.entries(w)
-            .filter(([k]) => k in VOWEL_TO_BLENDSHAPE)
+            .filter(([key]) => ['A', 'E', 'I', 'O', 'U'].includes(key))
             .map(([k, v]) => `${k}=${(v as number).toFixed(3)}`)
             .join(' ');
           // Mark silence state for debugging
@@ -148,40 +244,60 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
           console.log(`[face] lip sync: ${vowelStr} vol=${vol.toFixed(3)}${silenceTag}`);
         }, 200);
 
-        // Clear interval when audio source changes or component unmounts
-        return () => clearInterval(logInterval);
       })
       .catch(err => console.warn('[face] Failed to create wlipsync node:', err));
 
     return () => {
-      if (lipSyncNodeRef.current && audioSource) {
-        try { audioSource.disconnect(lipSyncNodeRef.current); } catch { /* disconnect may fail */ }
+      cancelled = true;
+      if (logInterval) clearInterval(logInterval);
+      if (connectedNode) {
+        try { audioSource.disconnect(connectedNode); } catch { /* disconnect may fail */ }
+        if (lipSyncNodeRef.current === connectedNode) lipSyncNodeRef.current = null;
       }
     };
-  }, [audioSource, audioContext]);
+  }, [audioSource, audioContext, lipSyncProfile]);
 
   // Animation loop — drives expressions, blink, breathing, lip sync, eye tracking
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const vrm = vrmRef.current;
     if (!vrm || !groupRef.current) return;
 
-    const delta = state.clock.getDelta();
+    // R3F already obtains the shared frame delta before invoking useFrame.
+    // Calling state.clock.getDelta() here would consume a tiny second interval
+    // and make VRM spring-bone recovery appear almost frozen.
     const t = state.clock.elapsedTime;
+    const nowMs = t * 1000;
+    motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'tick', nowMs });
+    const motion = motionRef.current;
+    const elapsedSeconds = Math.max(0, (nowMs - motion.stateStartedAtMs) / 1000);
+    const player = vrmaPlayerRef.current;
+    const requestedState = isActive && amplitude > 0.05 ? 'speaking' : motion.state;
+    const animationSupported = isAnimationStateCompatible(compatibility.profile, capabilities, requestedState);
+    const loadedStates = new Set(LOCAL_VRMA_TARGET_STATES.filter((targetState) =>
+      player?.hasClip(targetState) && isAnimationStateCompatible(compatibility.profile, capabilities, targetState),
+    ));
+    player?.setState(animationSupported ? requestedState : 'idle');
+    const proceduralFallback = !player || !animationSupported || shouldUseProceduralMotion(requestedState, loadedStates);
+    const pose = proceduralFallback
+      ? getAvatarMotionPose(requestedState, elapsedSeconds)
+      : { verticalOffset: 0, pitchOffset: 0, yawOffset: 0 };
+    diagnosticsRuntimeRef.current = {
+      currentMotionState: requestedState,
+      activeAnimation: proceduralFallback ? null : requestedState,
+      proceduralFallback,
+    };
 
-    // Update VRM spring bones + look-at
+    // Use the same R3F delta for animation mixing and VRM spring-bone updates.
+    player?.update(delta);
     vrm.update(delta);
 
-    // ── Idle breathing ──
-    breathingRef.current += delta;
-    groupRef.current.position.y = Math.sin(breathingRef.current * 0.5) * 0.02;
-    groupRef.current.rotation.x = Math.sin(breathingRef.current * 0.3) * 0.01;
-    groupRef.current.rotation.y = Math.sin(t * 0.1) * 0.05;
+    // ── Controller-owned body pose ──
+    applyAvatarPresentationPose(groupRef.current, pose, compatibility.profile);
 
     // ── Eye tracking: cursor → look-at target ──
-    const mouseX = (state.mouse.x * 0.5);
-    const mouseY = (state.mouse.y * 0.3);
-    lookAtTarget.current.position.set(mouseX, mouseY + 1, 3);
-    if (vrm.lookAt) {
+    const [gazeX, gazeY, gazeZ] = getAvatarGazeTarget(state.mouse.x, state.mouse.y, compatibility.profile);
+    lookAtTarget.current.position.set(gazeX, gazeY, gazeZ);
+    if (vrm.lookAt && compatibility.profile.gaze.mode !== 'disabled') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (vrm.lookAt as any).target = lookAtTarget.current;
     }
@@ -208,11 +324,15 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
     // ── Expression system: lerp toward target blendshape values ──
     const expr = vrm.expressionManager;
     if (expr) {
-      // Set target values from current emotion
-      targetBlendValues.current = { ...EMOTION_BLENDSHAPES[currentEmotion] ?? {} };
+      // Blend the explicit emotion with the current nonverbal motion state.
+      targetBlendValues.current = {
+        ...resolveSemanticExpressionValues(AVATAR_MOTION_EXPRESSION_TARGETS[motion.state], expressionAliases),
+        ...resolveSemanticExpressionValues(EMOTION_BLENDSHAPES[currentEmotion], expressionAliases),
+      };
 
       // Add blink
-      targetBlendValues.current['blink'] = blinkValueRef.current;
+      const blinkExpression = expressionAliases[compatibility.profile.expressions.blink];
+      if (blinkExpression) targetBlendValues.current[blinkExpression] = blinkValueRef.current;
 
       // ── Real lip sync via wlipsync MFCC vowel analysis ──
       // Note: logging is done via setInterval in the useEffect above (decoupled
@@ -224,7 +344,10 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
         const volume = lipSyncNode.volume;
 
         // Map vowel weights to VRM blendshapes with volume scaling
-        for (const [vowel, blendshape] of Object.entries(VOWEL_TO_BLENDSHAPE)) {
+        for (const vowel of ['A', 'E', 'I', 'O', 'U'] as const) {
+          const semantic = compatibility.profile.expressions.mouth[vowel];
+          const blendshape = expressionAliases[semantic];
+          if (!blendshape) continue;
           const weight = weights[vowel] ?? 0;
           const scaled = Math.min(1, weight * volume * 1.5);
           if (scaled > 0.01) {
@@ -241,8 +364,9 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
         // mouth to neutral. This prevents the "frozen last vowel" issue where
         // wlipsync holds its last non-zero weights after audio ends.
         // Amplitude fallback for when wlipsync node doesn't exist yet:
-        if (!lipSyncNode && amplitude > 0.01) {
-          targetBlendValues.current['aa'] = Math.max(targetBlendValues.current['aa'] ?? 0, amplitude * 0.7);
+        const mouthAExpression = expressionAliases[compatibility.profile.expressions.mouth.A];
+        if (!lipSyncNode && mouthAExpression && amplitude > 0.01) {
+          targetBlendValues.current[mouthAExpression] = Math.max(targetBlendValues.current[mouthAExpression] ?? 0, amplitude * 0.7);
         }
       }
 
@@ -263,8 +387,18 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
   });
 
   return (
-    <group ref={groupRef}>
-      <primitive object={gltf.scene} scale={1} position={[0, -1.2, 0]} />
+    <group
+      ref={groupRef}
+      onClick={() => {
+        motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'user-tap', nowMs: Date.now() });
+      }}
+    >
+      <primitive
+        object={gltf.scene}
+        scale={compatibility.profile.transform.scale}
+        position={compatibility.profile.transform.positionOffset}
+        rotation={compatibility.profile.transform.rotationOffset}
+      />
       {/* Phase B: Soft blob shadow — a radial-gradient circle at the avatar's
           feet. Not a real shadow-map (which needs a directional light + ground
           plane + shadow camera). This is the VTuber/desktop-mascot technique:
@@ -273,7 +407,7 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
           so it lies on the "ground" plane. The shadow follows the groupRef
           (which is animated by the breathing loop), so it stays attached
           during idle movement and future PIP dragging. */}
-      <mesh position={[0, -1.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      {compatibility.profile.rendering.blobShadow && <mesh position={[0, -1.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[0.6, 32]} />
         <meshBasicMaterial
           transparent
@@ -282,7 +416,7 @@ function VRMModel({ amplitude, currentEmotion, audioSource, audioContext, avatar
           side={THREE.DoubleSide}
           map={blobShadowTexture}
         />
-      </mesh>
+      </mesh>}
     </group>
   );
 }
@@ -307,10 +441,9 @@ const blobShadowTexture = new THREE.CanvasTexture(blobShadowCanvas);
 
 export default function FaceView() {
   const {
-    isActive, isMuted, amplitude, sessionId, captions, visemeHint,
+    isActive, isMuted, amplitude, sessionId, captions, visemeHint, voiceActivity,
     toggleMute,
-    setCaption, setVisemeHint, setAudioSource, clearAudioSource,
-    currentAudioSource, audioContext, ensureAudioContext,
+    currentAudioSource, audioContext,
     startVoiceSession, endVoiceSession,
     error: voiceError,
   } = useVoiceSession();
@@ -334,6 +467,29 @@ export default function FaceView() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentEmotion, setCurrentEmotion] = useState<EmotionId>('neutral');
 
+  useEffect(() => {
+    if (voiceActivity === 'thinking') {
+      setIsProcessing(true);
+      setCurrentEmotion('think');
+    } else if (voiceActivity === 'speaking') {
+      setIsProcessing(false);
+      setCurrentEmotion('happy');
+    } else if (voiceActivity === 'listening') {
+      setIsProcessing(false);
+      setCurrentEmotion('neutral');
+    } else if (voiceActivity === 'error') {
+      setIsProcessing(false);
+      setCurrentEmotion('sad');
+    } else {
+      setIsProcessing(false);
+    }
+  }, [voiceActivity]);
+
+  const isCurrentVoiceEvent = useCallback((event: AgentEvent) => {
+    const payload = event.payload as { sessionId?: unknown };
+    return typeof payload.sessionId === 'string' && payload.sessionId === sessionId;
+  }, [sessionId]);
+
   // Phase B: Avatar picker state
   const [avatarUrl, setAvatarUrl] = useState('/models/sample.vrm'); // default until settings load
   const [avatarList, setAvatarList] = useState<Array<{ id: string; name: string; thumbnail: string | null; format: string; expressionCount: number; isCustom?: boolean; issues?: string[] }>>([]);
@@ -345,6 +501,24 @@ export default function FaceView() {
   const [avatarToRename, setAvatarToRename] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameConflict, setRenameConflict] = useState(false);
+  const [localVrmSession, setLocalVrmSession] = useState<LocalVrmSession | null>(null);
+  const localVrmInputRef = useRef<HTMLInputElement>(null);
+  const avatarSelectionGateRef = useRef(new LatestOperationGate());
+  const catalogAvatarFallbackRef = useRef({ url: '/models/sample.vrm', name: 'Default Avatar' });
+  const {
+    animationRegistry: localVrmaRegistry,
+    addOrReplaceLocalVrma,
+    removeLocalVrma,
+  } = useLocalVrmaRegistry();
+  const [localVrmaTargetState, setLocalVrmaTargetState] = useState<LocalVrmaTargetState>('idle');
+  const localVrmaInputRef = useRef<HTMLInputElement>(null);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticsRefreshToken, setDiagnosticsRefreshToken] = useState(0);
+  const [diagnosticsSnapshot, setDiagnosticsSnapshot] = useState<AvatarDiagnosticsViewSnapshot | null>(null);
+  const visibleDiagnosticsSnapshot = useMemo(
+    () => diagnosticsSnapshot?.diagnostics.avatarUrl === avatarUrl ? diagnosticsSnapshot : null,
+    [avatarUrl, diagnosticsSnapshot],
+  );
 
   // Phase B: Voice-to-Code-Written v1 — write confirmation state
   const [pendingWrite, setPendingWrite] = useState<{
@@ -399,6 +573,7 @@ export default function FaceView() {
     if (!authReady) return;
     const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
     const token = getToken() ?? '';
+    const selectionToken = avatarSelectionGateRef.current.begin();
 
     // Fetch manifest (list of available avatars)
     fetch(`${API_BASE}/avatar/manifest`, {
@@ -426,6 +601,7 @@ export default function FaceView() {
     })
       .then((r) => r.json())
       .then((data) => {
+        if (!avatarSelectionGateRef.current.isCurrent(selectionToken)) return;
         if (data.settings?.selectedAvatarId) {
           const id = data.settings.selectedAvatarId as string;
           const manifestEntry = avatarList.find((a) => a.id === id);
@@ -444,6 +620,53 @@ export default function FaceView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authReady]);
 
+  // A session-only model is represented by a revocable blob URL and is never
+  // added to server settings, the built-in manifest, or custom avatar storage.
+  useEffect(() => {
+    return () => revokeLocalVrmSession(localVrmSession);
+  }, [localVrmSession]);
+
+  const handleSelectLocalVrm = useCallback((file: File) => {
+    try {
+      avatarSelectionGateRef.current.invalidate();
+      const session = createLocalVrmSession(file);
+      catalogAvatarFallbackRef.current = { url: avatarUrl, name: currentAvatarName };
+      setLocalVrmSession(session);
+      setAvatarSwitching(true);
+      setShowAvatarPicker(false);
+      setLoading(true);
+      setAvatarUrl(session.url);
+      setCurrentAvatarName(`${session.fileName} · local session`);
+      setCurrentEmotion('neutral');
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The local VRM could not be selected.');
+    }
+  }, [avatarUrl, currentAvatarName]);
+
+  const handleClearLocalVrm = useCallback(() => {
+    avatarSelectionGateRef.current.invalidate();
+    setLocalVrmSession(null);
+    setAvatarSwitching(true);
+    setLoading(true);
+    setAvatarUrl(catalogAvatarFallbackRef.current.url);
+    setCurrentAvatarName(catalogAvatarFallbackRef.current.name);
+    setCurrentEmotion('neutral');
+  }, []);
+
+  const handleSelectLocalVrma = useCallback((file: File) => {
+    try {
+      addOrReplaceLocalVrma(file, localVrmaTargetState);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The local animation could not be selected.');
+    }
+  }, [addOrReplaceLocalVrma, localVrmaTargetState]);
+
+  const handleRemoveLocalVrma = useCallback((targetState: LocalVrmaTargetState) => {
+    removeLocalVrma(targetState);
+  }, [removeLocalVrma]);
+
   // Phase B: Handle avatar selection from picker
   const handleSelectAvatar = async (avatarId: string, name: string) => {
     // Custom avatars are served by the API server (not vite) because vite
@@ -459,8 +682,11 @@ export default function FaceView() {
       return;
     }
 
+    const selectionToken = avatarSelectionGateRef.current.begin();
+
     setAvatarSwitching(true);
     setShowAvatarPicker(false);
+    setLocalVrmSession(null);
 
     // Persist to server
     const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
@@ -475,9 +701,12 @@ export default function FaceView() {
       console.warn('[face] failed to persist avatar selection:', err);
     }
 
+    if (!avatarSelectionGateRef.current.isCurrent(selectionToken)) return;
+
     // Trigger the switch (useLoader will re-suspend with the new URL)
     setAvatarUrl(newUrl);
     setCurrentAvatarName(name);
+    catalogAvatarFallbackRef.current = { url: newUrl, name };
     setLoading(true); // show loading spinner during switch
 
     // Reset state for new model
@@ -626,121 +855,9 @@ export default function FaceView() {
 
   useEffect(() => {
     if (!authReady) return;
-    const offTranscript = wsClient.on('voice:transcript' as never, (evt: AgentEvent) => {
-      const payload = evt.payload as { text: string; role: string };
-      setCaption('user', payload.text);
-      setCurrentEmotion('neutral');  // user speaking → neutral listening face
-    });
-
-    const offAgentChunk = wsClient.on('voice:agent-chunk' as never, (evt: AgentEvent) => {
-      const payload = evt.payload as { content: string };
-      setIsProcessing(true);
-      setCurrentEmotion('think');  // agent thinking/generating → think expression
-      // Append to agent caption — read current from context
-      setCaption('agent', captions.agent + payload.content);
-    });
-
-    const offAgentResponse = wsClient.on('voice:agent-response' as never, async (evt: AgentEvent) => {
-      const payload = evt.payload as { text: string; audioBase64: string | null };
-      setIsProcessing(false);
-      setCaption('agent', payload.text);
-      setCurrentEmotion('happy');  // response delivered → happy expression
-
-      // Play TTS audio
-      if (payload.audioBase64) {
-        try {
-          // Reuse the VoiceSessionContext's AudioContext — AudioNodes can
-          // only connect within the same context. ensureAudioContext() creates
-          // one if it doesn't exist yet (e.g., greeting arrives before
-          // startSession() has run).
-          const audioCtx = audioContext ?? ensureAudioContext();
-          const audioBuffer = await audioCtx.decodeAudioData(
-            Uint8Array.from(atob(payload.audioBase64), c => c.charCodeAt(0)).buffer
-          );
-          const source = audioCtx.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(audioCtx.destination);
-          source.start();
-
-          // Connect to VoiceSessionContext for amplitude + lip sync driving
-          setAudioSource(source);
-
-          // VRM lip sync: amplitude from the audio source drives the 'aa'
-          // blendshape directly in VRMModel's useFrame loop (via the
-          // amplitude prop from VoiceSessionContext). The old text-based
-          // viseme classification (classifyPhoneme) is no longer needed —
-          // VRM's standardized blendshapes work with amplitude-driven mouth open.
-          // We just need to connect the audio source so VoiceSessionContext
-          // can compute amplitude from it.
-          source.onended = () => {
-            clearAudioSource();
-            // Don't close audioCtx if it belongs to VoiceSessionContext
-            if (!audioContext) {
-              try { audioCtx.close(); } catch { /* already closed */ }
-            }
-          };
-        } catch (err) {
-          console.error('[face] TTS audio playback failed:', err);
-        }
-      }
-    });
-
-    const offAgentStart = wsClient.on('voice:agent-start' as never, () => {
-      setIsProcessing(true);
-      setCaption('agent', '');
-      setCurrentEmotion('think');  // agent processing → think expression
-    });
-
-    const offError = wsClient.on('voice:error' as never, (evt: AgentEvent) => {
-      const payload = evt.payload as { error: string };
-      setError(payload.error);
-      setIsProcessing(false);
-      setCurrentEmotion('sad');  // error → sad expression
-    });
-
-    const offEnded = wsClient.on('voice:session-ended' as never, () => {
-      clearAudioSource();
-    });
-
-    const offAutoDisconnect = wsClient.on('voice:auto-disconnect' as never, () => {
-      setError('Auto-disconnected after 90 seconds of silence');
-      handleEnd();
-    });
-
-    // Wake greeting — fires once on session start. Shows greeting text as
-    // caption and plays TTS audio if available.
-    const offGreeting = wsClient.on('voice:greeting' as never, async (evt: AgentEvent) => {
-      const payload = evt.payload as { text: string; audioBase64: string | null };
-      setCaption('agent', payload.text);
-
-      if (payload.audioBase64) {
-        try {
-          // Reuse the VoiceSessionContext's AudioContext — AudioNodes can
-          // only connect within the same context. ensureAudioContext() creates
-          // one if it doesn't exist yet.
-          const audioCtx = audioContext ?? ensureAudioContext();
-          const audioBuffer = await audioCtx.decodeAudioData(
-            Uint8Array.from(atob(payload.audioBase64), c => c.charCodeAt(0)).buffer
-          );
-          const source = audioCtx.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(audioCtx.destination);
-          source.start();
-          setAudioSource(source);
-          source.onended = () => {
-            clearAudioSource();
-            if (!audioContext) {
-              try { audioCtx.close(); } catch { /* already closed */ }
-            }
-          };
-        } catch (err) {
-          console.error('[face] greeting audio playback failed:', err);
-        }
-      }
-    });
-
     // Phase B: Voice-to-Code-Written v1 — confirmation gate WS listeners
     const offConfirmWrite = wsClient.on('voice:confirm-write' as never, (evt: AgentEvent) => {
+      if (!isCurrentVoiceEvent(evt)) return;
       const payload = evt.payload as {
         confirmId: string;
         proposedAction: string;
@@ -758,11 +875,13 @@ export default function FaceView() {
       setWriteResult(null);
     });
 
-    const offWriteConfirmed = wsClient.on('voice:write-confirmed' as never, () => {
+    const offWriteConfirmed = wsClient.on('voice:write-confirmed' as never, (evt: AgentEvent) => {
+      if (!isCurrentVoiceEvent(evt)) return;
       setPendingWrite(null);  // hide the confirmation panel
     });
 
     const offWriteCancelled = wsClient.on('voice:write-cancelled' as never, (evt: AgentEvent) => {
+      if (!isCurrentVoiceEvent(evt)) return;
       const payload = evt.payload as { reason: 'user-cancel' | 'timeout' };
       setPendingWrite(null);
       if (payload.reason === 'timeout') {
@@ -771,6 +890,7 @@ export default function FaceView() {
     });
 
     const offWriteResult = wsClient.on('voice:write-result' as never, (evt: AgentEvent) => {
+      if (!isCurrentVoiceEvent(evt)) return;
       const payload = evt.payload as {
         success: boolean;
         filePath: string | null;
@@ -784,21 +904,12 @@ export default function FaceView() {
     });
 
     return () => {
-      offTranscript();
-      offAgentChunk();
-      offAgentResponse();
-      offAgentStart();
-      offError();
-      offEnded();
-      offAutoDisconnect();
-      offGreeting();
       offConfirmWrite();
       offWriteConfirmed();
       offWriteCancelled();
       offWriteResult();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setCaption, setVisemeHint, setAudioSource, clearAudioSource, handleEnd, authReady]);
+  }, [authReady, isCurrentVoiceEvent]);
 
   // ── Navigate back ─────────────────────────────────────────────────────
   const handleBack = useCallback(() => {
@@ -816,7 +927,16 @@ export default function FaceView() {
         <span className="text-[12px] font-medium" style={{ color: 'var(--bright-silver)' }}>
           Face Avatar {isActive && <span style={{ color: 'var(--siren-red)' }}>• LIVE</span>}
         </span>
-        <div className="w-6" />
+        <button
+          type="button"
+          onClick={() => setDiagnosticsOpen(true)}
+          title="Open avatar diagnostics"
+          aria-label="Open avatar diagnostics"
+          className="rounded-md p-1.5 transition-colors hover:bg-[var(--surface-raised)]"
+          style={{ color: 'var(--steel-silver)' }}
+        >
+          <PanelRightOpen className="w-4 h-4" />
+        </button>
       </div>
 
       {/* 3D Scene */}
@@ -853,14 +973,15 @@ export default function FaceView() {
               loading spinner, and surfaces a clear error message
               rather than crashing the Canvas silently. */}
           <Suspense fallback={null}>
-            <FaceErrorBoundary
+            <AvatarRuntimeErrorBoundary
+              avatarIdentity={avatarUrl}
               onError={(msg) => {
                 setLoading(false);
                 setError(`3D model failed to load: ${msg}`);
               }}
             >
-              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} avatarUrl={avatarUrl} onLoaded={handleModelLoaded} />
-            </FaceErrorBoundary>
+              <VRMModel amplitude={amplitude} visemeHint={visemeHint} isActive={isActive} currentEmotion={currentEmotion} audioSource={currentAudioSource} audioContext={audioContext} avatarUrl={avatarUrl} animationRegistry={localVrmaRegistry} onLoaded={handleModelLoaded} onAnimationError={setError} diagnosticsOpen={diagnosticsOpen} diagnosticsRefreshToken={diagnosticsRefreshToken} onDiagnosticsSnapshot={setDiagnosticsSnapshot} />
+            </AvatarRuntimeErrorBoundary>
           </Suspense>
 
           <OrbitControls enablePan={false} enableZoom={true} minDistance={1.5} maxDistance={6} />
@@ -1056,6 +1177,101 @@ export default function FaceView() {
                     </div>
                   );
                 })}
+              </div>
+
+              {/* Session-only local model: no network request, manifest change, or persistence. */}
+              <input
+                ref={localVrmInputRef}
+                type="file"
+                accept=".vrm,model/gltf-binary"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (file) handleSelectLocalVrm(file);
+                }}
+              />
+              <button
+                onClick={() => localVrmInputRef.current?.click()}
+                className="flex items-center justify-center gap-2 px-3 py-2.5 text-[12px] font-medium transition-colors hover:bg-white/5"
+                style={{
+                  borderTop: '1px solid rgba(255,255,255,0.08)',
+                  backgroundColor: 'rgba(255,255,255,0.025)',
+                  color: 'var(--bright-silver)',
+                }}
+              >
+                <Upload className="w-3.5 h-3.5" style={{ color: 'var(--steel-silver)' }} />
+                Use Local VRM This Session
+              </button>
+              {localVrmSession && (
+                <button
+                  onClick={handleClearLocalVrm}
+                  className="px-3 py-2 text-[10px] text-left transition-colors hover:bg-white/5"
+                  style={{ color: 'var(--steel-silver)', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+                >
+                  Remove local model and restore catalog avatar
+                </button>
+              )}
+              <div className="px-3 py-1.5 text-[9px]" style={{ color: 'var(--muted-silver)' }}>
+                Local VRMs stay in this browser session only and are not uploaded, saved, or added to the catalog.
+              </div>
+
+              {/* Session-only VRMA: animation data is held in a revocable blob URL. */}
+              <div className="px-3 py-2 space-y-1.5" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                <label className="block text-[9px]" style={{ color: 'var(--muted-silver)' }}>
+                  Apply local animation to
+                  <select
+                    value={localVrmaTargetState}
+                    onChange={(event) => setLocalVrmaTargetState(event.target.value as LocalVrmaTargetState)}
+                    className="mt-1 w-full rounded px-2 py-1 text-[11px] outline-none"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle)', color: 'var(--bright-silver)' }}
+                  >
+                    {LOCAL_VRMA_TARGET_STATES.map((state) => (
+                      <option key={state} value={state}>{state}</option>
+                    ))}
+                  </select>
+                </label>
+                <input
+                  ref={localVrmaInputRef}
+                  type="file"
+                  accept=".vrma,model/gltf-binary"
+                  className="sr-only"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (file) handleSelectLocalVrma(file);
+                  }}
+                />
+                <button
+                  onClick={() => localVrmaInputRef.current?.click()}
+                  className="w-full flex items-center justify-center gap-2 rounded px-2 py-1.5 text-[11px] transition-colors hover:bg-white/5"
+                  style={{ backgroundColor: 'rgba(67, 56, 202, 0.14)', color: 'var(--bright-silver)' }}
+                >
+                  <Upload className="w-3 h-3" style={{ color: 'var(--steel-silver)' }} />
+                  Add or Replace Local .VRMA
+                </button>
+                {getLocalVrmaRegistryEntries(localVrmaRegistry).length > 0 && (
+                  <div className="space-y-1 pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="text-[9px] uppercase tracking-wide" style={{ color: 'var(--muted-silver)' }}>Local animation library</div>
+                    {getLocalVrmaRegistryEntries(localVrmaRegistry).map((session) => (
+                      <div key={session.targetState} className="flex items-center gap-2 rounded px-2 py-1" style={{ backgroundColor: 'rgba(255,255,255,0.035)' }}>
+                        <span className="min-w-0 flex-1 truncate text-[9px]" style={{ color: 'var(--bright-silver)' }}>
+                          <span style={{ color: 'var(--steel-silver)' }}>{session.targetState}</span> · {session.fileName}
+                        </span>
+                        <button
+                          onClick={() => handleRemoveLocalVrma(session.targetState)}
+                          className="text-[9px] hover:underline"
+                          style={{ color: 'var(--siren-red)' }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>
+                  Local animations are not uploaded, saved, or added to the catalog. Replacing one state leaves other mappings active.
+                </p>
               </div>
 
               {/* Footer: Add Custom Model button */}
@@ -1344,6 +1560,13 @@ export default function FaceView() {
           )}
         </div>
       </div>
+      <AvatarDiagnosticsSheetHost
+        open={diagnosticsOpen}
+        variant="drawer"
+        snapshot={visibleDiagnosticsSnapshot}
+        onOpenChange={setDiagnosticsOpen}
+        onRefresh={() => setDiagnosticsRefreshToken((token) => token + 1)}
+      />
     </div>
   );
 }
