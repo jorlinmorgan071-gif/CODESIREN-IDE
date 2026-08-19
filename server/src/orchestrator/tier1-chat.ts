@@ -89,7 +89,7 @@ export async function streamTier1Chat(
     model,
     messages,
     temperature: 0.7,
-    max_tokens: 2048,
+    max_tokens: 8192,
     stream: true,
   };
 

@@ -377,6 +377,22 @@ investigation (if any) is needed before implementation.
   line 586), `app/src/components/avatar/AvatarOverlay.tsx`,
   `app/src/components/voice/InteractionBubble.tsx`
 
+### WS chunk-append race condition — deferred, low priority
+- **Status:** Deferred. Not started. Rare, network-timing-dependent.
+- **What it is:** In `ChatPanel.tsx`'s `handleChunk`, each WS chunk
+  appends to the assistant message's content via `lastAssistant.content +
+  payload.content`. `lastAssistant.content` is read from React state
+  (`state.chatSessions`). If two chunks arrive in the same React tick
+  (before a re-render commits the first update), the second chunk reads
+  stale state and appends to the pre-first-chunk content — losing the
+  first chunk's text.
+- **Why low priority:** Network latency between WS chunks makes true
+  simultaneity rare. React 18's automatic batching handles most cases
+  correctly. Not reproduced on demand.
+- **Eventual fix:** Use a functional state update pattern — pass a
+  callback to `updateChatMessage` that receives the previous message
+  and returns the new content, rather than reading from the closure.
+
 ---
 
 ## 11. Summary
