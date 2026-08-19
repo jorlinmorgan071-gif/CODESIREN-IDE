@@ -11,6 +11,7 @@ import {
   ChevronDown, Check, ArrowRight, User, Bot,
 } from 'lucide-react';
 import { TypewriterText, ShimmerText } from './text-animations';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import type { ChatMessage as AppChatMessage } from '@/types';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -287,7 +288,7 @@ export const ChatBubble = memo(function ChatBubble({
               {isAssistant && message.isStreaming ? (
                 <TypewriterText text={text} speed={15} showCursor />
               ) : (
-                text
+                <MarkdownRenderer content={text} />
               )}
             </div>
           ))}
