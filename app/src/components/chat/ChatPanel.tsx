@@ -194,7 +194,7 @@ export function ChatPanel() {
       }
       addNotification('error', 'Failed to send', err instanceof Error ? err.message : String(err));
     }
-  }, [state.activeChatId, addChatMessage, updateChatMessage, addNotification]);
+  }, [state.activeChatId, state.editorTabs, addChatMessage, updateChatMessage, addNotification]);
 
   // ── Follow-up click: send as next message ─────────────────────────────
   const handleFollowUp = useCallback((text: string) => {
