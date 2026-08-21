@@ -25,7 +25,7 @@ import { getOrchestratorSettings, setOrchestratorSettings, TIER1_MODELS } from '
 import { listAvailableEngines, setActiveOrchestratorEngine } from '../orchestrator/engine.js';
 import { generatePlan, runRelayPlan, signalAdvance, stopPlan, isPlanRunning } from '../orchestrator/relay-loop.js';
 import { getPlan, listPlans, listPlansBySession, listMilestoneLogs, updatePlan } from '../orchestrator/plans-repo.js';
-import { streamTier1Chat } from '../orchestrator/tier1-chat.js';
+import { runChatViaAgentManager } from '../orchestrator/tier1-chat.js';
 import { modelRouter } from '../orchestration/model-router.js';
 
 export const orchestratorRouter = Router();
@@ -44,10 +44,17 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
     return;
   }
   const taskId = uuid();
-  // Fire and forget — the response streams back over WS as orchestrator:chunk
-  // events, the same way agent:chunk events work for the existing chat flow.
-  streamTier1Chat(parsed.data.sessionId, parsed.data.message, taskId).catch((err) => {
-    console.error('[orchestrator:chat] stream failed:', err);
+  // Route through the authoritative AgentManager lifecycle (Phase 1).
+  // runChatViaAgentManager creates an AgentTask and calls
+  // agentManager.executeAndWait(), which broadcasts agent:start/chunk/complete
+  // WS events — ChatPanel already subscribes to these (ChatPanel.tsx:75,98,119).
+  runChatViaAgentManager(
+    parsed.data.sessionId,
+    parsed.data.message,
+    taskId,
+    req.user?.id,
+  ).catch((err) => {
+    console.error('[orchestrator:chat] task failed:', err);
   });
   res.status(202).json({
     taskId,

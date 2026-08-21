@@ -1,22 +1,24 @@
 // server/src/orchestrator/tier1-chat.ts
-// Tier 1 free-chat routing — directive Section 1.2.
+// Authoritative chat task lifecycle — Phase 1.
 //
-// When a session's tier === 'chat' (default), messages go through this
-// module. It uses the existing OpenRouter engine with the user-selected
-// Tier 1 model (from settings.tier1Model). NEVER calls AgentManager.send().
+// Chat requests now route through AgentManager.executeAndWait(), creating
+// a real AgentTask that enters the authoritative agent lifecycle:
+//   Chat → AgentManager → Agent → Strategy → Model → Result → Chat
 //
-// Per directive Section 6: "Tier 1 chat NEVER calls AgentManager.send().
-// Agents are exclusively activated by the relay execution loop."
+// The previous direct OpenRouter bypass (streamTier1Chat) is preserved as
+// a deprecated fallback but is no longer called from the /chat route.
 //
-// Returns a streaming response the same shape as existing agent:chunk
-// WS events — the frontend needs no new rendering code. We emit
-// orchestrator:chunk events (also added to types.ts) which the frontend
-// wsClient.on() can listen for in the same pattern as agent:chunk.
+// Session history (conversation context) is preserved via the existing
+// in-memory sessionHistories Map. History is passed to the agent via
+// task.context.recentMessages and embedded in the task description so
+// the single-shot strategy can include it in the model call.
 
 import { config } from '../config.js';
 import { makeEvent, broadcast } from '../ws/events.js';
 import { getOrchestratorSettings } from './settings.js';
 import type { OrchestratorMessage } from './engine.js';
+import { agentManager } from '../orchestration/agent-manager.js';
+import type { AgentTask, ExecutionMode, TaskPriority, TaskType } from '../types.js';
 
 // Session-scoped history for Tier 1 chat. We keep this in-memory because
 // the directive says Tier 1 is "99% of the time" — storing every casual
@@ -160,5 +162,106 @@ export async function streamTier1Chat(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     broadcast(makeEvent('orchestrator:error' as any, { taskId, sessionId, error: msg }));
+  }
+}
+
+// ── Authoritative chat task lifecycle (Phase 1) ──────────────────────────
+//
+// This function replaces streamTier1Chat as the /chat route handler.
+// It creates a real AgentTask and dispatches it through AgentManager's
+// executeAndWait() — the authoritative agent task lifecycle.
+//
+// The agent (architect-agent by default) executes via the existing
+// strategy dispatcher → model router → engine (stub/ollama/openrouter/etc).
+// The response streams back to the frontend via the existing agent:chunk,
+// agent:start, and agent:complete WS events — which ChatPanel already
+// subscribes to (ChatPanel.tsx:75, 98, 119).
+//
+// Session history (conversation context) is preserved via the existing
+// appendSessionMessage / getSessionHistory functions. History is passed
+// to the agent via task.context.recentMessages and embedded in the task
+// description so the single-shot strategy includes it in the model call.
+
+const CHAT_AGENT_ID = 'architect-agent';
+
+export async function runChatViaAgentManager(
+  sessionId: string,
+  userMessage: string,
+  taskId: string,
+  userId?: string,
+): Promise<void> {
+  // 1. Append user message to session history (preserving conversation context)
+  appendSessionMessage(sessionId, { role: 'user', content: userMessage });
+  const history = getSessionHistory(sessionId);
+  const recentHistory = history.slice(-10); // last 10 turns
+
+  // 2. Build task description — include conversation history for context
+  //    so the single-shot strategy can include it in the model call.
+  //    (The strategy builds: [system, user] — only one user message.
+  //     We embed prior turns in the user message so the model sees context.)
+  const conversationContext = recentHistory.length > 1
+    ? recentHistory.slice(0, -1)
+        .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+        .join('\n\n')
+      + '\n\nCurrent request:\n' + userMessage
+    : userMessage;
+
+  // 3. Create an authoritative AgentTask
+  const task: AgentTask = {
+    id: taskId,
+    projectId: '00000000-0000-0000-0000-000000000000',
+    sessionId,
+    agentId: CHAT_AGENT_ID,
+    type: 'chat' as TaskType,
+    description: conversationContext,
+    context: {
+      projectId: '00000000-0000-0000-0000-000000000000',
+      rootPath: '/tmp/code-siren-chat',
+      techStack: {},
+      activeFiles: [],
+      recentMessages: recentHistory.map(m => m.content),
+      userId,
+    },
+    files: [],
+    priority: 'normal' as TaskPriority,
+    executionMode: 'single-shot' as ExecutionMode,
+    origin: 'chat',
+    createdAt: Date.now(),
+  };
+
+  console.log(`[orchestrator:chat] dispatching task ${taskId} via AgentManager (session ${sessionId}, agent=${CHAT_AGENT_ID})`);
+
+  // 4. Execute through the authoritative AgentManager lifecycle.
+  //    executeAndWait() broadcasts:
+  //      - agent:start (ChatPanel.tsx:75 — sets isGenerating=true)
+  //      - agent:chunk (ChatPanel.tsx:98 — appends text to streaming bubble)
+  //      - agent:complete (ChatPanel.tsx:119 — marks done)
+  //      - agent:error (ChatPanel.tsx:128 — shows error notification)
+  //    It also creates a trace (startTrace/completeTrace).
+  //    It also broadcasts relay:milestone-start for non-voice tasks —
+  //    we broadcast relay:milestone-complete afterward to reset relay state.
+  const result = await agentManager.executeAndWait(task);
+
+  // 5. Reset relay state — executeAndWait broadcasts relay:milestone-start
+  //    for non-voice tasks. Broadcast relay:milestone-complete so
+  //    RelayContext doesn't stay stuck in 'running' state.
+  broadcast(makeEvent('relay:milestone-complete' as any, {
+    planId: 'chat',
+    milestoneId: task.id,
+    summary: result.error
+      ? `Chat task failed: ${result.error}`
+      : 'Chat task completed',
+  }));
+
+  // 6. Append assistant response to session history
+  if (result.text) {
+    appendSessionMessage(sessionId, { role: 'assistant', content: result.text });
+  }
+
+  // 7. Log result
+  if (result.error) {
+    console.error(`[orchestrator:chat] task ${taskId} failed: ${result.error}`);
+  } else {
+    console.log(`[orchestrator:chat] task ${taskId} completed via AgentManager (${result.text.length} chars)`);
   }
 }
