@@ -130,7 +130,11 @@ export const api = {
 
   // Tier 1 chat — fire-and-forget; the response streams back over WS as
   // orchestrator:chunk events with the same shape as agent:chunk.
-  orchestratorChat(sessionId: string, message: string): Promise<{
+  orchestratorChat(sessionId: string, message: string, context?: {
+    workspaceRoot?: string;
+    activeFile?: string;
+    openFiles?: string[];
+  }): Promise<{
     taskId: string;
     sessionId: string;
     status: string;
@@ -138,7 +142,7 @@ export const api = {
   }> {
     return request('/orchestrator/chat', {
       method: 'POST',
-      body: JSON.stringify({ sessionId, message }),
+      body: JSON.stringify({ sessionId, message, context }),
     });
   },
 

@@ -6,10 +6,15 @@
 // strategy dispatcher, so Architect can run in any executionMode.
 // Default executionMode for Architect is 'single-shot' (architecture is
 // usually one-and-done reasoning, not a tool loop).
+//
+// Phase 2: now reads task.contextBundle (assembled by ContextManager) and
+// formats it into the system prompt so the model receives truthful workspace
+// context (open files, project graph, conversation history, memory).
 
 import type { AgentChunk, AgentTask, AgentDomain } from '../../types.js';
 import { IAgent } from '../base-agent.js';
 import { dispatchStrategy } from '../../orchestration/strategies/dispatcher.js';
+import type { ContextBundle } from '../../context/types.js';
 
 const SYSTEM_PROMPT = `You are the Architect Agent of Zero Two: Code Siren.
 
@@ -27,6 +32,76 @@ When asked to design or plan:
 
 Be concise. Be opinionated. No filler.`;
 
+/**
+ * Format the ContextBundle (assembled by ContextManager) into a text block
+ * that can be prepended to the system prompt. This is the bridge between
+ * the context assembly pipeline and the model's actual input.
+ *
+ * Phase 2: this is the critical connection that makes workspace context
+ * actually reach the model. Without this, ContextManager assembles a bundle
+ * but no one reads it.
+ */
+function formatContextBundle(bundle: ContextBundle | undefined): string {
+  if (!bundle) {
+    return '\n\n[No workspace context available — operating without project context.]';
+  }
+
+  const parts: string[] = [];
+
+  // Workspace root (from task.context.rootPath, which ContextManager reads)
+  // We can't directly access rootPath from the bundle, but open files
+  // were read relative to it. We note the open files themselves.
+
+  // Open files
+  if (bundle.openFiles.length > 0) {
+    parts.push('=== OPEN FILES (inspected from workspace) ===');
+    for (const f of bundle.openFiles) {
+      const preview = f.content.length > 500
+        ? f.content.slice(0, 500) + '\n...(truncated)'
+        : f.content;
+      parts.push(`File: ${f.path} (${f.language})\n${preview}`);
+    }
+  } else {
+    parts.push('=== OPEN FILES ===\n(No files are currently open in the editor.)');
+  }
+
+  // Active selection
+  if (bundle.selection) {
+    parts.push(`=== ACTIVE SELECTION ===\nFile: ${bundle.selection.path}\nLines ${bundle.selection.startLine}-${bundle.selection.endLine}:\n${bundle.selection.text}`);
+  }
+
+  // Project graph (one-hop imports)
+  if (bundle.projectGraph.length > 0) {
+    parts.push('=== PROJECT GRAPH (one-hop imports of open files) ===');
+    for (const node of bundle.projectGraph) {
+      parts.push(`${node.file} imports: ${node.imports.join(', ') || '(none)'}`);
+    }
+  }
+
+  // Conversation history
+  if (bundle.conversationHistory.length > 0) {
+    parts.push('=== CONVERSATION HISTORY (last 10 turns) ===');
+    for (const turn of bundle.conversationHistory) {
+      parts.push(`${turn.role}: ${turn.content.slice(0, 200)}`);
+    }
+  }
+
+  // Relevant memory
+  if (bundle.relevantMemory.length > 0) {
+    parts.push('=== RELEVANT MEMORY (semantic search results) ===');
+    for (const mem of bundle.relevantMemory) {
+      parts.push(`[score=${mem.score.toFixed(3)}, source=${mem.source}] ${mem.content.slice(0, 200)}`);
+    }
+  }
+
+  // Token budget info
+  if (bundle.tokenBudget.truncated.length > 0) {
+    parts.push(`=== CONTEXT BUDGET ===\nUsed ${bundle.tokenBudget.used}/${bundle.tokenBudget.max} tokens.\nTruncated: ${bundle.tokenBudget.truncated.join(', ')}`);
+  }
+
+  return '\n\n--- WORKSPACE CONTEXT ---\n' + parts.join('\n\n') + '\n--- END WORKSPACE CONTEXT ---\n';
+}
+
 export class ArchitectAgent extends IAgent {
   readonly id = 'architect-agent';
   readonly name = 'Architect Agent';
@@ -42,6 +117,13 @@ export class ArchitectAgent extends IAgent {
     try {
       // Delegate to the strategy dispatcher — picks single-shot/react/codeact
       // based on task.executionMode. Architect defaults to single-shot.
+
+      // Phase 2: read the context bundle assembled by ContextManager.
+      // This is the critical connection — without it, the bundle is assembled
+      // but never reaches the model. The bundle is attached by
+      // AgentManager.assembleContextBundle() before execute() is called.
+      const contextBlock = formatContextBundle(task.contextBundle);
+
       const recalled = await this.recall(task.description, 5);
       const memoryBlock = recalled.length > 0
         ? `\n\nRecalled context:\n${recalled.map((r) => `- ${r.content}`).join('\n')}\n`
@@ -49,7 +131,7 @@ export class ArchitectAgent extends IAgent {
 
       let fullResponse = '';
       for await (const chunk of dispatchStrategy(task, signal, {
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: SYSTEM_PROMPT + contextBlock,
         recalledMemory: memoryBlock,
         temperature: 0.5,
         maxTokens: 1024,

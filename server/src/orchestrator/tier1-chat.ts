@@ -184,18 +184,47 @@ export async function streamTier1Chat(
 
 const CHAT_AGENT_ID = 'architect-agent';
 
+// Phase 2: workspace context received from the frontend.
+// If not provided, rootPath falls back to a placeholder and activeFiles is empty.
+// This is honest — the agent will know it has no workspace context rather than
+// being given fabricated project information.
+interface WorkspaceContext {
+  workspaceRoot?: string;
+  activeFile?: string;
+  openFiles?: string[];
+}
+
 export async function runChatViaAgentManager(
   sessionId: string,
   userMessage: string,
   taskId: string,
   userId?: string,
+  workspaceContext?: WorkspaceContext,
 ): Promise<void> {
   // 1. Append user message to session history (preserving conversation context)
   appendSessionMessage(sessionId, { role: 'user', content: userMessage });
   const history = getSessionHistory(sessionId);
   const recentHistory = history.slice(-10); // last 10 turns
 
-  // 2. Build task description — include conversation history for context
+  // 2. Resolve workspace identity — truthful, not fabricated
+  //    If the frontend sent workspaceRoot, use it. Otherwise, use a
+  //    placeholder and log the absence honestly.
+  const rootPath = workspaceContext?.workspaceRoot ?? '/tmp/code-siren-chat';
+  const activeFiles: string[] = [];
+  if (workspaceContext?.activeFile) {
+    activeFiles.push(workspaceContext.activeFile);
+  }
+  if (workspaceContext?.openFiles) {
+    for (const f of workspaceContext.openFiles) {
+      if (!activeFiles.includes(f)) activeFiles.push(f);
+    }
+  }
+
+  if (!workspaceContext?.workspaceRoot) {
+    console.warn(`[orchestrator:chat] no workspaceRoot in context — using placeholder ${rootPath} (task ${taskId})`);
+  }
+
+  // 3. Build task description — include conversation history for context
   //    so the single-shot strategy can include it in the model call.
   //    (The strategy builds: [system, user] — only one user message.
   //     We embed prior turns in the user message so the model sees context.)
@@ -206,7 +235,7 @@ export async function runChatViaAgentManager(
       + '\n\nCurrent request:\n' + userMessage
     : userMessage;
 
-  // 3. Create an authoritative AgentTask
+  // 3. Create an authoritative AgentTask with real workspace identity
   const task: AgentTask = {
     id: taskId,
     projectId: '00000000-0000-0000-0000-000000000000',
@@ -216,9 +245,9 @@ export async function runChatViaAgentManager(
     description: conversationContext,
     context: {
       projectId: '00000000-0000-0000-0000-000000000000',
-      rootPath: '/tmp/code-siren-chat',
+      rootPath,               // ← real workspace root (or honest placeholder)
       techStack: {},
-      activeFiles: [],
+      activeFiles,            // ← real open files from the editor
       recentMessages: recentHistory.map(m => m.content),
       userId,
     },
@@ -229,7 +258,7 @@ export async function runChatViaAgentManager(
     createdAt: Date.now(),
   };
 
-  console.log(`[orchestrator:chat] dispatching task ${taskId} via AgentManager (session ${sessionId}, agent=${CHAT_AGENT_ID})`);
+  console.log(`[orchestrator:chat] dispatching task ${taskId} via AgentManager (session ${sessionId}, agent=${CHAT_AGENT_ID}, rootPath=${rootPath}, activeFiles=${activeFiles.length})`);
 
   // 4. Execute through the authoritative AgentManager lifecycle.
   //    executeAndWait() broadcasts:

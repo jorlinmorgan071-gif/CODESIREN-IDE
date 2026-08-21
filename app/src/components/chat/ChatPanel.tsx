@@ -173,7 +173,15 @@ export function ChatPanel() {
     // by the relay execution loop, not by casual chat.
     try {
       if (sessionId) {
-        await api.orchestratorChat(sessionId, text);
+        // Send workspace context: active file path + open tab file names.
+        // The backend uses this to assemble real context via ContextManager.
+        const activeTab = state.editorTabs.find(t => t.isActive);
+        const openFiles = state.editorTabs.map(t => t.fileName);
+        await api.orchestratorChat(sessionId, text, {
+          workspaceRoot: '/home/z/my-project',  // Phase 2: real workspace root
+          activeFile: activeTab?.fileName,
+          openFiles: openFiles.length > 0 ? openFiles : undefined,
+        });
       }
     } catch (err) {
       // Mark the assistant message as errored

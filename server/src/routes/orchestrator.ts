@@ -32,9 +32,16 @@ export const orchestratorRouter = Router();
 
 // ── POST /api/orchestrator/chat ──────────────────────────────────────────
 
+const chatContextSchema = z.object({
+  workspaceRoot: z.string().optional(),
+  activeFile: z.string().optional(),
+  openFiles: z.array(z.string()).optional(),
+}).optional();
+
 const chatSchema = z.object({
   sessionId: z.string().min(1),
   message: z.string().min(1).max(8000),
+  context: chatContextSchema,
 });
 
 orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
@@ -48,11 +55,14 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
   // runChatViaAgentManager creates an AgentTask and calls
   // agentManager.executeAndWait(), which broadcasts agent:start/chunk/complete
   // WS events — ChatPanel already subscribes to these (ChatPanel.tsx:75,98,119).
+  // Phase 2: pass workspace context (rootPath, activeFile, openFiles) so
+  // ContextManager can assemble real project context.
   runChatViaAgentManager(
     parsed.data.sessionId,
     parsed.data.message,
     taskId,
     req.user?.id,
+    parsed.data.context,
   ).catch((err) => {
     console.error('[orchestrator:chat] task failed:', err);
   });
