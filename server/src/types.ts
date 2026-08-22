@@ -115,6 +115,17 @@ export interface ProjectContext {
   // Precedence: 1) liveEditorContent, 2) disk content, 3) no content.
   activeFilePath?: string;
   liveEditorContent?: string;
+  // Phase 4: Live editor selection from Monaco. When provided, ContextManager
+  // includes it in the ContextBundle as the active selection. This is the
+  // in-memory selection — it includes unsaved edits because it reads from
+  // the live model buffer.
+  selection?: {
+    text: string;
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  };
 }
 
 export interface CodeDna {

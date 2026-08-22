@@ -59,6 +59,11 @@ function formatContextBundle(bundle: ContextBundle | undefined, task: AgentTask)
     if (task.context.activeFiles && task.context.activeFiles.length > 0) {
       fallbackParts.push(`=== OPEN TABS ===\n${task.context.activeFiles.join(', ')}`);
     }
+    // Phase 4: Include selection in the fallback path too
+    if (task.context.selection && task.context.activeFilePath) {
+      const sel = task.context.selection;
+      fallbackParts.push(`=== EDITOR SELECTION ===\nFile: ${task.context.activeFilePath}\nRange: L${sel.startLine}:C${sel.startColumn} → L${sel.endLine}:C${sel.endColumn}\n\n${sel.text}`);
+    }
     if (fallbackParts.length > 0) {
       return '\n\n--- WORKSPACE CONTEXT (fallback — context assembly timed out) ---\n' +
         fallbackParts.join('\n\n') +
@@ -84,7 +89,8 @@ function formatContextBundle(bundle: ContextBundle | undefined, task: AgentTask)
 
   // Active selection
   if (bundle.selection) {
-    parts.push(`=== ACTIVE SELECTION ===\nFile: ${bundle.selection.path}\nLines ${bundle.selection.startLine}-${bundle.selection.endLine}:\n${bundle.selection.text}`);
+    const sel = bundle.selection;
+    parts.push(`=== EDITOR SELECTION ===\nFile: ${sel.path}\nRange: L${sel.startLine}:C${sel.startColumn} → L${sel.endLine}:C${sel.endColumn}\n\n${sel.text}`);
   }
 
   // Project graph (one-hop imports)

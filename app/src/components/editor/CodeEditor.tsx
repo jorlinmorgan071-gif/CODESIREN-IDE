@@ -43,6 +43,38 @@ export function getActiveEditorContent(): string | null {
   return model.getValue();
 }
 
+/**
+ * Get the active selection from the Monaco editor.
+ * Returns null if no editor, no model, or no selection (empty caret).
+ * The selection is read from Monaco's in-memory state — it includes
+ * unsaved edits because it reads from the live model buffer.
+ */
+export interface EditorSelection {
+  text: string;
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function getActiveEditorSelection(): EditorSelection | null {
+  if (!activeEditorRef) return null;
+  const model = activeEditorRef.getModel();
+  if (!model) return null;
+  const selection = activeEditorRef.getSelection();
+  if (!selection || selection.isEmpty()) return null;
+  const text = model.getValueInRange(selection);
+  if (!text) return null;
+  return {
+    text,
+    startLine: selection.startLineNumber,
+    startColumn: selection.startColumn,
+    endLine: selection.endLineNumber,
+    endColumn: selection.endColumn,
+  };
+}
+
 export function CodeEditor() {
   const { state, closeTab, setActiveFile, updateProblems } = useApp();
   const [mounted] = useState(true);

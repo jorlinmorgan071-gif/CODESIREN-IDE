@@ -135,6 +135,13 @@ export const api = {
     activeFile?: string;
     openFiles?: string[];
     activeFileContent?: string;
+    selection?: {
+      text: string;
+      startLine: number;
+      startColumn: number;
+      endLine: number;
+      endColumn: number;
+    };
   }): Promise<{
     taskId: string;
     sessionId: string;

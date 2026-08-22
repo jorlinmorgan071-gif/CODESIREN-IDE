@@ -31,11 +31,14 @@ export interface OpenFile {
 /**
  * The active text selection in the editor. Always included in full —
  * the budget truncation logic MUST NOT drop this.
+ * Phase 4: Added startColumn and endColumn for precise range reporting.
  */
 export interface ActiveSelection {
   path: string;
   startLine: number;
+  startColumn: number;
   endLine: number;
+  endColumn: number;
   text: string;
 }
 

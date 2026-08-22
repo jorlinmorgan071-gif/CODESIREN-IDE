@@ -193,6 +193,13 @@ interface WorkspaceContext {
   activeFile?: string;
   openFiles?: string[];
   activeFileContent?: string;  // Phase 2: live editor buffer (includes unsaved edits)
+  selection?: {                 // Phase 4: live Monaco selection
+    text: string;
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  };
 }
 
 export async function runChatViaAgentManager(
@@ -260,6 +267,9 @@ export async function runChatViaAgentManager(
       // reading from disk for the active file. Precedence: live > disk > none.
       activeFilePath: workspaceContext?.activeFile,
       liveEditorContent: workspaceContext?.activeFileContent,
+      // Phase 4: live editor selection — ContextManager includes this in
+      // the ContextBundle as the active selection.
+      selection: workspaceContext?.selection,
     },
     files: [],
     priority: 'normal' as TaskPriority,

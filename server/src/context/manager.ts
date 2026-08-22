@@ -39,6 +39,7 @@ import type {
   ContextManager as IContextManager,
   AssembleParams,
   OpenFile,
+  ActiveSelection,
   ConversationTurn,
   RelevantMemory,
   ProjectGraphNode,
@@ -75,12 +76,22 @@ class ContextManagerImpl implements IContextManager {
     const recentMessages = task.context.recentMessages ?? [];
 
     // ── Source 1: Active selection ─────────────────────────────────────
-    // The directive refers to the "active selection" — Code Siren's
-    // ProjectContext doesn't currently carry selection state (only the
-    // file list), so we set this to null. The budget module preserves
-    // a null selection trivially. When a future phase adds selection
-    // state to ProjectContext, this is where it'd be sourced from.
-    const selection = null; // TODO(Phase C+): source from task.context.selection when it exists
+    // Phase 4: Read selection from task.context.selection (set by
+    // runChatViaAgentManager from the frontend's live Monaco selection).
+    // If not provided, selection is null (no selection — truthful).
+    const taskSelection = task.context.selection;
+    const activeFilePath = task.context.activeFilePath;
+    let selection: ActiveSelection | null = null;
+    if (taskSelection && activeFilePath) {
+      selection = {
+        path: activeFilePath,
+        startLine: taskSelection.startLine,
+        startColumn: taskSelection.startColumn,
+        endLine: taskSelection.endLine,
+        endColumn: taskSelection.endColumn,
+        text: taskSelection.text,
+      };
+    }
 
     // ── Source 2: Open file(s) — read content from disk ───────────────
     // Phase 3: Live editor content takes precedence over disk content.

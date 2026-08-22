@@ -62,7 +62,9 @@ describe('Phase B — budget.ts token estimator', () => {
     const sel: ActiveSelection = {
       path: 'src/bar.ts',  // 10 chars → 3
       startLine: 1,
+      startColumn: 1,
       endLine: 5,
+      endColumn: 1,
       text: 'const y = 2;', // 12 chars → 3
     };
     // 3 + 3 + 12 (selection header overhead) = 18
@@ -180,7 +182,7 @@ describe('Phase B — budget.ts applyBudget truncation logic', () => {
   it('applyBudget: bundle already under budget → no truncation, clean tokenBudget', () => {
     const bundle = makeBundle({
       openFiles: [{ path: 'foo.ts', language: 'typescript', content: 'const x = 1;' }],
-      selection: { path: 'foo.ts', startLine: 1, endLine: 1, text: 'const x = 1;' },
+      selection: { path: 'foo.ts', startLine: 1, startColumn: 1, endLine: 1, endColumn: 12, text: 'const x = 1;' },
     });
     const result = applyBudget(bundle, 1000);
     expect(result.tokenBudget.used).toBeLessThanOrEqual(1000);
@@ -206,7 +208,7 @@ describe('Phase B — budget.ts applyBudget truncation logic', () => {
     }));
     const bundle = makeBundle({
       openFiles: [{ path: 'main.ts', language: 'typescript', content: 'const x = 1;' }],
-      selection: { path: 'main.ts', startLine: 1, endLine: 1, text: 'const x = 1;' },
+      selection: { path: 'main.ts', startLine: 1, startColumn: 1, endLine: 1, endColumn: 12, text: 'const x = 1;' },
       projectGraph: hugeGraph,
     });
     // Use a small budget to force truncation
@@ -230,7 +232,7 @@ describe('Phase B — budget.ts applyBudget truncation logic', () => {
     }));
     const bundle = makeBundle({
       openFiles: [{ path: 'main.ts', language: 'typescript', content: 'const x = 1;' }],
-      selection: { path: 'main.ts', startLine: 1, endLine: 1, text: 'const x = 1;' },
+      selection: { path: 'main.ts', startLine: 1, startColumn: 1, endLine: 1, endColumn: 12, text: 'const x = 1;' },
       conversationHistory: turns,
     });
     // Budget = 200 tokens. openFiles + selection alone is ~50 tokens. Each turn is ~58 tokens.
@@ -258,7 +260,7 @@ describe('Phase B — budget.ts applyBudget truncation logic', () => {
     }));
     const bundle = makeBundle({
       openFiles: [{ path: 'main.ts', language: 'typescript', content: 'const x = 1;' }],
-      selection: { path: 'main.ts', startLine: 1, endLine: 1, text: 'const x = 1;' },
+      selection: { path: 'main.ts', startLine: 1, startColumn: 1, endLine: 1, endColumn: 12, text: 'const x = 1;' },
       relevantMemory: mems,
     });
     const result = applyBudget(bundle, 200);
@@ -284,7 +286,9 @@ describe('Phase B — budget.ts applyBudget truncation logic', () => {
     const hugeSelection: ActiveSelection = {
       path: 'huge.ts',
       startLine: 1,
+      startColumn: 1,
       endLine: 1000,
+      endColumn: 1,
       text: 'x'.repeat(10000), // 10K chars = 2500 tokens
     };
     const bundle = makeBundle({

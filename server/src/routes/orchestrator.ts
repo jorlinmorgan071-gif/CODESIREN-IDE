@@ -37,6 +37,13 @@ const chatContextSchema = z.object({
   activeFile: z.string().optional(),
   openFiles: z.array(z.string()).optional(),
   activeFileContent: z.string().optional(),
+  selection: z.object({
+    text: z.string(),
+    startLine: z.number().int(),
+    startColumn: z.number().int(),
+    endLine: z.number().int(),
+    endColumn: z.number().int(),
+  }).optional(),
 }).optional();
 
 const chatSchema = z.object({

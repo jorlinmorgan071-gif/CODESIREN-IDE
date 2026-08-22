@@ -16,7 +16,7 @@ import { api } from '@/lib/api';
 import type { AgentEvent } from '@/types';
 import { ChatBubble, type ChatMessage, type BubbleStyle } from './elements/ChatBubble';
 import { ChatInput } from './elements/ChatInput';
-import { getActiveEditorContent } from '@/components/editor/CodeEditor';
+import { getActiveEditorContent, getActiveEditorSelection } from '@/components/editor/CodeEditor';
 import { RotatingLoader } from '@/components/ui/loaders';
 import { NotificationContainer, type NotificationItem } from '@/components/ui/notification-alert';
 import { ChatBackgroundSettings, type ChatBackground } from './ChatBackgroundSettings';
@@ -183,11 +183,13 @@ export function ChatPanel() {
         const activeTab = state.editorTabs.find(t => t.isActive);
         const openFiles = state.editorTabs.map(t => t.fileName);
         const liveContent = getActiveEditorContent();
+        const selection = getActiveEditorSelection();
         await api.orchestratorChat(sessionId, text, {
           workspaceRoot: import.meta.env.VITE_WORKSPACE_ROOT || undefined,
           activeFile: activeTab?.fileName,
           openFiles: openFiles.length > 0 ? openFiles : undefined,
           activeFileContent: liveContent ?? undefined,
+          selection: selection ?? undefined,
         });
       }
     } catch (err) {
