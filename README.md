@@ -6,6 +6,10 @@
 **License:** private
 **Status:** production-ready (build green, 700+ tests across 45 files, 35 Skills Vault manifests, 3 swappable TTS providers, 4 VRM avatars with PIP overlay, real Ghost Mode scanners + remediation, no donor-project names in code)
 
+## Official Release Page
+
+For verified Code Siren releases, download details, platform builds, checksums, and release updates, visit the **[Code Siren Release Page](https://vrmspringlab-9ygpjw4f.manus.space/release)**.
+
 ---
 
 ## What's New (Phases A–E + Phase A/B post-Phase-E, post-Phase-6)
