@@ -24,7 +24,6 @@ import {
   setOutcome,
   addStep,
 } from '../observability/traces.js';
-import { addVerification } from '../observability/traces.js';
 import { contextManager } from '../context/manager.js';
 
 class AgentManager {
