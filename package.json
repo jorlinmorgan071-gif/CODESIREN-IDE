@@ -1,5 +1,12 @@
 {
   "devDependencies": {
     "typescript": "~5.9.3"
+  },
+  "dependencies": {
+    "isolated-vm": "^7.0.1",
+    "uuid": "^14.0.2"
+  },
+  "allowScripts": {
+    "isolated-vm@7.0.1": true
   }
 }
