@@ -36,6 +36,34 @@ export type TraceStepKind =
   | 'done'               // strategy returned
   | 'error';             // strategy threw
 
+/**
+ * Phase 5: Execution truth status for each step.
+ * This is recorded from actual execution evidence, NOT from model-generated claims.
+ *
+ * - 'planned': the step was intended (e.g. task description says "run tests")
+ * - 'running': the step is currently executing
+ * - 'succeeded': the step completed successfully (verified by actual execution)
+ * - 'failed': the step failed (verified by actual error/exception)
+ * - 'skipped': the step was intentionally not executed
+ * - 'unverified': the step claims to have done something but no verification evidence exists
+ */
+export type StepStatus = 'planned' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'unverified';
+
+/**
+ * Phase 5: A verification record — evidence that an actual verification
+ * step (typecheck, test, lint, etc.) was executed. This is NOT model text.
+ * It is recorded by the system when a verification command actually runs.
+ */
+export interface VerificationRecord {
+  name: string;           // e.g. 'typecheck', 'tests', 'lint'
+  kind: 'typecheck' | 'test' | 'lint' | 'build' | 'custom';
+  status: StepStatus;     // 'succeeded' | 'failed' | 'skipped' | 'unverified'
+  timestamp: number;      // when the verification was recorded
+  output?: string;        // output of the verification (truncated to 500 chars)
+  durationMs?: number;    // how long the verification took
+  exitCode?: number;      // exit code if available
+}
+
 export interface TraceStep {
   ts: number;                       // epoch ms
   kind: TraceStepKind;
@@ -44,6 +72,7 @@ export interface TraceStep {
   output?: unknown;                 // what came out (response text, tool result, exec output)
   durationMs?: number;              // how long this step took
   meta?: Record<string, unknown>;   // anything else (turn number, model id, etc.)
+  status?: StepStatus;              // Phase 5: execution truth per step
 }
 
 export interface AgentRunTrace {
@@ -62,6 +91,10 @@ export interface AgentRunTrace {
   toolResults: Array<{ name: string; args: unknown; result: unknown; success: boolean }>;
   outcome: 'success' | 'error' | 'loop-blocked' | 'max-turns' | 'aborted';
   errorMessage?: string;
+  // Phase 5: Execution truth — what ACTUALLY happened vs what the model CLAIMED.
+  // These fields are populated by real execution evidence, not by model text.
+  verificationRecords: VerificationRecord[];         // actual verification runs
+  verificationStatus: 'unverified' | 'passed' | 'failed' | 'partial';  // computed from records
 }
 
 // ── Recorder ─────────────────────────────────────────────────────────────
@@ -94,6 +127,9 @@ export function startTrace(opts: {
     steps: [],
     toolResults: [],
     outcome: 'success',
+    // Phase 5: execution truth — starts unverified
+    verificationRecords: [],
+    verificationStatus: 'unverified',
   };
   activeTraces.set(traceId, trace);
   return traceId;
@@ -124,12 +160,46 @@ export function setOutcome(traceId: string, outcome: AgentRunTrace['outcome'], e
   if (errorMessage) trace.errorMessage = errorMessage;
 }
 
+/**
+ * Phase 5: Record a verification step that ACTUALLY executed.
+ * This is NOT model text. It is recorded by the system when a real
+ * verification command (typecheck, test, lint) runs.
+ *
+ * The model saying "tests passed" does NOT call this function.
+ * Only actual system-level verification execution calls this.
+ */
+export function addVerification(traceId: string, record: Omit<VerificationRecord, 'timestamp'>): void {
+  const trace = activeTraces.get(traceId);
+  if (!trace) return;
+  trace.verificationRecords.push({ ...record, timestamp: Date.now() });
+}
+
+/**
+ * Phase 5: Compute verification status from the actual verification records.
+ * - No records → 'unverified'
+ * - All succeeded → 'passed'
+ * - Any failed → 'failed'
+ * - Mix of succeeded and skipped (but no failures) → 'partial'
+ */
+function computeVerificationStatus(records: VerificationRecord[]): AgentRunTrace['verificationStatus'] {
+  if (records.length === 0) return 'unverified';
+  const hasFailed = records.some(r => r.status === 'failed');
+  if (hasFailed) return 'failed';
+  const allSucceeded = records.every(r => r.status === 'succeeded');
+  if (allSucceeded) return 'passed';
+  // Some succeeded, some skipped — partial
+  return 'partial';
+}
+
 export function completeTrace(traceId: string, output: string): AgentRunTrace | null {
   const trace = activeTraces.get(traceId);
   if (!trace) return null;
   trace.output = output;
   trace.completedAt = Date.now();
   trace.totalDurationMs = trace.completedAt - trace.startedAt;
+
+  // Phase 5: Compute final verification status from actual records
+  trace.verificationStatus = computeVerificationStatus(trace.verificationRecords);
 
   // Move from active → ring buffer
   activeTraces.delete(traceId);
@@ -182,4 +252,25 @@ export function listTraces(opts: { agentId?: string; executionMode?: ExecutionMo
 
 export function getTracesFile(): string {
   return TRACES_FILE;
+}
+
+/**
+ * Phase 5: Get the verification status of a trace.
+ * Returns 'unverified' if the trace doesn't exist or has no verification records.
+ * This is the authoritative verification truth — NOT model text.
+ */
+export function getVerificationStatus(traceId: string): AgentRunTrace['verificationStatus'] {
+  const trace = activeTraces.get(traceId) ?? traceIndex.get(traceId);
+  if (!trace) return 'unverified';
+  return trace.verificationStatus;
+}
+
+/**
+ * Phase 5: Get all verification records for a trace.
+ * Returns empty array if no verification was recorded.
+ */
+export function getVerificationRecords(traceId: string): VerificationRecord[] {
+  const trace = activeTraces.get(traceId) ?? traceIndex.get(traceId);
+  if (!trace) return [];
+  return [...trace.verificationRecords];
 }

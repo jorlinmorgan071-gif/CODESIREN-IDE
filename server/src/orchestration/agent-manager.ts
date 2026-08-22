@@ -24,6 +24,7 @@ import {
   setOutcome,
   addStep,
 } from '../observability/traces.js';
+import { addVerification } from '../observability/traces.js';
 import { contextManager } from '../context/manager.js';
 
 class AgentManager {
@@ -122,6 +123,7 @@ class AgentManager {
       kind: 'llm-call',
       label: `task received — agent=${agent.id} mode=${task.executionMode} origin=${task.origin}`,
       meta: { taskType: task.type, priority: task.priority },
+      status: 'succeeded',  // Phase 5: task received and dispatched
     });
 
     // ── Phase B (Context Manager) — assemble the contextBundle ────────
@@ -143,11 +145,13 @@ class AgentManager {
           memoryEntries: bundle.relevantMemory.length,
           truncated: bundle.tokenBudget.truncated,
         },
+        status: 'succeeded',  // Phase 5: context assembly succeeded
       });
     } else {
       addStep(task.id, {
         kind: 'llm-call',
         label: `context bundle NOT assembled (fail-open — see assembleContextBundle comment)`,
+        status: 'failed',  // Phase 5: context assembly failed (timeout)
       });
     }
 
@@ -289,6 +293,7 @@ class AgentManager {
       kind: 'llm-call',
       label: `relay task — agent=${agent.id} mode=${task.executionMode} origin=${task.origin}`,
       meta: { taskType: task.type, priority: task.priority, via: 'executeAndWait' },
+      status: 'succeeded',  // Phase 5: task received and dispatched
     });
 
     // ── Phase B (Context Manager) — assemble the contextBundle ────────
@@ -311,12 +316,14 @@ class AgentManager {
           truncated: bundle.tokenBudget.truncated,
           via: 'executeAndWait',
         },
+        status: 'succeeded',  // Phase 5: context assembly succeeded
       });
     } else {
       addStep(task.id, {
         kind: 'llm-call',
         label: `context bundle NOT assembled (fail-open — see assembleContextBundle comment)`,
         meta: { via: 'executeAndWait' },
+        status: 'failed',  // Phase 5: context assembly failed (timeout)
       });
     }
 

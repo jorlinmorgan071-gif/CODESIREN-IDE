@@ -125,6 +125,34 @@ function formatContextBundle(bundle: ContextBundle | undefined, task: AgentTask)
   return '\n\n--- WORKSPACE CONTEXT ---\n' + parts.join('\n\n') + '\n--- END WORKSPACE CONTEXT ---\n';
 }
 
+/**
+ * Phase 5: Format execution truth from recalled memory.
+ * The agent's recalled memory may contain entries from prior task traces.
+ * This function extracts and formats any execution-state evidence found
+ * in memory entries, so the agent can distinguish:
+ *   - What it INTENDED to do (planned)
+ *   - What ACTUALLY happened (succeeded/failed)
+ *   - What was VERIFIED (verification records)
+ *   - What remains UNVERIFIED (no verification evidence)
+ *
+ * This is read-only — the agent sees prior execution truth via memory recall,
+ * not via a separate execution-state API. The memory entries are tagged
+ * with 'execution-truth' in their metadata by the trace completion path.
+ */
+function formatExecutionTruthFromMemory(recalled: Array<{ content: string; metadata?: Record<string, unknown> }>): string {
+  const truthEntries = recalled.filter(r => {
+    const tags = r.metadata?.tags;
+    return Array.isArray(tags) && tags.includes('execution-truth');
+  });
+  if (truthEntries.length === 0) return '';
+
+  const parts: string[] = ['=== EXECUTION TRUTH (from prior task memory) ==='];
+  for (const entry of truthEntries) {
+    parts.push(entry.content.slice(0, 300));
+  }
+  return '\n\n' + parts.join('\n\n') + '\n';
+}
+
 export class ArchitectAgent extends IAgent {
   readonly id = 'architect-agent';
   readonly name = 'Architect Agent';
@@ -152,9 +180,12 @@ export class ArchitectAgent extends IAgent {
         ? `\n\nRecalled context:\n${recalled.map((r) => `- ${r.content}`).join('\n')}\n`
         : '';
 
+      // Phase 5: Include execution truth from prior task memory
+      const executionTruthBlock = formatExecutionTruthFromMemory(recalled as any);
+
       let fullResponse = '';
       for await (const chunk of dispatchStrategy(task, signal, {
-        systemPrompt: SYSTEM_PROMPT + contextBlock,
+        systemPrompt: SYSTEM_PROMPT + contextBlock + executionTruthBlock,
         recalledMemory: memoryBlock,
         temperature: 0.5,
         maxTokens: 1024,
@@ -169,11 +200,16 @@ export class ArchitectAgent extends IAgent {
         yield chunk;
       }
 
-      // Persist to memory (no-op until Memory Engine lands in Step 8)
+      // Persist to memory — include execution truth tags so future recalls
+      // can distinguish what was actually done vs what was merely claimed.
+      // Phase 5: tag with 'execution-truth' so formatExecutionTruthFromMemory
+      // can find it. The memory content includes the agent's response, which
+      // may contain claims about what it did. The VERIFICATION of those claims
+      // is tracked separately in the trace's verificationRecords.
       await this.memorize(fullResponse, {
         sourceType: 'agent',
         sourceRef: this.id,
-        tags: ['architect', task.type],
+        tags: ['architect', task.type, 'execution-truth'],
       });
     } catch (err: any) {
       yield { type: 'error', content: err.message, meta: { code: 'UNEXPECTED', recoverable: true } };
