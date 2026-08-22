@@ -41,20 +41,37 @@ Be concise. Be opinionated. No filler.`;
  * actually reach the model. Without this, ContextManager assembles a bundle
  * but no one reads it.
  */
-function formatContextBundle(bundle: ContextBundle | undefined): string {
+function formatContextBundle(bundle: ContextBundle | undefined, task: AgentTask): string {
+  // Phase 3: If the context bundle timed out (undefined), we still have
+  // task.context.liveEditorContent and task.context.activeFilePath. Use them
+  // as a fallback so the model always receives the live editor state, even
+  // when ContextManager's 2-second timeout fires.
   if (!bundle) {
+    // Phase 3 fallback: construct a minimal context block from task.context
+    const fallbackParts: string[] = [];
+    if (task.context.liveEditorContent && task.context.activeFilePath) {
+      const preview = task.context.liveEditorContent.length > 500
+        ? task.context.liveEditorContent.slice(0, 500) + '\n...(truncated)'
+        : task.context.liveEditorContent;
+      fallbackParts.push(`=== OPEN FILES (live editor content — from task context) ===`);
+      fallbackParts.push(`File: ${task.context.activeFilePath}\n${preview}`);
+    }
+    if (task.context.activeFiles && task.context.activeFiles.length > 0) {
+      fallbackParts.push(`=== OPEN TABS ===\n${task.context.activeFiles.join(', ')}`);
+    }
+    if (fallbackParts.length > 0) {
+      return '\n\n--- WORKSPACE CONTEXT (fallback — context assembly timed out) ---\n' +
+        fallbackParts.join('\n\n') +
+        '\n--- END WORKSPACE CONTEXT ---\n';
+    }
     return '\n\n[No workspace context available — operating without project context.]';
   }
 
   const parts: string[] = [];
 
-  // Workspace root (from task.context.rootPath, which ContextManager reads)
-  // We can't directly access rootPath from the bundle, but open files
-  // were read relative to it. We note the open files themselves.
-
   // Open files
   if (bundle.openFiles.length > 0) {
-    parts.push('=== OPEN FILES (inspected from workspace) ===');
+    parts.push('=== OPEN FILES (from workspace editor) ===');
     for (const f of bundle.openFiles) {
       const preview = f.content.length > 500
         ? f.content.slice(0, 500) + '\n...(truncated)'
@@ -122,7 +139,7 @@ export class ArchitectAgent extends IAgent {
       // This is the critical connection — without it, the bundle is assembled
       // but never reaches the model. The bundle is attached by
       // AgentManager.assembleContextBundle() before execute() is called.
-      const contextBlock = formatContextBundle(task.contextBundle);
+      const contextBlock = formatContextBundle(task.contextBundle, task);
 
       const recalled = await this.recall(task.description, 5);
       const memoryBlock = recalled.length > 0

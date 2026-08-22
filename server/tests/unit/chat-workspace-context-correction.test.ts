@@ -140,21 +140,25 @@ export function App() {
     expect(input?.messages).toBeDefined();
     expect(input!.messages!.length).toBeGreaterThanOrEqual(2);
 
-    // The user message (messages[1].content) should contain the LIVE editor content
-    const userMessage = input!.messages![1].content;
-
-    // Verify the LIVE content (unsaved edits) is present in the model's input
-    expect(userMessage).toContain('LIVE EDITOR CONTENT');
-    expect(userMessage).toContain('unsaved edits');
-    expect(userMessage).toContain('Modified by user but not saved');
-
-    // Verify the STALE disk content is NOT the only version the model sees
-    // (The LIVE content takes priority — it's injected into the task description)
-    expect(userMessage).toContain('LIVE EDITOR CONTENT (may include unsaved edits)');
-
-    // The system prompt should also contain workspace context (from ContextManager)
+    // Phase 3: Live editor content is now in the SYSTEM PROMPT (via
+    // ContextBundle → openFiles → formatContextBundle), NOT in the user
+    // message (task.description). This prevents duplicate representations.
+    // The system prompt is messages[0].content.
     const systemPrompt = input!.messages![0].content;
+
+    // Verify the LIVE content (unsaved edits) is present in the system prompt
+    expect(systemPrompt).toContain('Modified by user but not saved');
+
+    // Verify the STALE disk content is NOT present (live takes precedence)
+    expect(systemPrompt).not.toContain('STALE DISK VERSION');
+
+    // The system prompt should contain workspace context
     expect(systemPrompt).toContain('WORKSPACE CONTEXT');
+
+    // The user message should NOT contain live editor content (no duplication)
+    const userMessage = input!.messages![1].content;
+    expect(userMessage).not.toContain('LIVE EDITOR CONTENT');
+    expect(userMessage).not.toContain('Modified by user but not saved');
   }, 15000);
 
   // ── TEST 3: No duplicate workspace/context mechanism ─────────────

@@ -108,6 +108,13 @@ export interface ProjectContext {
   // ghostMode.findings with userId, so the approval endpoint can verify
   // the user who approves is the user who requested.
   userId?: string;
+  // Phase 3: Live editor content for the active file. When provided, this
+  // takes precedence over disk content. ContextManager uses this instead of
+  // reading from disk for the active file, preventing the model from receiving
+  // conflicting live and stale-disk versions of the same file.
+  // Precedence: 1) liveEditorContent, 2) disk content, 3) no content.
+  activeFilePath?: string;
+  liveEditorContent?: string;
 }
 
 export interface CodeDna {

@@ -83,8 +83,25 @@ class ContextManagerImpl implements IContextManager {
     const selection = null; // TODO(Phase C+): source from task.context.selection when it exists
 
     // ── Source 2: Open file(s) — read content from disk ───────────────
+    // Phase 3: Live editor content takes precedence over disk content.
+    // When task.context.liveEditorContent exists for task.context.activeFilePath,
+    // use it instead of reading from disk. This prevents the model from
+    // receiving conflicting live and stale-disk versions of the same file.
+    // Precedence: 1) liveEditorContent (authoritative), 2) disk content (fallback), 3) skip
+    const liveContent = task.context.liveEditorContent;
+    const liveFilePath = task.context.activeFilePath;
     const openFiles: OpenFile[] = [];
     for (const filePath of activeFilePaths) {
+      // Phase 3: If this file has live editor content, use it (not disk)
+      if (liveContent && liveFilePath && filePath === liveFilePath) {
+        openFiles.push({
+          path: filePath,
+          content: liveContent,
+          language: inferLanguage(filePath),
+        });
+        continue;  // Skip disk read — live content is authoritative
+      }
+      // Fallback: read from disk
       const fullPath = resolve(projectRoot, filePath);
       if (!existsSync(fullPath)) {
         console.warn(`[context:manager] open file not found on disk: ${filePath} (skipping)`);

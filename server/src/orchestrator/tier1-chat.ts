@@ -225,30 +225,23 @@ export async function runChatViaAgentManager(
     console.warn(`[orchestrator:chat] no workspaceRoot in context — using placeholder ${rootPath} (task ${taskId})`);
   }
 
-  // 3. Build task description — include conversation history + live editor
-  //    content for context. The single-shot strategy builds: [system, user]
-  //    — only one user message. We embed prior turns AND the live editor
-  //    buffer (including unsaved edits) in the user message so the model
-  //    sees the actual current editor state, not a stale disk read.
-  let conversationContext = recentHistory.length > 1
+  // 3. Build task description — include conversation history for context.
+  //    Phase 3: Live editor content is NO LONGER injected into the task
+  //    description. Instead, it goes through task.context.liveEditorContent
+  //    → ContextManager.assemble() → ContextBundle.openFiles →
+  //    formatContextBundle() → system prompt. This gives ONE authoritative
+  //    representation of the file, in the system prompt, preventing the
+  //    model from receiving conflicting live and disk versions.
+  const conversationContext = recentHistory.length > 1
     ? recentHistory.slice(0, -1)
         .map(m => `${m.role.toUpperCase()}: ${m.content}`)
         .join('\n\n')
       + '\n\nCurrent request:\n' + userMessage
     : userMessage;
 
-  // Phase 2: Inject live editor content (including unsaved edits) into
-  // the task description. This ensures the model sees the actual buffer,
-  // not whatever ContextManager reads from disk (which may be stale or
-  // nonexistent if the file hasn't been saved).
-  if (workspaceContext?.activeFileContent && workspaceContext?.activeFile) {
-    const contentPreview = workspaceContext.activeFileContent.length > 2000
-      ? workspaceContext.activeFileContent.slice(0, 2000) + '\n...(truncated, showing first 2000 chars)'
-      : workspaceContext.activeFileContent;
-    conversationContext = `--- LIVE EDITOR CONTENT (may include unsaved edits) ---\nFile: ${workspaceContext.activeFile}\n\n${contentPreview}\n--- END LIVE EDITOR CONTENT ---\n\n${conversationContext}`;
-  }
-
-  // 3. Create an authoritative AgentTask with real workspace identity
+  // 4. Create an authoritative AgentTask with real workspace identity.
+  //    Phase 3: live editor content goes through task.context (not task.description)
+  //    so ContextManager can use it as the authoritative source for the active file.
   const task: AgentTask = {
     id: taskId,
     projectId: '00000000-0000-0000-0000-000000000000',
@@ -258,11 +251,15 @@ export async function runChatViaAgentManager(
     description: conversationContext,
     context: {
       projectId: '00000000-0000-0000-0000-000000000000',
-      rootPath,               // ← real workspace root (or honest placeholder)
+      rootPath,               // real workspace root (or honest placeholder)
       techStack: {},
-      activeFiles,            // ← real open files from the editor
+      activeFiles,            // real open files from the editor
       recentMessages: recentHistory.map(m => m.content),
       userId,
+      // Phase 3: live editor content — ContextManager uses this instead of
+      // reading from disk for the active file. Precedence: live > disk > none.
+      activeFilePath: workspaceContext?.activeFile,
+      liveEditorContent: workspaceContext?.activeFileContent,
     },
     files: [],
     priority: 'normal' as TaskPriority,
@@ -271,7 +268,7 @@ export async function runChatViaAgentManager(
     createdAt: Date.now(),
   };
 
-  console.log(`[orchestrator:chat] dispatching task ${taskId} via AgentManager (session ${sessionId}, agent=${CHAT_AGENT_ID}, rootPath=${rootPath}, activeFiles=${activeFiles.length})`);
+  console.log(`[orchestrator:chat] dispatching task ${taskId} via AgentManager (session ${sessionId}, agent=${CHAT_AGENT_ID}, rootPath=${rootPath}, activeFiles=${activeFiles.length}, hasLiveContent=${!!workspaceContext?.activeFileContent})`);
 
   // 4. Execute through the authoritative AgentManager lifecycle.
   //    executeAndWait() broadcasts:

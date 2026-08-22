@@ -43,18 +43,6 @@ export function getActiveEditorContent(): string | null {
   return model.getValue();
 }
 
-/**
- * Get the file name of the active editor tab.
- * Returns null if no model is active.
- */
-// eslint-disable-next-line react-refresh/only-export-components
-export function getActiveEditorFileName(): string | null {
-  if (!activeEditorRef) return null;
-  const model = activeEditorRef.getModel();
-  if (!model) return null;
-  return model.uri.path.split('/').pop() ?? null;
-}
-
 export function CodeEditor() {
   const { state, closeTab, setActiveFile, updateProblems } = useApp();
   const [mounted] = useState(true);
