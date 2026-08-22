@@ -21,6 +21,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateShellCommand } from '../security/sandbox.js';
+import { addVerification } from '../observability/traces.js';
 
 export interface RunTestsParams {
   /** Target directory — must be 'server' or 'app'. */
@@ -30,6 +31,23 @@ export interface RunTestsParams {
   coverage?: boolean;
   /** Timeout in ms. Default: 180_000 (3 min — 2x the measured 94s suite). */
   timeoutMs?: number;
+  /**
+   * Phase 6 — optional traceId for authoritative verification recording.
+   *
+   * When provided, runTests() will call Phase 5's `addVerification()` after
+   * the test command exits, recording the REAL captured exit code + parsed
+   * vitest counts (passed/failed/total) as a VerificationRecord on the trace.
+   *
+   * This wiring reuses the EXISTING spawn-based test runner in this file —
+   * no duplicate runner is introduced. The verification status mapping is
+   * deterministic and based solely on the real exit code + parsed success:
+   *   - vitest success === true  AND  exitCode === 0 → status = 'succeeded'
+   *   - otherwise                                  → status = 'failed'
+   *
+   * When `traceId` is omitted, behavior is identical to pre-Phase-6 (no
+   * verification record is created) — backward compatible.
+   */
+  traceId?: string;
 }
 
 export interface RunTestsResult {
@@ -106,29 +124,33 @@ export function runTests(
     const coverage = params.coverage ?? false;
     const timeoutMs = params.timeoutMs ?? 180_000;
 
-    // ── Pre-check 1: validateShellCommand ─────────────────────────────
+    // Pre-check 1: validateShellCommand
     const cmd = buildTestCommand(params.targetDir, coverage);
     const validation = validateShellCommand(cmd);
     if (!validation.allowed) {
-      resolve({
+      const result: RunTestsResult = {
         success: false,
         totalTests: 0, passed: 0, failed: 0, pending: 0,
         rawOutput: '',
         reason: `blocked by validateShellCommand: ${validation.reason}`,
         durationMs: Date.now() - startTime,
-      });
+      };
+      recordTestVerification(params.traceId, params.targetDir, result);
+      resolve(result);
       return;
     }
 
-    // ── Pre-check 2: target must be a real npm project ────────────────
+    // Pre-check 2: target must be a real npm project
     if (!existsSync(join(targetCwd, 'package.json'))) {
-      resolve({
+      const result: RunTestsResult = {
         success: false,
         totalTests: 0, passed: 0, failed: 0, pending: 0,
         rawOutput: '',
         reason: `target directory has no package.json: ${targetCwd}`,
         durationMs: Date.now() - startTime,
-      });
+      };
+      recordTestVerification(params.traceId, params.targetDir, result);
+      resolve(result);
       return;
     }
 
@@ -173,13 +195,15 @@ export function runTests(
       const durationMs = Date.now() - startTime;
 
       if (timedOut) {
-        resolve({
+        const result: RunTestsResult = {
           success: false,
           totalTests: 0, passed: 0, failed: 0, pending: 0,
           rawOutput: stdout,
           reason: `timed out after ${timeoutMs}ms`,
           durationMs,
-        });
+        };
+        recordTestVerification(params.traceId, params.targetDir, result);
+        resolve(result);
         return;
       }
 
@@ -188,13 +212,15 @@ export function runTests(
       if (!parsed) {
         // JSON parse failed — the test runner may have crashed before producing
         // valid output. stderr has the real error.
-        resolve({
+        const result: RunTestsResult = {
           success: false,
           totalTests: 0, passed: 0, failed: 0, pending: 0,
           rawOutput: stdout,
           reason: `failed to parse vitest JSON output: ${stderr.slice(0, 200)}`,
           durationMs,
-        });
+        };
+        recordTestVerification(params.traceId, params.targetDir, result);
+        resolve(result);
         return;
       }
 
@@ -206,7 +232,7 @@ export function runTests(
         coverageSummary = parseCoverageSummary(join(targetCwd, 'coverage', 'coverage-final.json'));
       }
 
-      resolve({
+      const result: RunTestsResult = {
         success: parsed.success && exitCode === 0,
         totalTests: parsed.numTotalTests,
         passed: parsed.numPassedTests,
@@ -215,19 +241,31 @@ export function runTests(
         rawOutput: stdout,
         coverageSummary,
         durationMs,
-      });
+      };
+      // Phase 6: record the real captured exit code + parsed counts as an
+      // authoritative VerificationRecord on the trace (if traceId provided).
+      // Node's typings type exitCode as `number | null`; null only happens on
+      // signal termination which is already handled by the timeout branch above.
+      // VerificationRecord.exitCode is `number | undefined`, so coerce null → undefined.
+      recordTestVerification(params.traceId, params.targetDir, result, exitCode ?? undefined);
+      resolve(result);
     });
 
     // Process failed to spawn (e.g., sh not found)
     child.on('error', (err) => {
       clearTimeout(timer);
-      resolve({
+      const result: RunTestsResult = {
         success: false,
         totalTests: 0, passed: 0, failed: 0, pending: 0,
         rawOutput: '',
         reason: `spawn failed: ${err.message}`,
         durationMs: Date.now() - startTime,
-      });
+      };
+      // Phase 6: spawn failure → failed verification record (exitCode omitted
+      // because no meaningful exit code was captured). This is qualitatively
+      // different from a non-zero exit: the command never ran at all.
+      recordTestVerification(params.traceId, params.targetDir, result);
+      resolve(result);
     });
 
     // Suppress unused-variable warning for `killed`
@@ -367,3 +405,44 @@ export const __test__ = {
   parseVitestJson,
   parseCoverageSummary,
 };
+
+// ── Phase 6 — Verification recording helper ──────────────────────────────
+//
+// Pure adapter: takes an existing RunTestsResult (captured by the spawn
+// runner above) and records it as an authoritative VerificationRecord on the
+// trace via Phase 5's addVerification(). This is NOT a new runner — it does
+// not execute anything. The command was already executed by runTests() above
+// (the existing spawn-based mechanism); this helper just records the result.
+//
+// Status mapping (deterministic, no model prose involved):
+//   - result.success === true  → 'succeeded'  (vitest success AND exit 0)
+//   - result.success === false  → 'failed'      (non-zero exit, parse failure,
+//                                                timeout, spawn error, or
+//                                                pre-check failure)
+//
+// The exitCode parameter is optional — it's only known in the close handler.
+// For pre-check failures and spawn errors, exitCode is omitted (undefined),
+// which matches VerificationRecord.exitCode?: number. The status is still
+// 'failed' because result.success is false in those paths.
+function recordTestVerification(
+  traceId: string | undefined,
+  targetDir: 'server' | 'app',
+  result: RunTestsResult,
+  exitCode?: number,
+): void {
+  if (!traceId) return;  // backward-compatible path — no trace, no record
+
+  const status = result.success ? 'succeeded' : 'failed';
+  const output = result.success
+    ? `Passed: ${result.passed}/${result.totalTests} (target=${targetDir})`
+    : `Failed: ${result.failed}/${result.totalTests} — ${result.reason ?? 'tests failed'} (target=${targetDir})`;
+
+  addVerification(traceId, {
+    name: `tests:${targetDir}`,
+    kind: 'test',
+    status,
+    output: output.slice(0, 500),  // VerificationRecord.output is capped at 500 chars
+    durationMs: result.durationMs,
+    exitCode,
+  });
+}

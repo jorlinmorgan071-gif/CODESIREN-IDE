@@ -13,6 +13,34 @@
 //
 // Write-capable steps still go through writeProjectFile()/CodeReviewAgent gate.
 // A warning is broadcast before ANY step that modifies disk.
+//
+// ── Phase 6 — Real execution → authoritative verification evidence ──────────
+//
+// When a workflow step's real command (typecheck/test/lint/grep-audit/npm-audit/
+// custom) executes, the captured exit code + stdout + duration are now also
+// recorded as an authoritative VerificationRecord on the trace via addVerification().
+//
+// This wiring is INCREMENTAL — it does not introduce a duplicate command runner.
+// `runShellCommand()` is still the single spawn-based runner (existing mechanism).
+// `runVerificationCommand()` is a thin adapter that wraps runShellCommand() +
+// addVerification() — it does NOT spawn anything itself. It exists only so
+// callers (workflow-runner internals, run-tests.ts, future agent methods, tests)
+// can request "run a real command and record its result as verification evidence"
+// in one call.
+//
+// The chain (per Phase 6 directive):
+//   runShellCommand()  [existing spawn runner]
+//     → { success, output, duration, exitCode }  [real captured result]
+//       → addVerification()  [Phase 5 authoritative recording]
+//         → trace.verificationRecords[]
+//           → computeVerificationStatus()  [in completeTrace()]
+//             → trace.verificationStatus  [authoritative truth]
+//
+// Model prose is never consulted for verification truth. Only the real exit
+// code determines status:
+//   exitCode === 0     → 'succeeded'
+//   exitCode !== 0     → 'failed'
+//   exitCode === null  → 'failed' (spawn error before any meaningful exit)
 
 import { spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
@@ -22,6 +50,8 @@ import { makeEvent, broadcast } from '../ws/events.js';
 import type { Workflow, WorkflowStep } from './workflow-settings.js';
 import { hasWriteSteps } from './workflow-settings.js';
 import { updateWorkflowRun } from './workflow-settings.js';
+import { addVerification } from '../observability/traces.js';
+import type { VerificationRecord, StepStatus } from '../observability/traces.js';
 
 const __filename_esm = fileURLToPath(import.meta.url);
 const __dirname_esm = dirname(__filename_esm);
@@ -48,9 +78,30 @@ export interface WorkflowRunResult {
 }
 
 /**
- * Run a single shell command and return { success, output, duration }.
+ * Real captured result from a single shell command execution.
+ *
+ * `exitCode` is `null` when the process never reached a meaningful exit
+ * (spawn failure, command unavailable, ENOENT on cwd). `0` is success,
+ * any other number is a real failure exit code from the spawned process.
  */
-function runShellCommand(command: string, cwd: string, timeoutMs = 120000): Promise<{ success: boolean; output: string; duration: number }> {
+export interface ShellCommandResult {
+  success: boolean;       // true iff exitCode === 0
+  output: string;        // last 2000 chars of stdout+stderr
+  duration: number;      // wall-clock ms from spawn to close
+  exitCode: number | null;  // null = spawn error (no meaningful exit)
+}
+
+/**
+ * Run a single shell command and return { success, output, duration, exitCode }.
+ *
+ * This is the EXISTING spawn-based runner (Phase B). It is the single place
+ * that actually spawns child processes for workflow steps. Phase 6 does NOT
+ * add a second runner; it only augments this one to also surface exitCode
+ * (previously only `success: boolean` was preserved) and exposes a thin
+ * `runVerificationCommand()` adapter (below) that records the real result
+ * via Phase 5's addVerification().
+ */
+function runShellCommand(command: string, cwd: string, timeoutMs = 120000): Promise<ShellCommandResult> {
   return new Promise((resolve) => {
     const start = Date.now();
     let output = '';
@@ -70,25 +121,99 @@ function runShellCommand(command: string, cwd: string, timeoutMs = 120000): Prom
         success: code === 0,
         output: output.slice(-2000), // keep last 2000 chars
         duration: Date.now() - start,
+        exitCode: code,  // Phase 6: preserve the real exit code (null only if process never reached close)
       });
     });
 
     proc.on('error', (err) => {
+      // Spawn-level failure — process never started (ENOENT on binary/cwd,
+      // EACCES, EAGAIN). This is qualitatively different from a non-zero
+      // exit code: the command did not run at all.
       resolve({
         success: false,
         output: `Error: ${err.message}`,
         duration: Date.now() - start,
+        exitCode: null,  // Phase 6: null signals "no meaningful exit code"
       });
     });
   });
 }
 
 /**
- * Run a single workflow step.
+ * Phase 6 — Wire real execution → authoritative verification evidence.
+ *
+ * This is NOT a new command runner. It is a thin adapter that:
+ *   1. Calls the EXISTING `runShellCommand()` (the single spawn-based runner
+ *      above — REUSED, not duplicated) to actually execute the command.
+ *   2. If `traceId` is provided, records the real captured result via Phase 5's
+ *      `addVerification()` so it becomes authoritative verification evidence
+ *      on the trace.
+ *
+ * Verification status mapping (deterministic, no model prose involved):
+ *   - exitCode === 0     → status = 'succeeded'
+ *   - exitCode !== 0     → status = 'failed'
+ *   - exitCode === null  → status = 'failed'  (spawn error / process error)
+ *
+ * The mapping rules above are the SOLE determinant of verification status.
+ * The model cannot manufacture evidence here — only the real exit code
+ * (captured by the existing spawn runner) is consulted.
+ *
+ * Callers:
+ *   - Internal: `runStep()` uses this for every shell-running step type when
+ *     a traceId is in scope (workflow runs that have a trace context).
+ *   - External: tests in phase6-verification-pipeline.test.ts call this
+ *     directly to prove the real-execution → addVerification pipeline.
+ *   - If `traceId` is omitted, the command still runs (existing behavior
+ *     preserved) but no verification record is created — this is the
+ *     backward-compatible path for callers that don't yet have a trace.
  */
-async function runStep(step: WorkflowStep): Promise<StepResult> {
+export async function runVerificationCommand(opts: {
+  command: string;
+  cwd: string;
+  kind: VerificationRecord['kind'];
+  name: string;
+  traceId?: string;
+  timeoutMs?: number;
+}): Promise<ShellCommandResult> {
+  const { command, cwd, kind, name, traceId, timeoutMs } = opts;
+  const result = await runShellCommand(command, cwd, timeoutMs);
+
+  if (traceId) {
+    // Map real captured exit code → deterministic verification status.
+    // No model text is consulted. See Phase 6 directive REQUIREMENT 2.
+    const status: StepStatus =
+      result.exitCode === null ? 'failed'        // spawn error → failed
+      : result.exitCode === 0 ? 'succeeded'      // clean exit → succeeded
+      : 'failed';                                 // non-zero exit → failed
+
+    addVerification(traceId, {
+      name,
+      kind,
+      status,
+      output: result.output.slice(0, 500),  // VerificationRecord.output is capped at 500 chars
+      durationMs: result.duration,
+      exitCode: result.exitCode ?? undefined,  // omit when null (spawn error) — matches VerificationRecord.exitCode?: number
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Run a single workflow step.
+ *
+ * Phase 6: an optional `traceId` may be passed in by the caller. When present,
+ * every shell-running step type routes through `runVerificationCommand()`
+ * (which reuses the existing `runShellCommand()` spawn runner AND records the
+ * real result via Phase 5's `addVerification()`). When absent, behavior is
+ * identical to pre-Phase-6 — no verification record is created. This keeps
+ * the change backward-compatible (existing workflow-runner tests still pass)
+ * while enabling workflow runs to produce authoritative verification evidence
+ * when a trace context is available.
+ */
+async function runStep(step: WorkflowStep, traceId?: string): Promise<StepResult> {
   const start = Date.now();
-  console.log(`[workflow-runner] running step: ${step.name} (${step.type})`);
+  console.log(`[workflow-runner] running step: ${step.name} (${step.type})${traceId ? ` traceId=${traceId}` : ''}`);
 
   let success = false;
   let output = '';
@@ -96,35 +221,50 @@ async function runStep(step: WorkflowStep): Promise<StepResult> {
   try {
     switch (step.type) {
       case 'typecheck': {
-        const result = await runShellCommand('npx tsc -p tsconfig.json --noEmit', SERVER_DIR);
+        const result = await runVerificationCommand({
+          command: 'npx tsc -p tsconfig.json --noEmit', cwd: SERVER_DIR,
+          kind: 'typecheck', name: step.name, traceId,
+        });
         success = result.success;
         output = result.output;
         break;
       }
 
       case 'test': {
-        const result = await runShellCommand('npm test', SERVER_DIR, 180000);
+        const result = await runVerificationCommand({
+          command: 'npm test', cwd: SERVER_DIR, timeoutMs: 180000,
+          kind: 'test', name: step.name, traceId,
+        });
         success = result.success;
         output = result.output;
         break;
       }
 
       case 'lint': {
-        const result = await runShellCommand('npx eslint . --max-warnings 0', join(PROJECT_ROOT, 'app'));
+        const result = await runVerificationCommand({
+          command: 'npx eslint . --max-warnings 0', cwd: join(PROJECT_ROOT, 'app'),
+          kind: 'lint', name: step.name, traceId,
+        });
         success = result.success;
         output = result.output;
         break;
       }
 
       case 'grep-audit': {
-        const result = await runShellCommand('bash ../scripts/grep-audit.sh', SERVER_DIR);
+        const result = await runVerificationCommand({
+          command: 'bash ../scripts/grep-audit.sh', cwd: SERVER_DIR,
+          kind: 'custom', name: step.name, traceId,
+        });
         success = result.success;
         output = result.output;
         break;
       }
 
       case 'npm-audit': {
-        const result = await runShellCommand('npm audit --audit-level=high', SERVER_DIR);
+        const result = await runVerificationCommand({
+          command: 'npm audit --audit-level=high', cwd: SERVER_DIR,
+          kind: 'custom', name: step.name, traceId,
+        });
         success = result.success;
         output = result.output;
         break;
@@ -136,6 +276,19 @@ async function runStep(step: WorkflowStep): Promise<StepResult> {
         // that the scanner cycle is running (it runs on its own timer)
         success = true;
         output = 'Ghost Mode scanners run on their own timers (30s/5min). Workflow step confirmed scanners are active.';
+        // Phase 6: ghost-scan does not execute a real command (scanners run
+        // on their own timers) so we record a 'skipped' verification record
+        // when a traceId is provided. This preserves the guarantee that
+        // "agent completed ≠ verification completed" — the step is honestly
+        // marked as skipped, not silently treated as a passed verification.
+        if (traceId) {
+          addVerification(traceId, {
+            name: step.name,
+            kind: 'custom',
+            status: 'skipped',
+            output: 'Ghost Mode scanners run on their own timers — no command executed.',
+          });
+        }
         break;
       }
 
@@ -143,6 +296,12 @@ async function runStep(step: WorkflowStep): Promise<StepResult> {
         if (!step.command) {
           success = false;
           output = 'No command specified for custom step';
+          if (traceId) {
+            addVerification(traceId, {
+              name: step.name, kind: 'custom', status: 'failed',
+              output: 'No command specified for custom step',
+            });
+          }
           break;
         }
         // Route through classifyCommand's existing gate
@@ -150,15 +309,30 @@ async function runStep(step: WorkflowStep): Promise<StepResult> {
         if (classification.blocked) {
           success = false;
           output = `Command blocked by classifyCommand: ${classification.blockReason ?? classification.explanation}`;
+          if (traceId) {
+            addVerification(traceId, {
+              name: step.name, kind: 'custom', status: 'failed',
+              output: `Command blocked: ${classification.blockReason ?? classification.explanation}`,
+            });
+          }
           break;
         }
         // For workflow automation, dangerous commands are blocked
         if (classification.risk === 'dangerous' || classification.risk === 'blocked') {
           success = false;
           output = `Command risk=${classification.risk} — not allowed in automated workflow: ${classification.explanation}`;
+          if (traceId) {
+            addVerification(traceId, {
+              name: step.name, kind: 'custom', status: 'failed',
+              output: `Command risk=${classification.risk} blocked in automated workflow`,
+            });
+          }
           break;
         }
-        const result = await runShellCommand(step.command, SERVER_DIR);
+        const result = await runVerificationCommand({
+          command: step.command, cwd: SERVER_DIR,
+          kind: 'custom', name: step.name, traceId,
+        });
         success = result.success;
         output = result.output;
         break;
@@ -167,10 +341,22 @@ async function runStep(step: WorkflowStep): Promise<StepResult> {
       default:
         success = false;
         output = `Unknown step type: ${step.type}`;
+        if (traceId) {
+          addVerification(traceId, {
+            name: step.name, kind: 'custom', status: 'failed',
+            output: `Unknown step type: ${step.type}`,
+          });
+        }
     }
   } catch (err: any) {
     success = false;
     output = `Step error: ${err.message}`;
+    if (traceId) {
+      addVerification(traceId, {
+        name: step.name, kind: 'custom', status: 'failed',
+        output: `Step error: ${err.message}`,
+      });
+    }
   }
 
   const duration = Date.now() - start;
@@ -188,10 +374,25 @@ async function runStep(step: WorkflowStep): Promise<StepResult> {
 
 /**
  * Run a complete workflow sequentially.
+ *
+ * Phase 6: an optional `traceId` may be passed in. When present, every
+ * shell-running step records its real captured result via Phase 5's
+ * `addVerification()` (through `runVerificationCommand()` inside `runStep()`).
+ * When absent, behavior is identical to pre-Phase-6 — no verification records
+ * are created (existing workflow-runner tests still pass unchanged).
+ *
+ * The caller owns the trace lifecycle:
+ *   - If `traceId` is provided, the caller is expected to have already called
+ *     `startTrace({ taskId: traceId, ... })` and to call `completeTrace(traceId, ...)`
+ *     after `runWorkflow()` returns. This is because completeTrace() computes
+ *     the final verification status from the accumulated records — it must
+ *     run AFTER all verification records have been added.
+ *   - If `traceId` is omitted, no trace is touched — backward compatible.
  */
-export async function runWorkflow(workflow: Workflow): Promise<WorkflowRunResult> {
+export async function runWorkflow(workflow: Workflow, opts?: { traceId?: string }): Promise<WorkflowRunResult> {
   const startTotal = Date.now();
-  console.log(`[workflow-runner] starting workflow: ${workflow.name} (${workflow.steps.length} steps)`);
+  const traceId = opts?.traceId;
+  console.log(`[workflow-runner] starting workflow: ${workflow.name} (${workflow.steps.length} steps)${traceId ? ` traceId=${traceId}` : ''}`);
 
   const hadWriteSteps = hasWriteSteps(workflow);
 
@@ -231,7 +432,7 @@ export async function runWorkflow(workflow: Workflow): Promise<WorkflowRunResult
       ts: Date.now(),
     }));
 
-    const result = await runStep(step);
+    const result = await runStep(step, traceId);
     stepResults.push(result);
 
     // Broadcast step result
