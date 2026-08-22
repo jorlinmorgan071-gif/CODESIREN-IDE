@@ -16,6 +16,7 @@ import { api } from '@/lib/api';
 import type { AgentEvent } from '@/types';
 import { ChatBubble, type ChatMessage, type BubbleStyle } from './elements/ChatBubble';
 import { ChatInput } from './elements/ChatInput';
+import { getActiveEditorContent } from '@/components/editor/CodeEditor';
 import { RotatingLoader } from '@/components/ui/loaders';
 import { NotificationContainer, type NotificationItem } from '@/components/ui/notification-alert';
 import { ChatBackgroundSettings, type ChatBackground } from './ChatBackgroundSettings';
@@ -173,14 +174,20 @@ export function ChatPanel() {
     // by the relay execution loop, not by casual chat.
     try {
       if (sessionId) {
-        // Send workspace context: active file path + open tab file names.
-        // The backend uses this to assemble real context via ContextManager.
+        // Phase 2: Send real workspace context to the backend.
+        // workspaceRoot is resolved from VITE_WORKSPACE_ROOT env var —
+        // no hardcoded paths. The live editor content (including unsaved
+        // edits) is captured from Monaco's in-memory model via
+        // getActiveEditorContent(). This ensures the agent receives
+        // the current buffer, not a stale disk read.
         const activeTab = state.editorTabs.find(t => t.isActive);
         const openFiles = state.editorTabs.map(t => t.fileName);
+        const liveContent = getActiveEditorContent();
         await api.orchestratorChat(sessionId, text, {
-          workspaceRoot: '/home/z/my-project',  // Phase 2: real workspace root
+          workspaceRoot: import.meta.env.VITE_WORKSPACE_ROOT || undefined,
           activeFile: activeTab?.fileName,
           openFiles: openFiles.length > 0 ? openFiles : undefined,
+          activeFileContent: liveContent ?? undefined,
         });
       }
     } catch (err) {

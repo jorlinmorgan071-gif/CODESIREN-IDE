@@ -36,6 +36,7 @@ const chatContextSchema = z.object({
   workspaceRoot: z.string().optional(),
   activeFile: z.string().optional(),
   openFiles: z.array(z.string()).optional(),
+  activeFileContent: z.string().optional(),
 }).optional();
 
 const chatSchema = z.object({

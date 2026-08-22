@@ -134,6 +134,7 @@ export const api = {
     workspaceRoot?: string;
     activeFile?: string;
     openFiles?: string[];
+    activeFileContent?: string;
   }): Promise<{
     taskId: string;
     sessionId: string;

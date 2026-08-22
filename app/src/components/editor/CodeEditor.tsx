@@ -22,6 +22,39 @@ let aiCompletionToken = 0;
 let aiCompletionTimer: ReturnType<typeof setTimeout> | null = null;
 let aiCompletionAbort: AbortController | null = null;
 
+// ── Phase 2: Live editor content access ────────────────────────────────
+// Module-scoped ref to the active Monaco editor instance. This lets
+// ChatPanel read the current in-memory buffer (including unsaved edits)
+// without needing a direct ref into CodeEditor.
+// The ref is set in handleEditorMount and cleared on unmount.
+let activeEditorRef: MonacoType.editor.IStandaloneCodeEditor | null = null;
+
+/**
+ * Get the live (unsaved) content of the active editor model.
+ * Returns null if no editor is mounted or no model is active.
+ * This is the in-memory buffer — it includes unsaved user edits
+ * that haven't been written to disk yet.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function getActiveEditorContent(): string | null {
+  if (!activeEditorRef) return null;
+  const model = activeEditorRef.getModel();
+  if (!model) return null;
+  return model.getValue();
+}
+
+/**
+ * Get the file name of the active editor tab.
+ * Returns null if no model is active.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function getActiveEditorFileName(): string | null {
+  if (!activeEditorRef) return null;
+  const model = activeEditorRef.getModel();
+  if (!model) return null;
+  return model.uri.path.split('/').pop() ?? null;
+}
+
 export function CodeEditor() {
   const { state, closeTab, setActiveFile, updateProblems } = useApp();
   const [mounted] = useState(true);
@@ -55,6 +88,7 @@ export function CodeEditor() {
     (_editor: MonacoType.editor.IStandaloneCodeEditor, monaco: typeof MonacoType) => {
       editorRef.current = _editor;
       monacoRef.current = monaco;
+      activeEditorRef = _editor;  // Phase 2: expose for getActiveEditorContent()
 
       // ── Custom dark theme (unchanged from prior phases) ──────────────
       monaco.editor.defineTheme('zero-two-dark', {
@@ -492,6 +526,7 @@ export function CodeEditor() {
         window.removeEventListener('code-siren:request-selection', requestSelectionHandler);
         window.removeEventListener('code-siren:request-selection-for-edit', requestSelectionForEditHandler);
         window.removeEventListener('code-siren:apply-edit', applyEditHandler);
+        activeEditorRef = null;  // Phase 2: clear on dispose
       });
 
       // ── Phase A Step 3: Multi-file model sync (initial pass) ────────

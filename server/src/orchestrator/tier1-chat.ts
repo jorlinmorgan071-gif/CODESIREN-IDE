@@ -192,6 +192,7 @@ interface WorkspaceContext {
   workspaceRoot?: string;
   activeFile?: string;
   openFiles?: string[];
+  activeFileContent?: string;  // Phase 2: live editor buffer (includes unsaved edits)
 }
 
 export async function runChatViaAgentManager(
@@ -224,16 +225,28 @@ export async function runChatViaAgentManager(
     console.warn(`[orchestrator:chat] no workspaceRoot in context — using placeholder ${rootPath} (task ${taskId})`);
   }
 
-  // 3. Build task description — include conversation history for context
-  //    so the single-shot strategy can include it in the model call.
-  //    (The strategy builds: [system, user] — only one user message.
-  //     We embed prior turns in the user message so the model sees context.)
-  const conversationContext = recentHistory.length > 1
+  // 3. Build task description — include conversation history + live editor
+  //    content for context. The single-shot strategy builds: [system, user]
+  //    — only one user message. We embed prior turns AND the live editor
+  //    buffer (including unsaved edits) in the user message so the model
+  //    sees the actual current editor state, not a stale disk read.
+  let conversationContext = recentHistory.length > 1
     ? recentHistory.slice(0, -1)
         .map(m => `${m.role.toUpperCase()}: ${m.content}`)
         .join('\n\n')
       + '\n\nCurrent request:\n' + userMessage
     : userMessage;
+
+  // Phase 2: Inject live editor content (including unsaved edits) into
+  // the task description. This ensures the model sees the actual buffer,
+  // not whatever ContextManager reads from disk (which may be stale or
+  // nonexistent if the file hasn't been saved).
+  if (workspaceContext?.activeFileContent && workspaceContext?.activeFile) {
+    const contentPreview = workspaceContext.activeFileContent.length > 2000
+      ? workspaceContext.activeFileContent.slice(0, 2000) + '\n...(truncated, showing first 2000 chars)'
+      : workspaceContext.activeFileContent;
+    conversationContext = `--- LIVE EDITOR CONTENT (may include unsaved edits) ---\nFile: ${workspaceContext.activeFile}\n\n${contentPreview}\n--- END LIVE EDITOR CONTENT ---\n\n${conversationContext}`;
+  }
 
   // 3. Create an authoritative AgentTask with real workspace identity
   const task: AgentTask = {
