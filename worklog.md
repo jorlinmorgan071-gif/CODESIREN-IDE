@@ -946,3 +946,59 @@ Stage Summary:
   The Phase C Final audit's per-area verdicts (✅ across all 15 areas)
   remain valid — the test count error was a counting mistake, not a
   regression or missing functionality.
+
+---
+Task ID: phase6-real-verification-evidence
+Agent: main (super-z)
+Task: Phase 6 — Wire real execution into authoritative verification evidence. When Code Siren actually runs a test/build/typecheck/lint command via existing spawn-based runners, the resulting exit code + stdout + duration must automatically become an authoritative VerificationRecord on the trace (via Phase 5's addVerification mechanism). No new runner; no model prose authority; preserve all Phase 5 guarantees.
+
+Work Log:
+- Read prior worklog tail (Phase A §3 built runTests() via spawn; Phase 5 added addVerification() to traces.ts but ZERO production callers).
+- Verified Phase 5 baseline: dc7e8bb "fix(phase5): correct TEST D and TEST J" — 13 execution-truth tests pass.
+- Recon via Explore subagent (cddec39a): identified 11 existing execution mechanisms. Best candidates: runShellCommand() in workflow-runner.ts:53 (spawn-based, generic, already maps typecheck/test/lint/grep-audit/npm-audit/custom step types) and runTests() in run-tests.ts:99 (vitest spawn runner with parsed JSON).
+- Audit: 0 production callers of addVerification() before Phase 6. Only test callers (4 in execution-truth.test.ts). Phase 5 left the verification pipeline "wired but unplugged" — Phase 6 plugs it in.
+- Implementation (3 files changed, 823 insertions, 27 deletions):
+  1. workflow-runner.ts: Modified runShellCommand() to also return exitCode: number | null (was only success: boolean). Added new exported runVerificationCommand() adapter (NOT a new runner — calls existing runShellCommand() internally, then records real result via addVerification() when traceId provided). Threaded optional traceId through runStep() and runWorkflow(). Every step type (typecheck/test/lint/grep-audit/npm-audit/custom) now records real captured exit code as authoritative VerificationRecord. ghost-scan records 'skipped' (no real command runs — scanners on own timers). Blocked custom commands record 'failed'.
+  2. run-tests.ts: Added optional traceId?: string to RunTestsParams. Added private recordTestVerification() adapter (pure — does not execute anything, only maps existing RunTestsResult to addVerification() call). Called from all 5 result paths (pre-check fail, missing package.json, timeout, parse failure, success, spawn error) so every real test execution outcome is recorded.
+  3. phase6-verification-pipeline.test.ts (NEW): 9 tests. TEST A (real success exit 0), TEST B (real fail exit 1), TEST C (spawn error via nonexistent cwd), TEST D (no verification = unverified), TEST E (multiple records preserved independently), TEST F (failed verification cannot be green), TEST G (model prose "tests passed" stays unverified), TEST H (lifecycle 1 start/1 complete/0 orchestrator + records don't leak across traces), plus runTests integration with synthetic minimal project.
+
+Verification status mapping (deterministic, no model prose):
+- exitCode === 0    -> 'succeeded'
+- exitCode !== 0    -> 'failed'
+- exitCode === null -> 'failed' (spawn error)
+- No verification    -> 'unverified' (preserved from Phase 5)
+
+Tests:
+- Phase 6 tests: 9/9 PASS (2.3s)
+- Phase 5 tests: 13/13 PASS (4.2s)
+- Directive-required regression (9 files: execution-truth, phase6-verification-pipeline, agent-manager, context/budget, context/manager, context/project-graph, explain-endpoint, refactor-endpoint, traces, workflow-runner): 111/111 PASS (38.7s)
+- Full server unit suite (excluding 2 known-slow CI-excluded files): 482/486 PASS, 4 FAIL in playwright-client.test.ts (PRE-EXISTING sandbox-only issue: Chromium headless shell not installed — documented in prior worklog entries; CI installs via `npx playwright install chromium --with-deps`). NOT a Phase 6 regression.
+- TypeScript: server tsc --noEmit clean; app tsc -b clean.
+- ESLint: app eslint . clean (server has no eslint config — uses TS strict + grep-audit).
+- grep-audit: PASS (no naturalization violations).
+
+Repository audit (REQUIREMENT 11):
+- Production addVerification() callers: 8 calls total
+  - workflow-runner.ts:189 (runVerificationCommand — primary adapter, called for every shell step)
+  - workflow-runner.ts:285 (ghost-scan skipped record)
+  - workflow-runner.ts:300 (custom no-command failed record)
+  - workflow-runner.ts:313 (custom blocked-command failed record)
+  - workflow-runner.ts:325 (custom dangerous-command failed record)
+  - workflow-runner.ts:345 (unknown step type failed record)
+  - workflow-runner.ts:355 (step exception failed record)
+  - run-tests.ts:440 (recordTestVerification — called from all 5 result paths)
+  ALL callers originate from actual execution evidence (real spawn exit codes / parsed vitest JSON). NONE read model prose.
+- Test callers: 4 in execution-truth.test.ts (Phase 5 tests — acceptable, tests can call addVerification directly to construct test fixtures).
+- Duplicate runner check: NO duplicate verification runner introduced. Phase 6 REUSED:
+  - runShellCommand() (workflow-runner.ts:104) — existing spawn runner, augmented only with exitCode in return shape
+  - runTests() (run-tests.ts:99) — existing vitest spawn runner, augmented only with optional traceId
+  The new runVerificationCommand() is NOT a runner — it calls runShellCommand() internally, never spawns anything itself. It is a thin recording adapter, exactly as the directive allows ("When an existing verification operation completes, create an authoritative verification record through the existing Phase 5 mechanism").
+
+Commit: 4ee5f46 (local only — git push failed because /home/z/my-project/.github-token was wiped by sandbox reset; same persistent issue documented under "github-credential-permanence-v2" in worklog).
+
+Stage Summary:
+- Phase 6 wiring complete: real spawn exit codes from existing runShellCommand() and runTests() now flow through addVerification() into trace.verificationRecords[], then computeVerificationStatus() (in completeTrace) computes the authoritative verificationStatus.
+- Model prose remains completely irrelevant to verification truth. TEST G proves this: agent output saying "tests passed" still produces verificationStatus = 'unverified' when no real command ran.
+- Phase 5 guarantees preserved: outcome (execution truth) and verificationStatus (verification truth) remain independent. Failed verification cannot become green (TEST F). Unverified cannot become passed (TEST D). Completed execution does not imply verified execution (TEST D).
+- No duplicate architecture. No new runner. No new orchestration. No protected systems modified. Out-of-scope items (streamTier1Chat cleanup, context timeout, UI displays, voice/relay, workspace selector, editor sync) NOT touched.
+- Git push deferred until token is restored. User action: provide GitHub PAT, re-run `bash /home/z/my-project/setup-git.sh`, then `git push`.
