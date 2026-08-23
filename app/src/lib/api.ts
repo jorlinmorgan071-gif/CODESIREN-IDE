@@ -131,7 +131,6 @@ export const api = {
   // Tier 1 chat — fire-and-forget; the response streams back over WS as
   // orchestrator:chunk events with the same shape as agent:chunk.
   orchestratorChat(sessionId: string, message: string, context?: {
-    workspaceRoot?: string;
     activeFile?: string;
     openFiles?: string[];
     activeFileContent?: string;
@@ -145,13 +144,18 @@ export const api = {
   }): Promise<{
     taskId: string;
     sessionId: string;
+    projectId: string;
     status: string;
-    stream: string;
   }> {
     return request('/orchestrator/chat', {
       method: 'POST',
       body: JSON.stringify({ sessionId, message, context }),
     });
+  },
+
+  currentWorkspace(projectId?: string): Promise<{ projectId: string; name: string }> {
+    const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+    return request(`/workspace/current${suffix}`);
   },
 
   // Generate a build plan from the session's chat history.

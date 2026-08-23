@@ -28,6 +28,7 @@ import { getPlan, listPlansByProject, listMilestoneLogs, updatePlan } from '../o
 import { runChatViaAgentManager } from '../orchestrator/tier1-chat.js';
 import { modelRouter } from '../orchestration/model-router.js';
 import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
+import { WorkspaceAccessError, resolveWorkspace } from '../workspace/service.js';
 
 export const orchestratorRouter = Router();
 
@@ -64,7 +65,6 @@ async function getOwnedPlan(req: any, res: any, planId: string, requestedProject
 // ── POST /api/orchestrator/chat ──────────────────────────────────────────
 
 const chatContextSchema = z.object({
-  workspaceRoot: z.string().optional(),
   activeFile: z.string().optional(),
   openFiles: z.array(z.string()).optional(),
   activeFileContent: z.string().optional(),
@@ -90,11 +90,11 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
     return;
   }
-  let scope;
+  let workspace;
   try {
-    scope = await resolveTenantScope(req.user!.id, parsed.data.projectId);
+    workspace = await resolveWorkspace(req.user!.id, parsed.data.projectId);
   } catch (error) {
-    if (error instanceof ProjectAccessError) {
+    if (error instanceof ProjectAccessError || error instanceof WorkspaceAccessError) {
       res.status(403).json({ error: 'Project access denied' });
       return;
     }
@@ -111,15 +111,16 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
     parsed.data.sessionId,
     parsed.data.message,
     taskId,
-    scope,
+    workspace,
     parsed.data.context,
+    workspace,
   ).catch((err) => {
     console.error('[orchestrator:chat] task failed:', err);
   });
   res.status(202).json({
     taskId,
     sessionId: parsed.data.sessionId,
-    projectId: scope.projectId,
+    projectId: workspace.projectId,
     status: 'accepted',
   });
 });

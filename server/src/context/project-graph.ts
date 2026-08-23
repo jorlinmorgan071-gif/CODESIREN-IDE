@@ -30,6 +30,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve, relative, extname } from 'node:path';
 import type { ProjectGraphNode } from './types.js';
+import { resolveContainedWorkspacePath } from '../workspace/service.js';
 
 /**
  * The result of scanning one file for imports.
@@ -127,7 +128,12 @@ export function resolveImport(
 
   // Relative specifier — resolve against the importing file's directory
   const importingDir = dirname(importingFilePath);
-  const resolvedBase = resolve(projectRoot, importingDir, spec);
+  let resolvedBase: string;
+  try {
+    resolvedBase = resolveContainedWorkspacePath(projectRoot, join(importingDir, spec));
+  } catch {
+    return spec;
+  }
   const projectRelativeBase = relative(projectRoot, resolvedBase);
 
   // Try common TS/JS extensions + index files
@@ -135,14 +141,24 @@ export function resolveImport(
   for (const ext of extensions) {
     const candidate = `${resolvedBase}${ext}`;
     if (existsSync(candidate)) {
-      return relative(projectRoot, candidate);
+      try {
+        const canonicalCandidate = resolveContainedWorkspacePath(projectRoot, relative(projectRoot, candidate), { mustExist: true });
+        return relative(projectRoot, canonicalCandidate);
+      } catch {
+        return spec;
+      }
     }
   }
   // Try /index.{ext} (directory imports)
   for (const ext of extensions) {
     const candidate = join(resolvedBase, `index${ext}`);
     if (existsSync(candidate)) {
-      return relative(projectRoot, candidate);
+      try {
+        const canonicalCandidate = resolveContainedWorkspacePath(projectRoot, relative(projectRoot, candidate), { mustExist: true });
+        return relative(projectRoot, canonicalCandidate);
+      } catch {
+        return spec;
+      }
     }
   }
 
@@ -159,7 +175,15 @@ export function scanFile(
   filePath: string,
   projectRoot: string,
 ): ScanResult {
-  const fullPath = resolve(projectRoot, filePath);
+  let fullPath: string;
+  try {
+    fullPath = resolveContainedWorkspacePath(projectRoot, filePath, { mustExist: true });
+  } catch (error: any) {
+    if (error?.message === 'Workspace file does not exist') {
+      return { file: filePath, imports: [], error: `file not found: ${filePath}` };
+    }
+    return { file: filePath, imports: [], error: 'workspace path rejected' };
+  }
 
   if (!existsSync(fullPath)) {
     return {

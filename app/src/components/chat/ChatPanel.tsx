@@ -174,10 +174,9 @@ export function ChatPanel() {
     // by the relay execution loop, not by casual chat.
     try {
       if (sessionId) {
-        // Phase 2: Send real workspace context to the backend.
-        // workspaceRoot is resolved from VITE_WORKSPACE_ROOT env var —
-        // no hardcoded paths. The live editor content (including unsaved
-        // edits) is captured from Monaco's in-memory model via
+        // Send editor-relative context only. The server resolves the selected
+        // workspace root from the authenticated project identity. The live
+        // editor content (including unsaved edits) is captured via
         // getActiveEditorContent(). This ensures the agent receives
         // the current buffer, not a stale disk read.
         const activeTab = state.editorTabs.find(t => t.isActive);
@@ -185,7 +184,6 @@ export function ChatPanel() {
         const liveContent = getActiveEditorContent();
         const selection = getActiveEditorSelection();
         await api.orchestratorChat(sessionId, text, {
-          workspaceRoot: import.meta.env.VITE_WORKSPACE_ROOT || undefined,
           activeFile: activeTab?.fileName,
           openFiles: openFiles.length > 0 ? openFiles : undefined,
           activeFileContent: liveContent ?? undefined,

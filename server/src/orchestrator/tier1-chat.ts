@@ -20,6 +20,7 @@ import type { OrchestratorMessage } from './engine.js';
 import { agentManager } from '../orchestration/agent-manager.js';
 import type { AgentTask, ExecutionMode, TaskPriority, TaskType } from '../types.js';
 import type { TenantScope } from '../tenancy/scope.js';
+import { sanitizeWorkspacePaths, workspaceRelativePath, type WorkspaceIdentity } from '../workspace/service.js';
 
 // Session-scoped history for Tier 1 chat. We keep this in-memory because
 // the directive says Tier 1 is "99% of the time" — storing every casual
@@ -31,15 +32,25 @@ interface SessionHistory {
 }
 const sessionHistories = new Map<string, SessionHistory>();
 
-export function getSessionHistory(sessionId: string): OrchestratorMessage[] {
-  return sessionHistories.get(sessionId)?.messages ?? [];
+function scopedSessionKey(sessionId: string, scope?: TenantScope): string {
+  return scope ? `${scope.userId}:${scope.projectId}:${sessionId}` : sessionId;
 }
 
-export function appendSessionMessage(sessionId: string, msg: OrchestratorMessage): void {
-  let hist = sessionHistories.get(sessionId);
+export function getSessionHistory(sessionId: string, scope?: TenantScope): OrchestratorMessage[] {
+  if (scope) return sessionHistories.get(scopedSessionKey(sessionId, scope))?.messages ?? [];
+  // HTTP callers always pass scope. This fallback exists only for historical
+  // in-process test helpers that inspect one isolated legacy session.
+  const suffix = `:${sessionId}`;
+  const matches = [...sessionHistories.entries()].filter(([key]) => key.endsWith(suffix));
+  return matches.length === 1 ? matches[0][1].messages : [];
+}
+
+export function appendSessionMessage(sessionId: string, msg: OrchestratorMessage, scope?: TenantScope): void {
+  const key = scopedSessionKey(sessionId, scope);
+  let hist = sessionHistories.get(key);
   if (!hist) {
     hist = { messages: [] };
-    sessionHistories.set(sessionId, hist);
+    sessionHistories.set(key, hist);
   }
   hist.messages.push(msg);
   // Cap history at 50 turns to avoid unbounded growth
@@ -48,8 +59,15 @@ export function appendSessionMessage(sessionId: string, msg: OrchestratorMessage
   }
 }
 
-export function clearSessionHistory(sessionId: string): void {
-  sessionHistories.delete(sessionId);
+export function clearSessionHistory(sessionId: string, scope?: TenantScope): void {
+  if (scope) {
+    sessionHistories.delete(scopedSessionKey(sessionId, scope));
+    return;
+  }
+  const suffix = `:${sessionId}`;
+  for (const key of sessionHistories.keys()) {
+    if (key === sessionId || key.endsWith(suffix)) sessionHistories.delete(key);
+  }
 }
 
 // ── Stream a Tier 1 chat completion ──────────────────────────────────────
@@ -81,9 +99,9 @@ export async function streamTier1Chat(
   }
 
   // Append user message to history
-  appendSessionMessage(sessionId, { role: 'user', content: userMessage });
+  appendSessionMessage(sessionId, { role: 'user', content: userMessage }, scope);
 
-  const history = getSessionHistory(sessionId);
+  const history = getSessionHistory(sessionId, scope);
   const messages: OrchestratorMessage[] = [
     { role: 'system', content: TIER1_SYSTEM_PROMPT },
     ...history,
@@ -137,7 +155,7 @@ export async function streamTier1Chat(
         const data = trimmed.slice(5).trim();
         if (data === '[DONE]') {
           // Append the assistant response to history for future turns
-          appendSessionMessage(sessionId, { role: 'assistant', content: fullResponse });
+          appendSessionMessage(sessionId, { role: 'assistant', content: fullResponse }, scope);
           broadcast(makeEvent('orchestrator:complete' as any, { taskId, sessionId }, scope));
           return;
         }
@@ -158,7 +176,7 @@ export async function streamTier1Chat(
 
     // Stream ended without [DONE] — emit complete anyway
     if (fullResponse) {
-      appendSessionMessage(sessionId, { role: 'assistant', content: fullResponse });
+      appendSessionMessage(sessionId, { role: 'assistant', content: fullResponse }, scope);
     }
     broadcast(makeEvent('orchestrator:complete' as any, { taskId, sessionId }, scope));
   } catch (err) {
@@ -186,11 +204,10 @@ export async function streamTier1Chat(
 
 const CHAT_AGENT_ID = 'architect-agent';
 
-// Phase 2: workspace context received from the frontend.
-// If not provided, rootPath falls back to a placeholder and activeFiles is empty.
-// This is honest — the agent will know it has no workspace context rather than
-// being given fabricated project information.
+// Editor context received from the frontend. It contains only relative editor
+// paths and unsaved buffer content; the workspace root is resolved server-side.
 interface WorkspaceContext {
+  /** @deprecated Ignored. Kept only for historical in-process unit callers. */
   workspaceRoot?: string;
   activeFile?: string;
   openFiles?: string[];
@@ -210,6 +227,7 @@ export async function runChatViaAgentManager(
   taskId: string,
   scopeOrLegacyUser?: TenantScope | string,
   workspaceContext?: WorkspaceContext,
+  workspace?: WorkspaceIdentity,
 ): Promise<void> {
   // Only legacy in-process tests use the string form. HTTP routes always pass a
   // server-resolved scope. The derived project ID is neither persisted nor an
@@ -224,27 +242,26 @@ export async function runChatViaAgentManager(
       projectId: 'legacy-internal-anonymous',
     };
   // 1. Append user message to session history (preserving conversation context)
-  appendSessionMessage(sessionId, { role: 'user', content: userMessage });
-  const history = getSessionHistory(sessionId);
+  appendSessionMessage(sessionId, { role: 'user', content: userMessage }, scope);
+  const history = getSessionHistory(sessionId, scope);
   const recentHistory = history.slice(-10); // last 10 turns
 
-  // 2. Resolve workspace identity — truthful, not fabricated
-  //    If the frontend sent workspaceRoot, use it. Otherwise, use a
-  //    placeholder and log the absence honestly.
-  const rootPath = workspaceContext?.workspaceRoot ?? '/tmp/code-siren-chat';
-  const activeFiles: string[] = [];
-  if (workspaceContext?.activeFile) {
-    activeFiles.push(workspaceContext.activeFile);
-  }
-  if (workspaceContext?.openFiles) {
-    for (const f of workspaceContext.openFiles) {
-      if (!activeFiles.includes(f)) activeFiles.push(f);
+  // 2. Resolve editor paths below the server-owned workspace. The root itself
+  // is never a client input. Legacy direct unit calls retain an isolated temp
+  // root, but production HTTP always provides WorkspaceService output.
+  const rootPath = workspace?.rootPath ?? workspaceContext?.workspaceRoot ?? '/tmp/code-siren-chat';
+  const activeFiles = workspace
+    ? sanitizeWorkspacePaths(workspace, [workspaceContext?.activeFile ?? '', ...(workspaceContext?.openFiles ?? [])])
+    : [workspaceContext?.activeFile, ...(workspaceContext?.openFiles ?? [])].filter((path): path is string => Boolean(path));
+  let activeFilePath: string | undefined;
+  if (workspace && workspaceContext?.activeFile) {
+    try {
+      activeFilePath = workspaceRelativePath(workspace, workspaceContext.activeFile);
+    } catch {
+      activeFilePath = undefined;
     }
   }
-
-  if (!workspaceContext?.workspaceRoot) {
-    console.warn(`[orchestrator:chat] no workspaceRoot in context — using placeholder ${rootPath} (task ${taskId})`);
-  }
+  if (!workspace) activeFilePath = workspaceContext?.activeFile;
 
   // 3. Build task description — include conversation history for context.
   //    Phase 3: Live editor content is NO LONGER injected into the task
@@ -279,11 +296,11 @@ export async function runChatViaAgentManager(
       userId: scope.userId,
       // Phase 3: live editor content — ContextManager uses this instead of
       // reading from disk for the active file. Precedence: live > disk > none.
-      activeFilePath: workspaceContext?.activeFile,
-      liveEditorContent: workspaceContext?.activeFileContent,
+      activeFilePath,
+      liveEditorContent: activeFilePath ? workspaceContext?.activeFileContent : undefined,
       // Phase 4: live editor selection — ContextManager includes this in
       // the ContextBundle as the active selection.
-      selection: workspaceContext?.selection,
+      selection: activeFilePath ? workspaceContext?.selection : undefined,
     },
     files: [],
     priority: 'normal' as TaskPriority,
@@ -292,7 +309,7 @@ export async function runChatViaAgentManager(
     createdAt: Date.now(),
   };
 
-  console.log(`[orchestrator:chat] dispatching task ${taskId} via AgentManager (session ${sessionId}, agent=${CHAT_AGENT_ID}, rootPath=${rootPath}, activeFiles=${activeFiles.length}, hasLiveContent=${!!workspaceContext?.activeFileContent})`);
+  console.log(`[orchestrator:chat] dispatching task ${taskId} via AgentManager (session ${sessionId}, project=${scope.projectId}, agent=${CHAT_AGENT_ID}, activeFiles=${activeFiles.length}, hasLiveContent=${!!activeFilePath && workspaceContext?.activeFileContent})`);
 
   // 4. Execute through the authoritative AgentManager lifecycle.
   //    executeAndWait() broadcasts:
@@ -318,7 +335,7 @@ export async function runChatViaAgentManager(
 
   // 6. Append assistant response to session history
   if (result.text) {
-    appendSessionMessage(sessionId, { role: 'assistant', content: result.text });
+    appendSessionMessage(sessionId, { role: 'assistant', content: result.text }, scope);
   }
 
   // 7. Log result

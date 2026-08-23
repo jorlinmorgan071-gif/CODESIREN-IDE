@@ -14,7 +14,7 @@ class WsClient {
   private handlers = new Map<AgentEventName, Set<Handler>>();
   private wildcardHandlers = new Set<Handler>();
   private reconnectAttempts = 0;
-  private projectId = '00000000-0000-0000-0000-000000000000';
+  private projectId: string | undefined;
   private intentionallyClosed = false;
 
   connect(projectId?: string): void {
@@ -28,7 +28,8 @@ class WsClient {
       return;
     }
     this.intentionallyClosed = false;
-    const url = `${WS_BASE}?token=${encodeURIComponent(token)}&projectId=${encodeURIComponent(this.projectId)}`;
+    const projectParam = this.projectId ? `&projectId=${encodeURIComponent(this.projectId)}` : '';
+    const url = `${WS_BASE}?token=${encodeURIComponent(token)}${projectParam}`;
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {

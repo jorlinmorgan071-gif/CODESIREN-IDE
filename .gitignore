@@ -48,6 +48,7 @@ server/.biometric-templates/
 server/.runtime/
 # Agent run traces — runtime-generated JSONL, regenerated on every server boot
 server/.traces/
+server/.workspaces/
 server/.env.local
 server/.env.*.local
 server/traces-export-*.json

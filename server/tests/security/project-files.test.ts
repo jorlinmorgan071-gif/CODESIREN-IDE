@@ -12,7 +12,7 @@ import { initDb, closeDb } from '../../src/db/client.js';
 import { CodeReviewAgent } from '../../src/agents/code-review/index.js';
 import { ArchitectAgent } from '../../src/agents/architect/index.js';
 import { signToken } from '../../src/auth/jwt.js';
-import { existsSync, unlinkSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 
 let server: http.Server;
 const BASE = 'http://localhost:3097';
@@ -33,6 +33,8 @@ function stopTestServer(): Promise<void> {
 
 describe('Code Review Gate — writeProjectFile', () => {
   let token: string;
+  let approvedWorkspacePath: string | undefined;
+  const rejectedWorkspacePaths: string[] = [];
 
   beforeAll(async () => {
     await initDb();
@@ -48,8 +50,6 @@ describe('Code Review Gate — writeProjectFile', () => {
     ghostMode.stop();
     await stopTestServer();
     await closeDb();
-    // Clean up test files
-    try { rmSync('/tmp/code-siren-project-files', { recursive: true }); } catch {}
   });
 
   it('REJECTS write with hardcoded secret', async () => {
@@ -67,7 +67,8 @@ describe('Code Review Gate — writeProjectFile', () => {
     expect(body.review.approved).toBe(false);
     expect(body.review.score).toBe(0);
     expect(body.review.issues.some((i: string) => i.includes('secret'))).toBe(true);
-    expect(existsSync('/tmp/code-siren-project-files/bad/secret.ts')).toBe(false);
+    rejectedWorkspacePaths.push(body.path);
+    expect(existsSync(body.path)).toBe(false);
   });
 
   it('REJECTS write with eval()', async () => {
@@ -83,6 +84,7 @@ describe('Code Review Gate — writeProjectFile', () => {
     const body = await res.json() as any;
     expect(body.written).toBe(false);
     expect(body.review.issues.some((i: string) => i.includes('eval'))).toBe(true);
+    rejectedWorkspacePaths.push(body.path);
   });
 
   it('REJECTS write with private key', async () => {
@@ -97,6 +99,7 @@ describe('Code Review Gate — writeProjectFile', () => {
     });
     const body = await res.json() as any;
     expect(body.written).toBe(false);
+    rejectedWorkspacePaths.push(body.path);
   });
 
   it('APPROVES clean write (valid code)', async () => {
@@ -112,15 +115,17 @@ describe('Code Review Gate — writeProjectFile', () => {
     const body = await res.json() as any;
     expect(body.written).toBe(true);
     expect(body.review.approved).toBe(true);
-    expect(existsSync('/tmp/code-siren-project-files/good/utils.ts')).toBe(true);
+    approvedWorkspacePath = body.path;
+    expect(existsSync(approvedWorkspacePath!)).toBe(true);
   });
 
   it('file appears on disk after approved write', async () => {
-    expect(existsSync('/tmp/code-siren-project-files/good/utils.ts')).toBe(true);
+    expect(approvedWorkspacePath).toBeDefined();
+    expect(existsSync(approvedWorkspacePath!)).toBe(true);
   });
 
   it('file does NOT appear on disk after rejected write', async () => {
-    expect(existsSync('/tmp/code-siren-project-files/bad/secret.ts')).toBe(false);
-    expect(existsSync('/tmp/code-siren-project-files/bad/eval.ts')).toBe(false);
+    expect(rejectedWorkspacePaths).toHaveLength(3);
+    expect(rejectedWorkspacePaths.every(path => !existsSync(path))).toBe(true);
   });
 });

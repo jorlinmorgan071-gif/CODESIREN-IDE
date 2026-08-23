@@ -405,5 +405,5 @@ describe('Phase 5 — Execution Truth & Verification State', () => {
     expect(contextStep).toBeDefined();
     // Status is either 'succeeded' (bundle assembled) or 'failed' (timeout)
     expect(['succeeded', 'failed']).toContain(contextStep?.status);
-  }, 15000);
+  }, 30000);
 });

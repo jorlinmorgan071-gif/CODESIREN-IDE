@@ -27,8 +27,8 @@
 // logic — it CALLS memoryEngine.search(), per directive Section 0 Finding 3.
 
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { memoryEngine } from '../memory/engine.js';
+import { resolveContainedWorkspacePath } from '../workspace/service.js';
 import { scanProjectGraph, inferLanguage } from './project-graph.js';
 import {
   computeBundleBudget,
@@ -109,7 +109,13 @@ class ContextManagerImpl implements IContextManager {
         continue;  // Skip disk read — live content is authoritative
       }
       // Fallback: read from disk
-      const fullPath = resolve(projectRoot, filePath);
+      let fullPath: string;
+      try {
+        fullPath = resolveContainedWorkspacePath(projectRoot, filePath, { mustExist: true });
+      } catch {
+        console.warn(`[context:manager] rejected workspace path: ${filePath}`);
+        continue;
+      }
       if (!existsSync(fullPath)) {
         console.warn(`[context:manager] open file not found on disk: ${filePath} (skipping)`);
         continue;

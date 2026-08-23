@@ -1,4 +1,6 @@
 import { v4 as uuid } from 'uuid';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isDbAvailable, memGet, memSet, query } from '../db/client.js';
 
 export interface TenantScope {
@@ -15,6 +17,12 @@ export class ProjectAccessError extends Error {
 
 const PERSONAL_PROJECT_PREFIX = 'personal-project:';
 const PROJECT_PREFIX = 'project:';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const MANAGED_WORKSPACES_DIR = resolve(__dirname, '..', '..', '.workspaces');
+
+function managedWorkspaceRoot(userId: string, projectId: string): string {
+  return resolve(MANAGED_WORKSPACES_DIR, userId, projectId);
+}
 
 function personalProjectKey(userId: string): string {
   return `${PERSONAL_PROJECT_PREFIX}${userId}`;
@@ -72,6 +80,7 @@ export async function ensurePersonalProject(userId: string): Promise<string> {
     if (existing[0]?.id) return existing[0].id;
 
     const projectId = uuid();
+    const rootPath = managedWorkspaceRoot(userId, projectId);
     await query(
       `INSERT INTO projects (id, user_id, name, root_path, metadata)
        VALUES ($1, $2, $3, $4, $5::jsonb)`,
@@ -79,7 +88,7 @@ export async function ensurePersonalProject(userId: string): Promise<string> {
         projectId,
         userId,
         'Personal Workspace',
-        `/workspace/${userId}`,
+        rootPath,
         JSON.stringify({ systemManaged: true, kind: 'personal-workspace' }),
       ],
     );
@@ -90,7 +99,8 @@ export async function ensurePersonalProject(userId: string): Promise<string> {
   if (existing) return existing;
 
   const projectId = uuid();
+  const rootPath = managedWorkspaceRoot(userId, projectId);
   memSet(personalProjectKey(userId), projectId);
-  memSet(projectKey(projectId), { id: projectId, userId, name: 'Personal Workspace' });
+  memSet(projectKey(projectId), { id: projectId, userId, name: 'Personal Workspace', rootPath });
   return projectId;
 }

@@ -429,7 +429,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback((token: string, user: AuthUser) => {
     setAuth(token, user);
     dispatch({ type: 'LOGIN', payload: { token, user } });
-    wsClient.connect();
+    void api.currentWorkspace()
+      .then((workspace) => wsClient.connect(workspace.projectId))
+      .catch(() => wsClient.connect());
   }, []);
 
   const logout = useCallback(() => {
@@ -443,7 +445,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // layers on top of this same token — never a parallel path.
   useEffect(() => {
     if (state.authToken && state.authUser) {
-      wsClient.connect();
+      void api.currentWorkspace()
+        .then((workspace) => wsClient.connect(workspace.projectId))
+        .catch(() => wsClient.connect());
       dispatch({ type: 'AUTH_READY' });
       return;
     }

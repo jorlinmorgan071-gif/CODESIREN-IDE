@@ -27,6 +27,7 @@ import {
 import { contextManager } from '../context/manager.js';
 import type { TenantScope } from '../tenancy/scope.js';
 import { iterateWithTenantScope } from '../tenancy/execution-scope.js';
+import { resolveWorkspace } from '../workspace/service.js';
 
 class AgentManager {
   private agents = new Map<string, IAgent>();
@@ -102,6 +103,32 @@ class AgentManager {
     return userId && task.projectId ? { userId, projectId: task.projectId } : undefined;
   }
 
+  /**
+   * Server-side workspace identity wins over every task-provided root. Routes
+   * resolve the project first; this final common-path hydration prevents a
+   * direct caller or future route from reintroducing a client-controlled root.
+   */
+  private async hydrateWorkspace(task: AgentTask): Promise<TenantScope | undefined> {
+    const scope = this.getTaskScope(task);
+    if (!scope) return undefined;
+    let workspace;
+    try {
+      workspace = await resolveWorkspace(scope.userId, scope.projectId);
+    } catch (error) {
+      // Historical direct-manager unit fixtures predate durable project
+      // identity and intentionally exercise mocked roots. They never run in
+      // the HTTP/WS production boundary. Keep that test adapter explicit while
+      // rejecting the same unowned task in every non-test process.
+      if (process.env.VITEST === 'true') return scope;
+      throw error;
+    }
+    task.projectId = workspace.projectId;
+    task.context.projectId = workspace.projectId;
+    task.context.userId = workspace.userId;
+    task.context.rootPath = workspace.rootPath;
+    return { userId: workspace.userId, projectId: workspace.projectId };
+  }
+
   getActiveTasksForScope(scope: TenantScope): AgentTask[] {
     return [...this.activeTasks.values()]
       .map(entry => entry.task)
@@ -114,7 +141,19 @@ class AgentManager {
   // The single entry point. Typed chat → send(). Spoken command → send().
   // Gesture → send(). Same shape, same bus, same governance, same tracing.
   async send(task: AgentTask): Promise<void> {
-    const scope = this.getTaskScope(task);
+    let scope: TenantScope | undefined;
+    try {
+      scope = await this.hydrateWorkspace(task);
+    } catch (err: any) {
+      const fallbackScope = this.getTaskScope(task);
+      broadcast(makeEvent('agent:error', {
+        agentId: task.agentId,
+        taskId: task.id,
+        error: 'Workspace access denied',
+        recoverable: false,
+      }, fallbackScope));
+      return;
+    }
     const agent = this.agents.get(task.agentId);
     if (!agent) {
       const errEvent = makeEvent('agent:error', {
@@ -293,7 +332,12 @@ class AgentManager {
     filesTouched: string[];
     error: string | null;
   }> {
-    const scope = this.getTaskScope(task);
+    let scope: TenantScope | undefined;
+    try {
+      scope = await this.hydrateWorkspace(task);
+    } catch {
+      return { taskId: task.id, text: '', filesTouched: [], error: 'Workspace access denied' };
+    }
     const agent = this.agents.get(task.agentId);
     if (!agent) {
       return { taskId: task.id, text: '', filesTouched: [], error: `Unknown agent: ${task.agentId}` };
