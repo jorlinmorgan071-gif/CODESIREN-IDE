@@ -20,9 +20,7 @@ import { IAgent } from '../base-agent.js';
 import { dispatchStrategy } from '../../orchestration/strategies/dispatcher.js';
 import { validateShellCommand } from '../../security/sandbox.js';
 import { ghostMode } from '../../orchestration/ghost-mode.js';
-import { makeEvent, broadcast } from '../../ws/events.js';
 import { addStep, addToolResult } from '../../observability/traces.js';
-import { execSync } from 'node:child_process';
 
 const SYSTEM_PROMPT = `You are the Terminal Agent of Zero Two: Code Siren.
 Your role: propose shell commands, interpret output, generate automation scripts, and debug errors.
@@ -310,117 +308,23 @@ export class TerminalAgent extends IAgent {
         }
       }
 
-      // ── Step 3: Real execution ───────────────────────────────────────
-      yield { type: 'text', content: `\n[terminal-agent] Executing: \`${proposedCommand}\`\n` };
-      yield { type: 'command', content: proposedCommand };
-
-      const execStart = Date.now();
-      try {
-        const output = execSync(proposedCommand, {
-          encoding: 'utf8',
-          timeout: 30_000, // 30s max
-          maxBuffer: 1024 * 1024, // 1MB max output
-          cwd: '/tmp',
-        });
-
-        const duration = Date.now() - execStart;
-        yield { type: 'text', content: `\n${output}\n` };
-
-        // Stream as terminal:output WS event (PDF Section 13)
-        broadcast(makeEvent('terminal:output' as any, {
-          tabId: 'terminal-1',
-          data: output,
-        }));
-
-        addStep(task.id, {
-          kind: 'done',
-          label: `execSync("${proposedCommand.slice(0, 60)}") → exit 0 (${duration}ms, ${output.length} chars output)`,
-          output: { exitCode: 0, outputPreview: output.slice(0, 200), durationMs: duration },
-          meta: { executed: true, exitCode: 0, durationMs: duration },
-        });
-        addToolResult(task.id, {
-          name: 'terminal.execute',
-          args: { command: proposedCommand.slice(0, 100) },
-          result: `exit 0 (${output.length} chars, ${duration}ms)`,
-          success: true,
-        });
-
-        yield { type: 'text', content: `\n[terminal-agent] Command completed in ${duration}ms.\n` };
-      } catch (err: any) {
-        const duration = Date.now() - execStart;
-        const stderr = err.stderr ?? err.message;
-        const exitCode = err.status ?? 1;
-        yield { type: 'text', content: `\n✗ Command failed (exit ${exitCode}):\n${stderr}\n` };
-
-        broadcast(makeEvent('terminal:output' as any, {
-          tabId: 'terminal-1',
-          data: stderr,
-        }));
-
-        addStep(task.id, {
-          kind: 'error',
-          label: `execSync("${proposedCommand.slice(0, 60)}") → exit ${exitCode} (${duration}ms)`,
-          output: { exitCode, stderr: stderr.slice(0, 200), durationMs: duration },
-          meta: { executed: true, exitCode, durationMs: duration },
-        });
-        addToolResult(task.id, {
-          name: 'terminal.execute',
-          args: { command: proposedCommand.slice(0, 100) },
-          result: `exit ${exitCode}: ${stderr.slice(0, 100)}`,
-          success: false,
-        });
-
-        // ── Phase A Section 2: event-driven terminal error reporting ────
-        // Report the failed command to Ghost Mode as a terminal:error finding.
-        // This is event-driven (NOT periodic scanning — terminal errors are
-        // instantaneous events, not persistent state). Ghost Mode will plan
-        // it as suggest-only (buildTerminalErrorSuggestionPlan) — there's no
-        // safe generic auto-fix for "a command failed."
-        //
-        // FSM SINGLE-IN-FLIGHT LIMITATION (per Section 0, not fixed here):
-        // If Ghost Mode is mid-flow (awaiting_approval/applying/verifying),
-        // reportFinding()'s transition to 'detected' will be BLOCKED by the
-        // FSM's transition guard. The finding IS still stored in
-        // ghostMode.findings + the ghost:detection WS event IS still broadcast
-        // — so the error is NOT silently dropped. But it won't drive a planFix
-        // until the FSM cycles back to 'scanning'. We log this honestly so
-        // operators can see when a terminal error was reported but couldn't
-        // drive the full detect→plan→approve flow.
-        const ghostStateBeforeError = ghostMode.currentState;
-        try {
-          const errorFinding = ghostMode.reportFinding({
-            type: 'terminal:error',
-            severity: 'high',
-            description: `Command "${proposedCommand.slice(0, 80)}" failed (exit ${exitCode}): ${stderr.slice(0, 200)}`,
-            userId: (task.context as any).userId,
-            agentId: this.id,
-            taskId: task.id,
-          });
-          addStep(task.id, {
-            kind: 'tool-call',
-            label: `ghostMode.reportFinding() — terminal:error reported (finding ${errorFinding.id}), Ghost state: ${ghostMode.currentState}`,
-            meta: {
-              viaGhostMode: true,
-              ghostStateBefore: ghostStateBeforeError,
-              ghostStateAfter: ghostMode.currentState,
-              findingId: errorFinding.id,
-              exitCode,
-              stderrPreview: stderr.slice(0, 100),
-              note: ghostStateBeforeError !== 'scanning' && ghostStateBeforeError !== 'complete' && ghostStateBeforeError !== 'rolled_back'
-                ? 'FSM was mid-flow — finding stored + event broadcast, but transition to detected was blocked. Will plan when FSM returns to scanning.'
-                : 'FSM accepted the finding — will plan normally.',
-            },
-          });
-        } catch (reportErr: any) {
-          // reportFinding itself doesn't throw, but defensive — don't let
-          // Ghost Mode reporting break the agent's error handling.
-          console.warn(`[terminal-agent] ghostMode.reportFinding failed: ${reportErr.message}`);
-        }
-      }
-
-      await this.memorize(`Terminal command: ${proposedCommand}`, {
-        sourceType: 'agent', sourceRef: this.id, tags: ['terminal', 'executed'],
+      // No process may run until a tenant-owned PTY session is isolated from
+      // the server host and bound to WorkspaceService. Do not substitute a
+      // local exec, canned output, or a fake success result.
+      const unavailable = 'Terminal execution unavailable: an isolated workspace PTY session is not configured.';
+      yield { type: 'text', content: `\n[terminal-agent] ${unavailable}\nCommand was NOT executed.\n` };
+      addStep(task.id, {
+        kind: 'loop-guard',
+        label: 'terminal execution refused: isolated PTY session unavailable',
+        meta: { executed: false, unavailable: true, reason: 'isolated_pty_session_required' },
       });
+      addToolResult(task.id, {
+        name: 'terminal.execute',
+        args: { command: proposedCommand.slice(0, 100) },
+        result: 'unavailable: isolated workspace PTY session required',
+        success: false,
+      });
+      yield { type: 'error', content: unavailable, meta: { recoverable: true, code: 'TERMINAL_UNAVAILABLE' } };
       yield { type: 'done', content: '' };
     } catch (err: any) {
       yield { type: 'error', content: err.message, meta: { recoverable: true } };

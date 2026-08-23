@@ -216,10 +216,10 @@ describe('Approval Gate Fix', () => {
       const textContent = chunks.filter(c => c.type === 'text').map(c => c.content).join('');
       const commandChunks = chunks.filter(c => c.type === 'command');
 
-      // In test mode, autoApprove IS honored — command executes
-      expect(commandChunks.length).toBe(1);
-      expect(commandChunks[0].content).toBe('echo hello');
+      // Test approval remains observable, but no local process is started.
+      expect(commandChunks.length).toBe(0);
       expect(textContent).toContain('Auto-approved (TEST MODE ONLY');
+      expect(textContent).toContain('Terminal execution unavailable');
     } finally {
       process.env.NODE_ENV = originalEnv;
     }
@@ -298,8 +298,8 @@ describe('Approval Gate Fix', () => {
     expect(body.reason).toBe('no_userId');
   });
 
-  // ── Test 5: full flow — command proposed → approved via endpoint → executes ──
-  it('full flow: command proposed → ghost:plan fires → endpoint approves → command executes (trace shows viaApprovalEndpoint)', async () => {
+  // ── Test 5: approval is real, but execution is unavailable without PTY ──
+  it('full flow: command proposed → endpoint approves → terminal remains unavailable (trace shows viaApprovalEndpoint)', async () => {
     const originalEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';  // production = no autoApprove
 
@@ -356,10 +356,10 @@ describe('Approval Gate Fix', () => {
       // Wait for the agent to complete
       await runPromise;
 
-      // Verify the command executed
+      // Approval does not bypass the isolated-session requirement.
       const commandChunks = chunks.filter(c => c.type === 'command');
-      expect(commandChunks.length).toBe(1);
-      expect(commandChunks[0].content).toContain('echo "real approval flow"');
+      expect(commandChunks.length).toBe(0);
+      expect(chunks.some(c => c.content.includes('Terminal execution unavailable'))).toBe(true);
 
       // Verify the trace shows the approval came from the endpoint, NOT from autoApprove.
       // There should be at least one step with viaApprovalEndpoint=true — either

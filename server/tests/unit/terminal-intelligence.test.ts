@@ -51,7 +51,7 @@ describe('Phase A Section 2 — Terminal Intelligence', () => {
   // GROUP 1: Event-driven terminal error reporting
   // ════════════════════════════════════════════════════════════════════
   describe('Terminal error → Ghost Mode reporting', () => {
-    it('a real failing command reports terminal:error to Ghost Mode with real stderr', async () => {
+    it('a command is refused without a terminal:error finding when no isolated PTY exists', async () => {
       // Run a command that will really fail — `ls /nonexistent/path` exits
       // non-zero with real stderr ("No such file or directory").
       // Terminal Agent runs in /tmp, so the command is independent of fixtureRoot.
@@ -101,24 +101,15 @@ describe('Phase A Section 2 — Terminal Intelligence', () => {
         process.env.NODE_ENV = origNodeEnv;
       }
 
-      // ── Verify the terminal:error finding was reported ──────────────
-      // ghost:detection events fire for BOTH the approval-gate finding
-      // (type: 'terminal:command') AND the error finding (type: 'terminal:error').
+      // No command is executed and no output is invented, therefore no
+      // terminal:error finding may claim that a process failed.
       const detectionEvents = capturedEvents.filter((e) => e.event === 'ghost:detection');
       const errorDetections = detectionEvents.filter(
         (e) => (e.payload as GhostFinding).type === 'terminal:error'
       );
 
-      expect(errorDetections.length).toBe(1);
-      const errorFinding = errorDetections[0].payload as GhostFinding;
-      expect(errorFinding.severity).toBe('high');
-      expect(errorFinding.description).toContain('ls /nonexistent');
-      expect(errorFinding.description).toContain('failed');
-      expect(errorFinding.description).toContain('exit');
-      // Real stderr content should be in the description (not a placeholder)
-      expect(errorFinding.description.length).toBeGreaterThan(50);
-      expect(errorFinding.agentId).toBe('terminal-agent');
-      expect(errorFinding.taskId).toBe(taskId);
+      expect(errorDetections.length).toBe(0);
+      expect(chunks.some(chunk => chunk.content.includes('Terminal execution unavailable'))).toBe(true);
     }, 30_000);
 
     it('terminal:error finding plans as suggest-only (no safe auto-fix)', async () => {

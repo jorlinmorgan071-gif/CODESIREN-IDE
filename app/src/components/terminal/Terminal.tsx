@@ -26,9 +26,7 @@ function clampHeight(h: number): number {
 }
 
 export function Terminal() {
-  const { state, dispatch, setActiveTerminal, addTerminalLine } = useApp();
-  const [input, setInput] = useState('');
-  const idCounter = useRef(0);
+  const { state, dispatch, setActiveTerminal } = useApp();
   const [suggestion, setSuggestion] = useState('git commit -m "feat: update components"');
   const scrollRef = useRef<HTMLDivElement>(null);
   // Resizable panel state — persists during the session.
@@ -81,57 +79,6 @@ export function Terminal() {
 
   if (!state.bottomPanelVisible) return null;
 
-  const handleCommand = () => {
-    if (!input.trim() || !activeSession) return;
-
-    const newLine = {
-      id: `tl-${idCounter.current++}`,
-      type: 'input' as const,
-      content: input,
-      timestamp: new Date().toLocaleTimeString(),
-    };
-
-    addTerminalLine(activeSession.id, newLine);
-
-    // Simulate command output
-    setTimeout(() => {
-      const responseLine = {
-        id: `tl-${Date.now() + 1}`,
-        type: 'output' as const,
-        content: getSimulatedOutput(input),
-        timestamp: new Date().toLocaleTimeString(),
-      };
-      addTerminalLine(activeSession.id, responseLine);
-    }, 300);
-
-    setInput('');
-  };
-
-  const getSimulatedOutput = (cmd: string): string => {
-    const commands: Record<string, string> = {
-      'ls': 'src/\tpublic/\tpackage.json\ttsconfig.json\tREADME.md',
-      'pwd': '/home/dev/projects/ecommerce-platform',
-      'whoami': 'dev',
-      'date': new Date().toString(),
-      'clear': '',
-      'help': 'Available commands: ls, pwd, whoami, date, clear, git status, npm install, npm run dev',
-    };
-
-    if (cmd.startsWith('git ')) {
-      return `On branch main\nYour branch is up to date with 'origin/main'.\n\nChanges not staged for commit:\n  modified:   src/components/Header.tsx\n  modified:   src/components/Button.tsx\n  modified:   src/pages/Dashboard.tsx\n\nno changes added to commit`;
-    }
-
-    if (cmd.startsWith('npm ')) {
-      if (cmd.includes('dev')) {
-        return '  VITE v5.0.0  ready in 420 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  Network: http://192.168.1.100:5173/\n  ➜  press h + enter to show help';
-      }
-      if (cmd.includes('install')) {
-        return 'added 42 packages in 3.2s\n\n13 packages are looking for funding\nrun `npm fund` for details';
-      }
-    }
-
-    return commands[cmd] || `Command executed: ${cmd}`;
-  };
 
   return (
     <div
@@ -267,11 +214,16 @@ export function Terminal() {
             ))}
           </div>
 
-          {/* Output */}
+          {/* Output. Command execution is deliberately unavailable until a
+              tenant-owned isolated PTY session service exists. */}
           <div
             ref={scrollRef}
             className="flex-1 overflow-y-auto px-3 py-1 font-code text-[12px] leading-relaxed"
           >
+            <div className="rounded px-3 py-2 text-[11px]" style={{ backgroundColor: 'rgba(238, 28, 28, 0.06)', color: 'var(--steel-silver)' }}>
+              <strong style={{ color: 'var(--siren-red)' }}>Terminal unavailable.</strong>{' '}
+              Commands are not executed and no output is generated because this build has no isolated workspace PTY session.
+            </div>
             {activeSession?.history.map((line) => (
               <div
                 key={line.id}
@@ -310,7 +262,6 @@ export function Terminal() {
                 className="text-[11px] px-2 py-0.5 rounded transition-colors hover:bg-white/5 font-code"
                 style={{ color: 'var(--steel-silver)' }}
                 onClick={() => {
-                  setInput(suggestion);
                   setSuggestion('');
                 }}
               >
@@ -326,7 +277,7 @@ export function Terminal() {
             </div>
           )}
 
-          {/* Input */}
+          {/* Input intentionally disabled until an isolated PTY session exists. */}
           <div
             className="flex items-center gap-2 px-3 py-1"
             style={{ borderTop: '1px solid var(--border-subtle)' }}
@@ -334,12 +285,9 @@ export function Terminal() {
             <span style={{ color: 'var(--siren-red)' }}>$</span>
             <input
               type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCommand();
-              }}
-              placeholder="Type a command..."
+              value=""
+              disabled
+              placeholder="Terminal execution unavailable — isolated session required"
               className="flex-1 bg-transparent text-[12px] outline-none font-code"
               style={{ color: '#C8C8DC' }}
             />
@@ -401,20 +349,9 @@ export function Terminal() {
       {/* Output panel */}
       {state.activeBottomTab === 'output' && (
         <div className="flex-1 overflow-y-auto px-3 py-2 font-code text-[12px]">
-          <div style={{ color: '#22C55E' }}>
-            <pre className="whitespace-pre-wrap">
-              {`[10:32:01] VITE v5.0.0  ready in 420 ms
-
-  ➜  Local:   http://localhost:5173/
-  ➜  Network: http://192.168.1.100:5173/
-  ➜  press h + enter to show help
-
-[10:32:15] page reload src/components/Header.tsx
-[10:32:16] page reload src/components/Button.tsx
-[10:32:18] hmr update /src/pages/Dashboard.tsx
-
-Build completed successfully in 312ms.`}
-            </pre>
+          <div className="rounded px-3 py-2 text-[11px]" style={{ backgroundColor: 'rgba(238, 28, 28, 0.06)', color: 'var(--steel-silver)' }}>
+            <strong style={{ color: 'var(--siren-red)' }}>Output unavailable.</strong>{' '}
+            No build or process output is shown because this build has no isolated terminal session.
           </div>
         </div>
       )}
