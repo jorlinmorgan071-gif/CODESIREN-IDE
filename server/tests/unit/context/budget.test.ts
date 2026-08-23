@@ -85,6 +85,8 @@ describe('Phase B — budget.ts token estimator', () => {
       content: 'remember this', // 13 chars → 4
       score: 0.92,
       source: 'agent', // 5 chars → 2
+      quality: 'derived',
+      provenance: { organizationPolicy: 'single-owner', userId: 'budget-user', projectId: 'budget-project', sessionId: 'budget-session', policy: 'exact-session', storage: 'durable', sourceType: 'agent', sourceRef: 'budget-agent' },
     };
     // 4 + 2 + 12 (header overhead) = 18
     expect(estimateMemoryTokens(mem)).toBe(18);
@@ -257,6 +259,8 @@ describe('Phase B — budget.ts applyBudget truncation logic', () => {
       content: `Memory content for entry ${i}. `.repeat(5), // ~150 chars = 38 tokens
       score: 0.95 - (i * 0.05), // 0.95, 0.90, 0.85, ..., 0.50 (HIGHEST FIRST)
       source: 'agent',
+      quality: 'derived',
+      provenance: { organizationPolicy: 'single-owner', userId: 'budget-user', projectId: 'budget-project', sessionId: 'budget-session', policy: 'exact-session', storage: 'durable', sourceType: 'agent', sourceRef: 'budget-agent' },
     }));
     const bundle = makeBundle({
       openFiles: [{ path: 'main.ts', language: 'typescript', content: 'const x = 1;' }],
@@ -296,7 +300,7 @@ describe('Phase B — budget.ts applyBudget truncation logic', () => {
       selection: hugeSelection,
       projectGraph: [{ file: 'dep.ts', imports: ['react'] }],
       conversationHistory: [{ role: 'user', content: 'hi' }],
-      relevantMemory: [{ content: 'mem', score: 0.9, source: 'agent' }],
+      relevantMemory: [{ content: 'mem', score: 0.9, source: 'agent', quality: 'derived', provenance: { organizationPolicy: 'single-owner', userId: 'budget-user', projectId: 'budget-project', sessionId: 'budget-session', policy: 'exact-session', storage: 'durable', sourceType: 'agent', sourceRef: 'budget-agent' } }],
     });
     // Budget = 100 tokens. Selection alone is 2500+. Everything else should
     // be dropped, and the bundle is dispatched OVER budget (used > max).

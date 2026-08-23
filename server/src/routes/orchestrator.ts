@@ -28,7 +28,7 @@ import { getPlan, listPlansByProject, listMilestoneLogs, updatePlan } from '../o
 import { runChatViaAgentManager } from '../orchestrator/tier1-chat.js';
 import { selectNormalChatCapability } from '../orchestrator/normal-chat-capabilities.js';
 import { modelRouter } from '../orchestration/model-router.js';
-import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
+import { ProjectAccessError, SessionAccessError, ensureOwnedSession, resolveTenantScope } from '../tenancy/scope.js';
 import { WorkspaceAccessError, resolveWorkspace, workspaceRelativePath } from '../workspace/service.js';
 
 export const orchestratorRouter = Router();
@@ -79,7 +79,7 @@ const chatContextSchema = z.object({
 }).optional();
 
 const chatSchema = z.object({
-  sessionId: z.string().min(1),
+  sessionId: z.string().uuid(),
   message: z.string().min(1).max(8000),
   projectId: z.string().uuid().optional(),
   context: chatContextSchema,
@@ -97,6 +97,16 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
   } catch (error) {
     if (error instanceof ProjectAccessError || error instanceof WorkspaceAccessError) {
       res.status(403).json({ error: 'Project access denied' });
+      return;
+    }
+    throw error;
+  }
+  let sessionScope;
+  try {
+    sessionScope = await ensureOwnedSession(workspace, parsed.data.sessionId);
+  } catch (error) {
+    if (error instanceof SessionAccessError) {
+      res.status(403).json({ error: 'Session access denied' });
       return;
     }
     throw error;
@@ -134,7 +144,7 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
     parsed.data.sessionId,
     parsed.data.message,
     taskId,
-    workspace,
+    sessionScope,
     parsed.data.context,
     workspace,
     capability,

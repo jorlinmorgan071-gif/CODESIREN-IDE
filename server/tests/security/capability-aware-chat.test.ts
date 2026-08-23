@@ -34,7 +34,7 @@ describe('P1 capability-aware normal chat', () => {
 
     const taskId = `capability-read-${Date.now()}`;
     await runChatViaAgentManager(
-      `session-${Date.now()}`,
+      crypto.randomUUID(),
       'Read and explain the active file.',
       taskId,
       workspace,
@@ -75,7 +75,7 @@ describe('P1 capability-aware normal chat', () => {
     const request = 'Fix the failing authentication tests.';
     expect(selectNormalChatCapability(request, 'src/auth.ts')).toEqual({ kind: 'change-plan' });
 
-    const record = await createCapabilityChangePlan(`session-${Date.now()}`, workspace, request);
+    const record = await createCapabilityChangePlan(crypto.randomUUID(), workspace, request);
     const persisted = await getPlan(record.id);
     expect(persisted?.status).toBe('draft');
     expect(persisted?.engine).toBe('capability-policy');

@@ -182,7 +182,7 @@ describe('Phase C Agent 3 — DatabaseAgent', () => {
       writeFileSync(join(fixtureRoot, 'src', 'db', 'migrations', '010_tracking.sql'), '-- existing');
 
       mockLlmMigrationResponse(
-        '011_new_feature.sql',
+        '012_new_feature.sql',
         'CREATE TABLE IF NOT EXISTS features (id UUID PRIMARY KEY);',
         [{ name: 'features', columns: [{ name: 'id', dataType: 'uuid', isNullable: false, defaultValue: null, isPrimaryKey: true }] }],
       );
@@ -193,10 +193,11 @@ describe('Phase C Agent 3 — DatabaseAgent', () => {
         projectRoot: fixtureRoot,
       });
 
-      // The LLM was told the next number is 11 (max existing is 10, +1 = 11)
+      // Migration 011 is the scoped-memory provenance migration, so the next
+      // available repository migration number is 12.
       expect(modelRouter.stream).toHaveBeenCalled();
       const llmCall = (modelRouter.stream as any).mock.calls[0][0];
-      expect(llmCall.messages[1].content).toContain('11');
+      expect(llmCall.messages[1].content).toContain('12');
     });
   });
 

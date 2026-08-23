@@ -145,7 +145,7 @@ export const sampleFileTree: FileNode[] = [
 
 export const sampleChatSessions: ChatSession[] = [
   {
-    id: 'cs1',
+    id: '4f7e0e64-91b3-4a35-9849-d0e18ce5e3e1',
     name: 'Frontend',
     isActive: true,
     messages: [
@@ -172,7 +172,7 @@ export const sampleChatSessions: ChatSession[] = [
     ],
   },
   {
-    id: 'cs2',
+    id: 'db3b76e4-7d12-45de-9c55-e3925b3e88ee',
     name: 'Backend',
     isActive: false,
     messages: [
@@ -192,7 +192,7 @@ export const sampleChatSessions: ChatSession[] = [
     ],
   },
   {
-    id: 'cs3',
+    id: '4b4e5473-6f7d-4b6e-9ab7-3650b4a1a9db',
     name: 'Planning',
     isActive: false,
     messages: [

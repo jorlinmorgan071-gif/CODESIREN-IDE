@@ -69,6 +69,8 @@ export interface RelevantMemory {
   content: string;
   score: number;
   source: string;
+  quality: import('../types.js').MemoryQuality;
+  provenance: import('../types.js').MemoryProvenance;
 }
 
 /**

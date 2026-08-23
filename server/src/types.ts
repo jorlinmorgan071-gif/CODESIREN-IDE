@@ -727,12 +727,29 @@ export interface MemoryChunk {
   content: string;
   metadata: Record<string, unknown>;
   score: number;
+  quality: MemoryQuality;
+  provenance: MemoryProvenance;
+}
+
+export type MemoryQuality = 'verified' | 'derived' | 'degraded';
+
+export interface MemoryProvenance {
+  organizationPolicy: 'single-owner';
+  userId: string;
+  projectId: string;
+  sessionId: string | null;
+  policy: 'exact-session' | 'legacy-project';
+  storage: 'durable' | 'ephemeral';
+  sourceType: MemoryMeta['sourceType'];
+  sourceRef: string | null;
+  retrievedAt?: number;
 }
 
 export interface MemoryMeta {
   sourceType: 'agent' | 'user' | 'file' | 'doc';
   sourceRef?: string;
   tags?: string[];
+  quality?: Exclude<MemoryQuality, 'degraded'>;
 }
 
 // ── AgentManager message bus (PDF Section 14) ─────────────────────────────

@@ -21,7 +21,7 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
     id: 'test-task-' + Math.random().toString(36).slice(2),
     projectId: '00000000-0000-0000-0000-000000000000', // default project
-    sessionId: 'test-session',
+    sessionId: 'ccac0908-cff9-41bd-91cb-4d5f639bb4de',
     agentId: 'architect-agent',
     type: 'chat',
     description: 'How do I implement a red-black tree?',
@@ -123,7 +123,7 @@ describe('Phase B — ContextManager.assemble() memory + history wiring', () => 
       memoryContent,
       { sourceType: 'agent', sourceRef: 'architect-agent', tags: ['data-structures'] },
       'architect-agent',
-      { userId: 'test-user', projectId: '00000000-0000-0000-0000-000000000000' },
+      { userId: 'test-user', projectId: '00000000-0000-0000-0000-000000000000', sessionId: 'ccac0908-cff9-41bd-91cb-4d5f639bb4de' },
     );
 
     const task = makeTask({
@@ -148,6 +148,8 @@ describe('Phase B — ContextManager.assemble() memory + history wiring', () => 
     expect(bundle.relevantMemory.length).toBeGreaterThanOrEqual(1);
     const found = bundle.relevantMemory.find(m => m.content === memoryContent);
     expect(found).toBeDefined();
+    expect(found?.quality).toBe('degraded');
+    expect(found?.provenance).toMatchObject({ policy: 'exact-session', storage: 'ephemeral', sessionId: task.sessionId });
     expect(found!.source).toBe('agent'); // mapped from metadata.sourceType
     expect(found!.score).toBeGreaterThan(0);
     expect(found!.score).toBeLessThanOrEqual(1);

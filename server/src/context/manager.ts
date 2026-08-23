@@ -153,12 +153,14 @@ class ContextManagerImpl implements IContextManager {
       const memoryResults = await memoryEngine.search(
         task.description,
         memLimit,
-        userId && userId !== 'unknown' ? { userId, projectId: task.projectId } : undefined,
+        userId && userId !== 'unknown' ? { userId, projectId: task.projectId, sessionId: task.sessionId } : undefined,
       );
       relevantMemory = memoryResults.map(chunk => ({
         content: chunk.content,
         score: chunk.score,
         source: String(chunk.metadata?.sourceType ?? 'unknown'),
+        quality: chunk.quality,
+        provenance: chunk.provenance,
       }));
     } catch (err: any) {
       // Memory search failed — log and continue with empty memory.

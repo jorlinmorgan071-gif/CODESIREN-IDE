@@ -127,7 +127,7 @@ export const initialState: AppState = {
   fileContents: sampleFileContent,
 
   chatSessions: sampleChatSessions,
-  activeChatId: 'cs1',
+  activeChatId: sampleChatSessions[0].id,
 
   agents: sampleAgents,
 

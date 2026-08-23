@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { completeTrace, getTrace, listTraces, startTrace } from '../../src/observability/traces.js';
-import { ensurePersonalProject, resolveTenantScope, scopesMatch } from '../../src/tenancy/scope.js';
+import { SessionAccessError, ensureOwnedSession, ensurePersonalProject, resolveTenantScope, scopesMatch } from '../../src/tenancy/scope.js';
 import { getActiveTenantScope, runWithTenantScope } from '../../src/tenancy/execution-scope.js';
 
 const SCOPE_A = { userId: 'p0-user-a', projectId: 'p0-project-a' };
@@ -19,6 +19,25 @@ describe('P0 tenant scope boundaries', () => {
     expect(ownerScope.userId).toBe('p0-owner');
     expect(ownerScope.projectId).toBe(await ensurePersonalProject('p0-owner'));
     await expect(resolveTenantScope('p0-attacker', ownerScope.projectId)).rejects.toThrow('Project not found or not owned');
+  });
+
+  it('creates an owned durable-session identity and rejects a foreign owner from reusing it', async () => {
+    const ownerScope = await resolveTenantScope(`memory-owner-${Date.now()}`);
+    const foreignScope = await resolveTenantScope(`memory-attacker-${Date.now()}`);
+    const sessionId = crypto.randomUUID();
+    const sessionScope = await ensureOwnedSession(ownerScope, sessionId);
+
+    expect(sessionScope).toEqual({ ...ownerScope, sessionId });
+    await expect(ensureOwnedSession(foreignScope, sessionId)).rejects.toBeInstanceOf(SessionAccessError);
+  });
+
+  it('propagates a session scope through asynchronous execution without collapsing it to project scope', async () => {
+    const scope = { ...SCOPE_A, sessionId: '26a9801b-8079-45f4-9b7f-3bd9f9e3fc95' };
+    const observed = await runWithTenantScope(scope, async () => {
+      await new Promise(resolve => setTimeout(resolve, 1));
+      return getActiveTenantScope();
+    });
+    expect(observed).toEqual(scope);
   });
 
   it('lists traces only for their exact owner and project', () => {

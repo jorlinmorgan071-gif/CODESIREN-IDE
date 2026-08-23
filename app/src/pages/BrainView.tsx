@@ -271,6 +271,7 @@ export default function BrainView() {
   // surfaces "Failed to fetch" to the user.
   const { state: appState } = useApp();
   const authReady = appState.authReady;
+  const memorySessionId = appState.activeChatId;
   const [nodes, setNodes] = useState<MemoryNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
@@ -294,7 +295,7 @@ export default function BrainView() {
     (async () => {
       try {
         const token = getToken();
-        const res = await fetch(`${API_BASE}/memory?limit=500`, {
+        const res = await fetch(`${API_BASE}/memory?limit=500&sessionId=${encodeURIComponent(memorySessionId)}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -309,17 +310,18 @@ export default function BrainView() {
       }
     })();
     return () => { cancelled = true; };
-  }, [API_BASE, authReady]);
+  }, [API_BASE, authReady, memorySessionId]);
 
   // ── WS listeners: memory:created, memory:deleted, memory:searched ────
   useEffect(() => {
     const offCreated = wsClient.on('memory:created' as never, (evt: AgentEvent) => {
-      const payload = evt.payload as { id: string; agentId: string | null; sourceType: string; contentPreview: string; createdAt: number };
+      const payload = evt.payload as { id: string; agentId: string | null; sourceType: string; sessionId?: string; contentPreview: string; createdAt: number };
+      if (payload.sessionId !== memorySessionId) return;
       // Fetch the full entry to get all fields
       (async () => {
         try {
           const token = getToken();
-          const res = await fetch(`${API_BASE}/memory/${payload.id}`, {
+          const res = await fetch(`${API_BASE}/memory/${payload.id}?sessionId=${encodeURIComponent(memorySessionId)}`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (!res.ok) return;
@@ -348,14 +350,14 @@ export default function BrainView() {
     });
 
     return () => { offCreated(); offDeleted(); offSearched(); };
-  }, [API_BASE, selectedNode]);
+  }, [API_BASE, memorySessionId, selectedNode]);
 
   // ── Node click → fetch detail ─────────────────────────────────────────
   const handleNodeClick = useCallback(async (node: MemoryNode) => {
     setSelectedNode(node);
     try {
       const token = getToken();
-      const res = await fetch(`${API_BASE}/memory/${node.id}`, {
+      const res = await fetch(`${API_BASE}/memory/${node.id}?sessionId=${encodeURIComponent(memorySessionId)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -379,7 +381,7 @@ export default function BrainView() {
         createdAt: node.createdAt,
       });
     }
-  }, [API_BASE]);
+  }, [API_BASE, memorySessionId]);
 
   // ── Delete memory ─────────────────────────────────────────────────────
   const handleDelete = useCallback(async (id: string) => {
@@ -387,7 +389,7 @@ export default function BrainView() {
     setDeletingIds(prev => new Set(prev).add(id));
     try {
       const token = getToken();
-      const res = await fetch(`${API_BASE}/memory/${id}`, {
+      const res = await fetch(`${API_BASE}/memory/${id}?sessionId=${encodeURIComponent(memorySessionId)}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -409,7 +411,7 @@ export default function BrainView() {
       setError(err instanceof Error ? err.message : String(err));
       setDeletingIds(prev => { const s = new Set(prev); s.delete(id); return s; });
     }
-  }, [API_BASE, selectedNode]);
+  }, [API_BASE, memorySessionId, selectedNode]);
 
   // ── Navigate back ─────────────────────────────────────────────────────
   const handleBack = useCallback(() => {

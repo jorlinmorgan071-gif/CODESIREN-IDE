@@ -4,8 +4,9 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { memoryEngine } from '../../src/memory/engine.js';
 
-const SCOPE_A = { userId: 'memory-user-a', projectId: 'memory-project-a' };
-const SCOPE_B = { userId: 'memory-user-b', projectId: 'memory-project-b' };
+const SCOPE_A = { userId: 'memory-user-a', projectId: 'memory-project-a', sessionId: '6d88076f-096e-4d8f-9b42-bf1d493bcf11' };
+const SCOPE_A_OTHER_SESSION = { ...SCOPE_A, sessionId: '3d534d3a-e7fa-4e1c-9a1b-09bfc1fc92b4' };
+const SCOPE_B = { userId: 'memory-user-b', projectId: 'memory-project-b', sessionId: '2a4a4aa8-8262-4d92-81ba-3d33141e88f1' };
 
 describe('MemoryEngine', () => {
   it('embed() returns 768-dim vector', async () => {
@@ -40,6 +41,11 @@ describe('MemoryEngine', () => {
     // Find the REST API entry in results (may not be first with pseudo-embedding)
     const restResult = results.find(r => r.content.includes('REST API'));
     expect(restResult).toBeDefined();
+    expect(restResult?.quality).toBe('degraded');
+    expect(restResult?.provenance).toMatchObject({
+      organizationPolicy: 'single-owner', userId: SCOPE_A.userId, projectId: SCOPE_A.projectId,
+      sessionId: SCOPE_A.sessionId, policy: 'exact-session', storage: 'ephemeral',
+    });
   });
 
   it('search() returns fewer results for unrelated query', async () => {
@@ -89,6 +95,13 @@ describe('MemoryEngine', () => {
     await memoryEngine.memorize(secret, { sourceType: 'agent', sourceRef: 'security-agent' }, 'security-agent', SCOPE_A);
     const foreignResults = await memoryEngine.search(secret, 10, SCOPE_B);
     expect(foreignResults.some(result => result.content === secret)).toBe(false);
+  });
+
+  it('never recalls a memory from a different session in the same project', async () => {
+    const secret = 'P1 exact-session memory boundary secret';
+    await memoryEngine.memorize(secret, { sourceType: 'agent', sourceRef: 'security-agent' }, 'security-agent', SCOPE_A);
+    const results = await memoryEngine.search(secret, 10, SCOPE_A_OTHER_SESSION);
+    expect(results.some(result => result.content === secret)).toBe(false);
   });
 
   it('does not reveal or delete a memory entry across tenant scopes', async () => {

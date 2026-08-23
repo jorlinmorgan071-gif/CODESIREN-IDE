@@ -1,4 +1,4 @@
-import { v4 as uuid } from 'uuid';
+import { v4 as uuid, validate as isUuid } from 'uuid';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDbAvailable, memGet, memSet, query } from '../db/client.js';
@@ -8,6 +8,10 @@ export interface TenantScope {
   projectId: string;
 }
 
+export interface SessionScope extends TenantScope {
+  sessionId: string;
+}
+
 export class ProjectAccessError extends Error {
   constructor(message: string) {
     super(message);
@@ -15,8 +19,16 @@ export class ProjectAccessError extends Error {
   }
 }
 
+export class SessionAccessError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SessionAccessError';
+  }
+}
+
 const PERSONAL_PROJECT_PREFIX = 'personal-project:';
 const PROJECT_PREFIX = 'project:';
+const SESSION_PREFIX = 'session:';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MANAGED_WORKSPACES_DIR = resolve(__dirname, '..', '..', '.workspaces');
 
@@ -30,6 +42,10 @@ function personalProjectKey(userId: string): string {
 
 function projectKey(projectId: string): string {
   return `${PROJECT_PREFIX}${projectId}`;
+}
+
+function sessionKey(sessionId: string): string {
+  return `${SESSION_PREFIX}${sessionId}`;
 }
 
 export function scopesMatch(a: TenantScope | undefined, b: TenantScope | undefined): boolean {
@@ -66,6 +82,46 @@ export async function isProjectOwnedByUser(userId: string, projectId: string): P
 
   const project = memGet<{ id: string; userId: string }>(projectKey(projectId));
   return project?.userId === userId;
+}
+
+/**
+ * Resolve one durable session for the authenticated project owner. Existing
+ * sessions must belong to that exact user/project; a new UUID is created only
+ * inside that exact project. The in-process mapping only supports explicit
+ * degraded development operation and is never presented as durable memory.
+ */
+export async function ensureOwnedSession(scope: TenantScope, sessionId: string): Promise<SessionScope> {
+  if (!isUuid(sessionId)) throw new SessionAccessError('A valid session UUID is required');
+
+  if (isDbAvailable()) {
+    const existing = await query<{ id: string }>(
+      `SELECT s.id FROM sessions s
+       JOIN projects p ON p.id = s.project_id
+       WHERE s.id = $1 AND s.project_id = $2 AND p.user_id = $3
+       LIMIT 1`,
+      [sessionId, scope.projectId, scope.userId],
+    );
+    if (existing.length === 1) return { ...scope, sessionId };
+
+    const foreign = await query<{ id: string }>('SELECT id FROM sessions WHERE id = $1 LIMIT 1', [sessionId]);
+    if (foreign.length > 0) throw new SessionAccessError('Session not found in the authenticated project');
+
+    const inserted = await query<{ id: string }>(
+      `INSERT INTO sessions (id, project_id)
+       SELECT $1, p.id FROM projects p WHERE p.id = $2 AND p.user_id = $3
+       RETURNING id`,
+      [sessionId, scope.projectId, scope.userId],
+    );
+    if (inserted.length !== 1) throw new SessionAccessError('Session could not be created for the authenticated project');
+    return { ...scope, sessionId };
+  }
+
+  const existing = memGet<{ userId: string; projectId: string }>(sessionKey(sessionId));
+  if (existing && (existing.userId !== scope.userId || existing.projectId !== scope.projectId)) {
+    throw new SessionAccessError('Session not found in the authenticated project');
+  }
+  if (!existing) memSet(sessionKey(sessionId), { userId: scope.userId, projectId: scope.projectId });
+  return { ...scope, sessionId };
 }
 
 export async function ensurePersonalProject(userId: string): Promise<string> {

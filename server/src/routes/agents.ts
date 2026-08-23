@@ -9,7 +9,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { agentManager } from '../orchestration/agent-manager.js';
 import { makeEvent, broadcast } from '../ws/events.js';
 import type { AgentTask, ExecutionMode, TaskPriority, TaskType } from '../types.js';
-import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
+import { ProjectAccessError, SessionAccessError, ensureOwnedSession, resolveTenantScope } from '../tenancy/scope.js';
 
 export const agentsRouter = Router();
 
@@ -56,7 +56,16 @@ agentsRouter.post('/:agentId/send', requireAuth, async (req, res) => {
   }
 
   const projectId = scope.projectId;
-  const sessionId = parsed.data.sessionId ?? '00000000-0000-0000-0000-000000000000';
+  const sessionId = parsed.data.sessionId ?? uuid();
+  try {
+    await ensureOwnedSession(scope, sessionId);
+  } catch (error) {
+    if (error instanceof SessionAccessError) {
+      res.status(403).json({ error: 'Session access denied' });
+      return;
+    }
+    throw error;
+  }
 
   const task: AgentTask = {
     id: uuid(),

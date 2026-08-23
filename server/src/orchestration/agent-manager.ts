@@ -26,7 +26,7 @@ import {
   addToolResult,
 } from '../observability/traces.js';
 import { contextManager } from '../context/manager.js';
-import type { TenantScope } from '../tenancy/scope.js';
+import { ensureOwnedSession, type SessionScope, type TenantScope } from '../tenancy/scope.js';
 import { iterateWithTenantScope } from '../tenancy/execution-scope.js';
 import { resolveWorkspace } from '../workspace/service.js';
 
@@ -99,9 +99,9 @@ class AgentManager {
     return [...this.agents.values()];
   }
 
-  private getTaskScope(task: AgentTask): TenantScope | undefined {
+  private getTaskScope(task: AgentTask): SessionScope | undefined {
     const userId = task.context.userId;
-    return userId && task.projectId ? { userId, projectId: task.projectId } : undefined;
+    return userId && task.projectId && task.sessionId ? { userId, projectId: task.projectId, sessionId: task.sessionId } : undefined;
   }
 
   /**
@@ -109,7 +109,7 @@ class AgentManager {
    * resolve the project first; this final common-path hydration prevents a
    * direct caller or future route from reintroducing a client-controlled root.
    */
-  private async hydrateWorkspace(task: AgentTask): Promise<TenantScope | undefined> {
+  private async hydrateWorkspace(task: AgentTask): Promise<SessionScope | undefined> {
     const scope = this.getTaskScope(task);
     if (!scope) return undefined;
     let workspace;
@@ -127,7 +127,7 @@ class AgentManager {
     task.context.projectId = workspace.projectId;
     task.context.userId = workspace.userId;
     task.context.rootPath = workspace.rootPath;
-    return { userId: workspace.userId, projectId: workspace.projectId };
+    return ensureOwnedSession({ userId: workspace.userId, projectId: workspace.projectId }, task.sessionId);
   }
 
   getActiveTasksForScope(scope: TenantScope): AgentTask[] {
@@ -142,7 +142,7 @@ class AgentManager {
   // The single entry point. Typed chat → send(). Spoken command → send().
   // Gesture → send(). Same shape, same bus, same governance, same tracing.
   async send(task: AgentTask): Promise<void> {
-    let scope: TenantScope | undefined;
+    let scope: SessionScope | undefined;
     try {
       scope = await this.hydrateWorkspace(task);
     } catch (err: any) {
@@ -217,6 +217,11 @@ class AgentManager {
           projectGraphNodes: bundle.projectGraph.length,
           historyTurns: bundle.conversationHistory.length,
           memoryEntries: bundle.relevantMemory.length,
+          memoryRetrieval: bundle.relevantMemory.map((memory) => ({
+            score: memory.score,
+            quality: memory.quality,
+            provenance: memory.provenance,
+          })),
           truncated: bundle.tokenBudget.truncated,
         },
         status: 'succeeded',  // Phase 5: context assembly succeeded
@@ -350,7 +355,7 @@ class AgentManager {
     filesTouched: string[];
     error: string | null;
   }> {
-    let scope: TenantScope | undefined;
+    let scope: SessionScope | undefined;
     try {
       scope = await this.hydrateWorkspace(task);
     } catch {
@@ -431,6 +436,11 @@ class AgentManager {
           projectGraphNodes: bundle.projectGraph.length,
           historyTurns: bundle.conversationHistory.length,
           memoryEntries: bundle.relevantMemory.length,
+          memoryRetrieval: bundle.relevantMemory.map((memory) => ({
+            score: memory.score,
+            quality: memory.quality,
+            provenance: memory.provenance,
+          })),
           truncated: bundle.tokenBudget.truncated,
           via: 'executeAndWait',
         },

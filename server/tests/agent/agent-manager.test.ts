@@ -7,6 +7,7 @@ import express from 'express';
 import cors from 'cors';
 import { agentsRouter } from '../../src/routes/agents.js';
 import { healthRouter } from '../../src/routes/health.js';
+import { orchestratorRouter } from '../../src/routes/orchestrator.js';
 import { agentManager } from '../../src/orchestration/agent-manager.js';
 import { ghostMode } from '../../src/orchestration/ghost-mode.js';
 import { initDb, closeDb } from '../../src/db/client.js';
@@ -24,6 +25,7 @@ function startTestServer(): Promise<void> {
     app.use(express.json());
     app.use(cors());
     app.use('/api/agents', agentsRouter);
+    app.use('/api/orchestrator', orchestratorRouter);
     app.use('/api/health', healthRouter);
     server = http.createServer(app);
     attachWsServer(server);
@@ -114,7 +116,7 @@ describe('AgentManager', () => {
     expect(body.agents.some((a: any) => a.id === 'architect-agent')).toBe(true);
   });
 
-  it('POST /api/agents/architect-agent/send → 202 + taskId', async () => {
+  it('POST /api/agents/architect-agent/send → 202 + taskId + generated durable session', async () => {
     const res = await fetch(`${BASE}/api/agents/architect-agent/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -124,6 +126,8 @@ describe('AgentManager', () => {
     const body = await res.json() as any;
     expect(body.taskId).toBeDefined();
     expect(body.agentId).toBe('architect-agent');
+    expect(body.taskShape.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(body.taskShape.sessionId).not.toBe('00000000-0000-0000-0000-000000000000');
   });
 
   it('POST /api/agents/unknown-agent/send → 404', async () => {
@@ -133,6 +137,24 @@ describe('AgentManager', () => {
       body: JSON.stringify({ description: 'test', type: 'chat', executionMode: 'single-shot', origin: 'chat' }),
     });
     expect(res.status).toBe(404);
+  });
+
+  it('POST /api/orchestrator/chat requires a UUID session before dispatch', async () => {
+    const invalid = await fetch(`${BASE}/api/orchestrator/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sessionId: 'legacy-client-session', message: 'Explain this file' }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const sessionId = crypto.randomUUID();
+    const accepted = await fetch(`${BASE}/api/orchestrator/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sessionId, message: 'Explain this file' }),
+    });
+    expect(accepted.status).toBe(202);
+    expect((await accepted.json() as any).sessionId).toBe(sessionId);
   });
 
   it('agent send produces trace in runs.jsonl', async () => {

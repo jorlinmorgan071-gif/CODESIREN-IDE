@@ -13,6 +13,7 @@ import { useGestureInput, dispatchGesture, type GestureType } from '@/systems/pr
 import type { AgentEvent, ChatSession } from '@/types';
 import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
+import { createChatSessionId } from '@/lib/chat-session';
 import { SensoryFeedbackOverlay } from '@/components/voice/SensoryFeedbackOverlay';
 import { ScreenIntelligence } from '@/components/voice/ScreenIntelligence';
 import { BubbleToggle } from '@/components/voice/BubbleToggle';
@@ -366,7 +367,7 @@ export default function Home() {
     // Create a new chat session — the session entry must exist in state
     // BEFORE it's made active, otherwise ADD_CHAT_MESSAGE / UPDATE_CHAT_MESSAGE
     // silently no-op (keyed to a sessionId that has no matching session).
-    const newChatId = `cs-${Date.now()}`;
+    const newChatId = createChatSessionId();
     const newSession: ChatSession = {
       id: newChatId,
       name: 'New Chat',

@@ -23,6 +23,14 @@ import type {
 import type { SkillRef } from '../skills/manifest.js';
 import { memoryEngine } from '../memory/engine.js';
 import { getActiveTenantScope } from '../tenancy/execution-scope.js';
+import type { SessionScope } from '../tenancy/scope.js';
+
+function getActiveMemoryScope(): SessionScope | undefined {
+  const scope = getActiveTenantScope();
+  return scope && 'sessionId' in scope && typeof scope.sessionId === 'string' && scope.sessionId.length > 0
+    ? scope
+    : undefined;
+}
 
 export abstract class IAgent {
   abstract readonly id: string;            // e.g. 'architect-agent'
@@ -71,10 +79,12 @@ export abstract class IAgent {
   // and the agent_memory table (pgvector) or in-memory store for search.
   // ALL 20 agents get real memory through this base class — not just Memory Agent.
   async recall(query: string, limit = 5): Promise<MemoryChunk[]> {
-    return memoryEngine.search(query, limit, getActiveTenantScope());
+    const scope = getActiveMemoryScope();
+    return scope ? memoryEngine.search(query, limit, scope) : [];
   }
   async memorize(content: string, meta: MemoryMeta): Promise<void> {
-    await memoryEngine.memorize(content, meta, this.id, getActiveTenantScope());
+    const scope = getActiveMemoryScope();
+    if (scope) await memoryEngine.memorize(content, meta, this.id, scope);
   }
 
   // ── Skills (Step 3) ───────────────────────────────────────────────────
