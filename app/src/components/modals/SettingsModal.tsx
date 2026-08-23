@@ -11,7 +11,6 @@ import {
   Settings,
   Cpu,
   Palette,
-  Puzzle,
   Shield,
   Rocket,
   Mic,
@@ -24,14 +23,13 @@ import {
   Bot,
 } from 'lucide-react';
 
-type SettingsTab = 'models' | 'voice' | 'themes' | 'bubble' | 'extensions' | 'security' | 'deployment';
+type SettingsTab = 'models' | 'voice' | 'themes' | 'bubble' | 'security' | 'deployment';
 
 const settingsTabs: { id: SettingsTab; label: string; icon: LucideIcon }[] = [
   { id: 'models', label: 'Model Router', icon: Cpu },
   { id: 'voice', label: 'Voice', icon: Mic },
   { id: 'themes', label: 'Themes', icon: Palette },
   { id: 'bubble', label: 'Bubble', icon: Sparkles },
-  { id: 'extensions', label: 'Extensions', icon: Puzzle },
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'deployment', label: 'Deployment', icon: Rocket },
 ];
@@ -40,15 +38,6 @@ const cloudModels = [
   { name: 'Claude 3.5 Sonnet', provider: 'Anthropic', context: '200K' },
   { name: 'GPT-4o', provider: 'OpenAI', context: '128K' },
   { name: 'Gemini Pro', provider: 'Google', context: '1M' },
-];
-
-const extensions = [
-  { name: 'ESLint', version: '8.57.0', status: 'running' as const },
-  { name: 'Prettier', version: '3.2.5', status: 'running' as const },
-  { name: 'TypeScript Importer', version: '2.11.0', status: 'running' as const },
-  { name: 'Tailwind CSS IntelliSense', version: '0.10.5', status: 'running' as const },
-  { name: 'GitLens', version: '14.8.0', status: 'paused' as const },
-  { name: 'Docker', version: '1.29.0', status: 'running' as const },
 ];
 
 const deployments = [
@@ -916,45 +905,6 @@ export function SettingsModal() {
               {/* Bubble Accessibility */}
               {activeTab === 'bubble' && (
                 <BubbleSettingsPanel />
-              )}
-
-              {/* Extensions */}
-              {activeTab === 'extensions' && (
-                <div className="space-y-1">
-                  {extensions.map((ext) => (
-                    <div
-                      key={ext.name}
-                      className="flex items-center justify-between px-3 py-2.5 rounded-lg"
-                      style={{ backgroundColor: 'var(--surface-dark)', border: '1px solid var(--border-subtle)' }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Puzzle className="w-3.5 h-3.5" style={{ color: 'var(--steel-silver)' }} />
-                        <div>
-                          <div className="text-[12px]" style={{ color: 'var(--bright-silver)' }}>
-                            {ext.name}
-                          </div>
-                          <div className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
-                            v{ext.version}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <div
-                          className={`w-1.5 h-1.5 rounded-full ${ext.status === 'running' ? 'animate-agent-pulse' : ''}`}
-                          style={{
-                            backgroundColor: ext.status === 'running' ? '#22C55E' : ext.status === 'paused' ? '#F59E0B' : '#EE1C1C',
-                          }}
-                        />
-                        <span
-                          className="text-[10px] capitalize"
-                          style={{ color: ext.status === 'running' ? '#22C55E' : 'var(--muted-silver)' }}
-                        >
-                          {ext.status}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
               )}
 
               {/* Security */}

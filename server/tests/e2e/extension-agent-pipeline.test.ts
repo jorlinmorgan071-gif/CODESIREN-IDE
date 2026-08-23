@@ -37,6 +37,7 @@ describe('Phase D Batch 1 — End-to-End Pipeline (ExtensionAgent.invoke)', () =
 
   it('ExtensionAgent is constructed with the correct id / domain / acceptsSkills', () => {
     expect(agent.id).toBe('extension-agent');
+    expect(agent.name).toBe('Skills Vault Agent');
     expect(agent.domain).toBe('EXTENSION');
     expect(agent.acceptsSkills).toBe(true);
   });

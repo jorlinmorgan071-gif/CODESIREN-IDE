@@ -2,7 +2,7 @@
 // FrontendAgent — the FOURTH real IAgent implementation (Step 3).
 //
 // Converted from static demoData.ts row a2. The Step 3 proof: install a skill
-// via the Extension Agent, then invoke it FROM the Frontend Agent. Skills are
+// via the Skills Vault Agent, then invoke it FROM the Frontend Agent. Skills are
 // not agents — they are tool sequences the Frontend Agent can call.
 //
 // Per directive Section 1: agents gain a `skills: SkillRef[]` capability list.
@@ -33,7 +33,7 @@ Be concrete. Show real TypeScript/TSX, not vague descriptions.`;
 // Special task description prefix that tells the Frontend Agent to invoke a skill
 // instead of running the normal dispatcher. This is the "callable by the Frontend
 // Agent" proof path: the /api/skills/:name/invoke route can either call the
-// Extension Agent directly, or route through the Frontend Agent (with this prefix)
+// Skills Vault Agent directly, or route through the Frontend Agent (with this prefix)
 // to prove cross-agent skill invocation.
 const SKILL_INVOKE_PREFIX = '__skill_invoke__:';
 
@@ -62,7 +62,7 @@ export class FrontendAgent extends IAgent {
 
         const skill = getSkill(skillName);
         if (!skill) {
-          yield { type: 'error', content: `Skill '${skillName}' is not installed. Install it via the Extension Agent first.` };
+          yield { type: 'error', content: `Skill '${skillName}' is not installed. Install it through the Skills Vault first.` };
           return;
         }
 

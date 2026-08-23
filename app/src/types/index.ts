@@ -115,7 +115,7 @@ export interface Theme {
   };
 }
 
-export type SidebarTab = 'explorer' | 'search' | 'git' | 'agents' | 'extensions' | 'settings';
+export type SidebarTab = 'explorer' | 'search' | 'git' | 'agents' | 'settings';
 
 export type BottomPanelTab = 'terminal' | 'problems' | 'output' | 'agent-chat';
 

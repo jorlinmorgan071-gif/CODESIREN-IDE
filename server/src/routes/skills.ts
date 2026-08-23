@@ -7,7 +7,7 @@
 //   POST   /api/skills/discover         mine runs.jsonl for recurring tool sequences
 //
 // All routes use requireAuth. All actions are also available through the
-// Extension Agent via AgentManager.send() — the route is a thin convenience layer.
+// Skills Vault Agent via AgentManager.send() — the route is a thin convenience layer.
 
 import { Router } from 'express';
 import { z } from 'zod';
@@ -17,7 +17,8 @@ import { ExtensionAgent, type ExtensionAction } from '../agents/extension/index.
 
 export const skillsRouter = Router();
 
-// Cache the Extension Agent instance lookup
+// Cache the Skills Vault Agent instance lookup. Its stable internal ID remains
+// `extension-agent` for persisted orchestration compatibility.
 function getExtensionAgent(): ExtensionAgent | null {
   const agent = agentManager.get('extension-agent');
   return agent instanceof ExtensionAgent ? agent : null;
@@ -37,7 +38,7 @@ skillsRouter.post('/install', requireAuth, async (req, res) => {
   }
   const ext = getExtensionAgent();
   if (!ext) {
-    res.status(503).json({ error: 'Extension Agent not registered' });
+    res.status(503).json({ error: 'Skills Vault Agent not registered' });
     return;
   }
   let action: ExtensionAction;
@@ -56,7 +57,7 @@ skillsRouter.post('/install', requireAuth, async (req, res) => {
 skillsRouter.get('/', requireAuth, async (_req, res) => {
   const ext = getExtensionAgent();
   if (!ext) {
-    res.status(503).json({ error: 'Extension Agent not registered' });
+    res.status(503).json({ error: 'Skills Vault Agent not registered' });
     return;
   }
   const result = await ext.handleAction({ kind: 'list' });
@@ -75,7 +76,7 @@ skillsRouter.post('/:name/invoke', requireAuth, async (req, res) => {
   }
   const ext = getExtensionAgent();
   if (!ext) {
-    res.status(503).json({ error: 'Extension Agent not registered' });
+    res.status(503).json({ error: 'Skills Vault Agent not registered' });
     return;
   }
   const result = await ext.handleAction({
@@ -89,7 +90,7 @@ skillsRouter.post('/:name/invoke', requireAuth, async (req, res) => {
 skillsRouter.delete('/:name', requireAuth, async (req, res) => {
   const ext = getExtensionAgent();
   if (!ext) {
-    res.status(503).json({ error: 'Extension Agent not registered' });
+    res.status(503).json({ error: 'Skills Vault Agent not registered' });
     return;
   }
   const result = await ext.handleAction({ kind: 'uninstall', name: req.params.name });
@@ -111,7 +112,7 @@ skillsRouter.post('/discover', requireAuth, async (req, res) => {
   }
   const ext = getExtensionAgent();
   if (!ext) {
-    res.status(503).json({ error: 'Extension Agent not registered' });
+    res.status(503).json({ error: 'Skills Vault Agent not registered' });
     return;
   }
   const result = await ext.handleAction({ kind: 'discover', config: parsed.data });

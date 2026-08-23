@@ -6,7 +6,6 @@ import {
   Search,
   GitBranch,
   Bot,
-  Puzzle,
   Settings,
   PanelLeft,
   MessageSquare,
@@ -17,7 +16,6 @@ const sidebarItems: { id: SidebarTab; icon: LucideIcon; label: string }[] = [
   { id: 'search', icon: Search, label: 'Search' },
   { id: 'git', icon: GitBranch, label: 'Source Control' },
   { id: 'agents', icon: Bot, label: 'Agents' },
-  { id: 'extensions', icon: Puzzle, label: 'Extensions' },
   { id: 'settings', icon: Settings, label: 'Settings' },
 ];
 

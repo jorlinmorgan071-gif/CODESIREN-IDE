@@ -1,16 +1,14 @@
 // server/src/agents/extension/index.ts
-// ExtensionAgent — the THIRD real IAgent implementation (Step 3).
+// Skills Vault agent — the THIRD real IAgent implementation (Step 3).
 //
 // Per directive Section 1: "Skills Vault (new) — Sibling to existing Knowledge
-// Vault, surfaced via existing Extension Agent. Agents gain a `skills: SkillRef[]`
+// Vault, surfaced through this Skills Vault agent. Agents gain a `skills: SkillRef[]`
 // capability list. No separate skills marketplace UI."
 //
-// Per PDF Section 05: Extension Agent role = Manager, specialization =
-// "Extension health monitoring, conflict resolution, auto-recovery, resource
-// tracking." In Step 3 the Extension Agent absorbs the Skills Vault management
-// role: install / list / invoke / discover skills. The agent's execute() handles
-// task.type === 'custom' with description parsing, or the /api/skills routes
-// call its helper methods directly.
+// This agent manages only Skills Vault manifests: install / list / invoke /
+// discover skills. It is not a VSIX extension host or language-server manager.
+// Its execute() handles task.type === 'custom' with description parsing, or the
+// /api/skills routes call its helper methods directly.
 
 import type { AgentChunk, AgentTask, AgentDomain } from '../../types.js';
 import { IAgent } from '../base-agent.js';
@@ -47,11 +45,11 @@ export interface ExtensionActionResult {
   discoveryTraceId?: string;
 }
 
-const SYSTEM_PROMPT = `You are the Extension Agent of Zero Two: Code Siren.
+const SYSTEM_PROMPT = `You are the Skills Vault Agent of Zero Two: Code Siren.
 
-Your role: manage extensions AND the Skills Vault. You install, list, invoke,
-and discover skills. Skills are tool sequences that other agents can invoke —
-they are not agents themselves.
+Your role: manage the Skills Vault. You install, list, invoke, and discover
+skills. Skills are tool sequences that other agents can invoke — they are not
+VSIX extensions or language servers.
 
 When asked to install a skill, you parse the TOML manifest, optionally verify
 its Ed25519 signature, and register it in the Skills Vault.
@@ -63,7 +61,7 @@ trace — nothing happens off the books.`;
 
 export class ExtensionAgent extends IAgent {
   readonly id = 'extension-agent';
-  readonly name = 'Extension Agent';
+  readonly name = 'Skills Vault Agent';
   readonly domain: AgentDomain = 'EXTENSION';
   readonly icon = 'puzzle';
   readonly color = '#06B6D4';
@@ -75,7 +73,7 @@ export class ExtensionAgent extends IAgent {
 
   async *execute(task: AgentTask, signal: AbortSignal): AsyncGenerator<AgentChunk> {
     try {
-      // The Extension Agent is invoked via the standard dispatcher path, but
+      // The Skills Vault agent is invoked via the standard dispatcher path, but
       // its task descriptions are structured commands (JSON-encoded ExtensionAction).
       // This lets the /api/skills routes either call helper methods directly
       // (the common case) or route through AgentManager.send() for end-to-end tracing.
