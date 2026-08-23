@@ -6,6 +6,8 @@
 // during the e2e proof. Real tools (calculator, web_search, file_read, code_interpreter)
 // land in Step 3+ alongside the Skills Vault.
 
+import { requestExternalHttp } from '../../security/egress-policy.js';
+
 export interface ToolSpec {
   name: string;
   description: string;
@@ -157,6 +159,24 @@ toolRegistry.register({
     if (!url) {
       return { name: 'http_request', content: 'Missing required "url" arg', success: false };
     }
+    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(method)) {
+      return { name: 'http_request', content: `HTTP method ${method} is not allowed`, success: false, meta: { violation: 'unsafe-destination' } };
+    }
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) {
+      return { name: 'http_request', content: 'timeout_ms must be between 1 and 30000', success: false, meta: { violation: 'unsafe-destination' } };
+    }
+
+    const unsafeHeader = Object.entries(headers).find(([name, value]) => {
+      const normalized = name.toLowerCase();
+      return !/^[a-z0-9-]+$/i.test(name)
+        || /[\r\n]/.test(String(value))
+        || ['host', 'connection', 'content-length', 'transfer-encoding', 'cookie'].includes(normalized)
+        || normalized.startsWith('proxy-')
+        || normalized.startsWith('x-forwarded-');
+    });
+    if (unsafeHeader) {
+      return { name: 'http_request', content: `Header ${unsafeHeader[0]} is not permitted`, success: false, meta: { violation: 'unsafe-destination' } };
+    }
 
     // ── API key handling ──────────────────────────────────────────────
     let finalUrl = url;
@@ -183,30 +203,31 @@ toolRegistry.register({
       }
     }
 
-    // ── Make the request with timeout ─────────────────────────────────
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const fetchOptions: RequestInit = {
-        method,
-        headers: finalHeaders,
-        signal: controller.signal,
+    // ── Make the request through the single egress policy ─────────────
+    // It validates every destination, pins the transport to the reviewed IP,
+    // and revalidates every redirect rather than relying on fetch defaults.
+    const sensitiveHeaderNames = apiKeyEnv && apiKeyPlacement !== 'query' ? [apiKeyHeaderName] : [];
+    const egress = await requestExternalHttp({
+      url: finalUrl,
+      method,
+      headers: finalHeaders,
+      body: requestBody && ['POST', 'PUT', 'PATCH'].includes(method) ? requestBody : undefined,
+      timeoutMs,
+      sensitiveHeaderNames,
+    });
+    if (!egress.ok || !egress.response) {
+      return {
+        name: 'http_request',
+        content: `Egress blocked or failed: ${egress.reason ?? 'request could not be completed'}`,
+        success: false,
+        meta: { violation: egress.violation ?? 'network-error' },
       };
-
-      // Only pass body for POST/PUT/PATCH with a body present
-      if (requestBody && ['POST', 'PUT', 'PATCH'].includes(method)) {
-        fetchOptions.body = requestBody;
-      }
-
-      const response = await fetch(finalUrl, fetchOptions);
-
-      clearTimeout(timeoutId);
+    }
+    const response = egress.response;
 
       // ── Handle non-2xx status codes ─────────────────────────────────
-      if (!response.ok) {
-        let errorBody = '';
-        try { errorBody = await response.text(); } catch { /* ignore */ }
+      if (response.status < 200 || response.status >= 300) {
+        const errorBody = response.body;
         // Truncate error body to avoid huge responses, and ensure no key
         // value is in the error body (it shouldn't be, but be safe)
         const truncatedBody = errorBody.slice(0, 500);
@@ -214,16 +235,17 @@ toolRegistry.register({
           name: 'http_request',
           content: `HTTP ${response.status} ${response.statusText}: ${truncatedBody}`,
           success: false,
+          meta: { finalUrl: response.finalUrl, redirectCount: response.redirectCount },
         };
       }
 
       // ── Parse response body ─────────────────────────────────────────
-      const contentType = response.headers.get('content-type') ?? '';
+      const contentType = String(response.headers['content-type'] ?? '');
       let body: string;
 
       if (contentType.includes('application/json')) {
         try {
-          const jsonData = await response.json();
+          const jsonData = JSON.parse(response.body);
           body = JSON.stringify(jsonData, null, 2);
         } catch {
           return {
@@ -234,7 +256,7 @@ toolRegistry.register({
         }
       } else {
         try {
-          body = await response.text();
+          body = response.body;
         } catch {
           return {
             name: 'http_request',
@@ -251,25 +273,7 @@ toolRegistry.register({
         name: 'http_request',
         content: cappedBody,
         success: true,
+        meta: { finalUrl: response.finalUrl, redirectCount: response.redirectCount },
       };
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-
-      // Distinguish timeout from other network errors
-      if (err.name === 'AbortError') {
-        return {
-          name: 'http_request',
-          content: `Request timed out after ${timeoutMs}ms`,
-          success: false,
-        };
-      }
-
-      // Network error — don't expose internal details that might include keys
-      return {
-        name: 'http_request',
-        content: `Network error: ${err.message?.slice(0, 200) ?? 'unknown error'}`,
-        success: false,
-      };
-    }
   },
 });

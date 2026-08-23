@@ -98,6 +98,18 @@ export function installPackage(
     };
   }
 
+  // npm resolves and downloads arbitrary registry and package-script content.
+  // Until that transport is routed through the same pinned, redirect-aware
+  // egress policy as http_request, do not claim this direct host process path
+  // is safe merely because its command string was validated.
+  return {
+    success: false,
+    installedSpec: params.packageName,
+    installOutput: '',
+    verifyOutput: '',
+    reason: 'package installation unavailable: npm registry egress is not yet routed through the centralized safe egress policy',
+  };
+
   // Extract the bare package name (without @version) for npm ls verification.
   // "lodash@4.17.21" → "lodash". "@scope/pkg@1.0.0" → "@scope/pkg".
   const barePkgName = extractBarePackageName(params.packageName);

@@ -52,6 +52,7 @@ import { hasWriteSteps } from './workflow-settings.js';
 import { updateWorkflowRun } from './workflow-settings.js';
 import { addVerification } from '../observability/traces.js';
 import type { VerificationRecord, StepStatus } from '../observability/traces.js';
+import { validateShellCommand } from '../security/sandbox.js';
 
 const __filename_esm = fileURLToPath(import.meta.url);
 const __dirname_esm = dirname(__filename_esm);
@@ -102,6 +103,15 @@ export interface ShellCommandResult {
  * via Phase 5's addVerification().
  */
 function runShellCommand(command: string, cwd: string, timeoutMs = 120000): Promise<ShellCommandResult> {
+  const validation = validateShellCommand(command);
+  if (!validation.allowed) {
+    return Promise.resolve({
+      success: false,
+      output: `Blocked by execution policy: ${validation.reason}`,
+      duration: 0,
+      exitCode: null,
+    });
+  }
   return new Promise((resolve) => {
     const start = Date.now();
     let output = '';

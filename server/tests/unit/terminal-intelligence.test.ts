@@ -169,7 +169,7 @@ describe('Phase A Section 2 — Terminal Intelligence', () => {
   // GROUP 2: Package install capability
   // ════════════════════════════════════════════════════════════════════
   describe('Package install capability', () => {
-    it('installPackage: real npm install + real npm ls verification', () => {
+    it('installPackage: refuses direct registry egress until it uses the centralized safe egress policy', () => {
       // Create a real npm fixture under fixtureRoot/server/
       const serverDir = join(fixtureRoot, 'server');
       mkdirSync(serverDir, { recursive: true });
@@ -186,14 +186,13 @@ describe('Phase A Section 2 — Terminal Intelligence', () => {
         targetDir: 'server',
       });
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
       expect(result.installedSpec).toBe('minimist@1.2.8');
-      expect(result.installedVersion).toBe('1.2.8');
-      expect(result.verifyOutput).toContain('minimist');
+      expect(result.reason).toContain('centralized safe egress policy');
 
-      // Verify the package is really in package.json
+      // The direct installer must not add a package after refusing egress.
       const pkgJson = JSON.parse(readFileSync(join(serverDir, 'package.json'), 'utf8'));
-      expect(pkgJson.dependencies.minimist).toBe('^1.2.8');
+      expect(pkgJson.dependencies.minimist).toBeUndefined();
     }, 120_000);
 
     it('installPackage: target dir without package.json fails honestly', () => {
@@ -297,15 +296,11 @@ describe('Phase A Section 2 — Terminal Intelligence', () => {
       expect(result.explanation).toContain('sudo');
     });
 
-    it('unrecognized command: honest fallback, no fabricated explanation', () => {
+    it('shell chaining and expansion are blocked before an unrecognized command can execute', () => {
       const result = classifyTest.classifyCommand('awk "{print $2}" file.txt | sort | uniq -c');
-      expect(result.blocked).toBe(false);
-      expect(result.matched).toBe(false);
-      expect(result.risk).toBe('moderate');
-      expect(result.explanation).toBe('Custom command — review before executing');
-      // Crucially, it does NOT pretend to know what the command does
-      expect(result.explanation).not.toContain('awk');
-      expect(result.explanation).not.toContain('sort');
+      expect(result.blocked).toBe(true);
+      expect(result.risk).toBe('blocked');
+      expect(result.explanation).toContain('Shell control operators');
     });
 
     it('dangerous commands flagged with risk=dangerous', () => {

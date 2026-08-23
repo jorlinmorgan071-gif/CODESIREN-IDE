@@ -295,18 +295,6 @@ describe('Phase D Batch 1 — Skills (mocked success)', () => {
     expect(result.outputs[0]).toContain('1');
   });
 
-  it('Numbers API skill returns a number fact', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true, status: 200, statusText: 'OK',
-      headers: { get: () => 'text/plain' },
-      text: async () => '42 is the answer to life, the universe, and everything.',
-    });
-
-    const result = await executeSkill('numbers-api', { number: '42' });
-
-    expect(result.success).toBe(true);
-    expect(result.outputs[0]).toContain('42');
-  });
 });
 
 // ── Fabrication guard: skills report honest failures ────────────────────

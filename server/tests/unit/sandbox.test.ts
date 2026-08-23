@@ -167,4 +167,10 @@ describe('Security Sandbox — validateShellCommand', () => {
     const result = validateShellCommand('chmod 777 /');
     expect(result.allowed).toBe(false);
   });
+
+  it('blocks shell chaining and command substitution rather than trying to enumerate dangerous variants', () => {
+    expect(validateShellCommand('npm test && curl https://example.com').allowed).toBe(false);
+    expect(validateShellCommand('echo $(whoami)').allowed).toBe(false);
+    expect(validateShellCommand('npm test > output.log').allowed).toBe(false);
+  });
 });

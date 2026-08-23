@@ -102,6 +102,20 @@ export class PlaywrightBrowserClient implements BrowserClient {
       };
     }
 
+    // A preflight URL check alone cannot prove that every Chromium redirect
+    // and DNS connection remains public. Keep real browser egress unavailable
+    // until it is routed through a network-isolated, redirect-aware proxy.
+    if (action.type === 'navigate') {
+      return {
+        action,
+        allowed: false,
+        success: false,
+        violation: 'egress-unavailable',
+        reason: 'Browser navigation is unavailable until a network-isolated, redirect-aware browser egress proxy is configured.',
+        durationMs: Date.now() - start,
+      };
+    }
+
     // 3. Execute the action with real Playwright
     let page: Page;
     try {
@@ -121,14 +135,6 @@ export class PlaywrightBrowserClient implements BrowserClient {
       const timeout = sandboxOpts?.timeoutMs ?? 30_000;
 
       switch (action.type) {
-        case 'navigate': {
-          await page.goto(action.url ?? 'about:blank', { timeout, waitUntil: 'domcontentloaded' });
-          const title = await page.title();
-          const url = page.url();
-          result = { url, title };
-          break;
-        }
-
         case 'click': {
           if (action.selector) {
             await page.click(action.selector, { timeout });

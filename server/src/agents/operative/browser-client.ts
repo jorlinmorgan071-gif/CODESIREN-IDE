@@ -11,7 +11,7 @@
 // The other browser actions (navigate, click, type) are validated by
 // validateBrowserAction() in security/sandbox.ts (URL allowlists etc.).
 
-import { validateBrowserAction, executeInSandbox, type BrowserAction, type SandboxOpts } from '../../security/sandbox.js';
+import { validateBrowserAction, executeInSandbox, type BrowserAction, type SandboxOpts, type PolicyViolation } from '../../security/sandbox.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ export interface BrowserActionResult {
   allowed: boolean;
   success: boolean;
   result?: unknown;
-  violation?: string;
+  violation?: PolicyViolation;
   reason?: string;
   durationMs: number;
 }
@@ -130,6 +130,25 @@ export class StubBrowserClient implements BrowserClient {
   }
 }
 
+class UnavailableBrowserClient implements BrowserClient {
+  readonly implementation = 'unavailable';
+
+  async execute(action: BrowserAction): Promise<BrowserActionResult> {
+    return {
+      action,
+      allowed: false,
+      success: false,
+      violation: 'egress-unavailable',
+      reason: 'Browser execution is unavailable: a network-isolated, redirect-aware browser egress proxy is required.',
+      durationMs: 0,
+    };
+  }
+
+  async screenshot(): Promise<{ success: boolean; data?: string; error?: string }> {
+    return { success: false, error: 'Browser execution is unavailable: a network-isolated browser egress proxy is required.' };
+  }
+}
+
 // ── Dependency injection ─────────────────────────────────────────────────
 //
 // Phase A Section 5: PlaywrightBrowserClient is the PRODUCTION default.
@@ -153,8 +172,8 @@ if (process.env.NODE_ENV === 'test') {
     const { PlaywrightBrowserClient } = require('./playwright-client.js');
     activeBrowserClient = new PlaywrightBrowserClient();
   } catch (err: any) {
-    console.warn(`[browser-client] Playwright not available (${err.message}), falling back to stub`);
-    activeBrowserClient = new StubBrowserClient();
+    console.warn(`[browser-client] Playwright not available (${err.message}), browser execution unavailable until configured safely`);
+    activeBrowserClient = new UnavailableBrowserClient();
   }
 }
 

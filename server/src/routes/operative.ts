@@ -15,6 +15,8 @@ import { sidecarManager } from '../sidecars/manager.js';
 import { v4 as uuid } from 'uuid';
 import type { AgentTask } from '../types.js';
 import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
+import { addStep, addToolResult, completeTrace, setOutcome, startTrace } from '../observability/traces.js';
+import { validateUntrustedInstruction } from '../security/egress-policy.js';
 
 export const operativeRouter = Router();
 
@@ -47,9 +49,25 @@ operativeRouter.post('/browse', requireAuth, async (req, res) => {
   const scope = await resolveOperativeScope(req, parsed.data.projectId);
   if (!scope) { res.status(403).json({ error: 'Project access denied' }); return; }
   const projectId = scope.projectId;
-  const description = parsed.data.actions ? JSON.stringify(parsed.data.actions) : parsed.data.prompt ?? 'navigate to https://example.com';
+  const taskId = uuid();
+  const suppliedInstruction = parsed.data.actions ? JSON.stringify(parsed.data.actions) : parsed.data.prompt ?? '';
+  const instruction = validateUntrustedInstruction(suppliedInstruction);
+  if (!instruction.allowed) {
+    startTrace({ taskId, agentId: 'operative-agent', domain: 'OPERATIVE', executionMode: 'single-shot', input: 'blocked untrusted browser instruction', scope });
+    addStep(taskId, { kind: 'loop-guard', label: `operative browse request blocked: ${instruction.reason}`, meta: { failClosed: true, violation: instruction.violation } });
+    addToolResult(taskId, { name: 'browser.action-plan', args: { source: parsed.data.actions ? 'actions' : 'prompt' }, result: `blocked: ${instruction.reason}`, success: false });
+    setOutcome(taskId, 'loop-blocked', `blocked hostile browser instruction: ${instruction.reason}`);
+    completeTrace(taskId, '(browser instruction blocked)');
+    res.status(422).json({ error: 'Browser instruction blocked', taskId, violation: instruction.violation });
+    return;
+  }
+  if (!parsed.data.actions) {
+    res.status(422).json({ error: 'Natural-language browser prompts are unavailable until a real planner produces a reviewable typed action plan.' });
+    return;
+  }
+  const description = JSON.stringify(parsed.data.actions);
   const task: AgentTask = {
-    id: uuid(), projectId, sessionId: projectId, agentId: 'operative-agent',
+    id: taskId, projectId, sessionId: projectId, agentId: 'operative-agent',
     type: 'browse', description,
     // Approval-gate fix: pass userId so the agent can tag findings for write
     // browser actions (navigate/click/type/evaluate/scroll). Without this,

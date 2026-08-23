@@ -24,6 +24,7 @@
 import ivm from 'isolated-vm';
 import { v4 as uuid } from 'uuid';
 import { addStep, addToolResult, setOutcome, startTrace, completeTrace } from '../observability/traces.js';
+import { validateExternalDestination, validateUntrustedInstruction, type EgressViolation } from './egress-policy.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,8 @@ export type SandboxViolation =
   | 'disallowed-call'
   | 'syntax-error'
   | 'runtime-error';
+
+export type PolicyViolation = SandboxViolation | EgressViolation | 'shell-metacharacter';
 
 export interface SandboxResult {
   success: boolean;
@@ -232,20 +235,8 @@ export interface BrowserAction {
 export interface ActionValidationResult {
   allowed: boolean;
   reason?: string;
-  violation?: SandboxViolation;
+  violation?: PolicyViolation;
 }
-
-// URL schemes that are always blocked
-const BLOCKED_URL_SCHEMES = ['file:', 'data:', 'javascript:', 'about:'];
-
-// Domains that are blocked by default (can be overridden per-deployment)
-const BLOCKED_DOMAINS = [
-  'localhost',
-  '127.0.0.1',
-  '0.0.0.0',
-  '169.254.169.254',  // cloud metadata endpoint
-  'metadata.google.internal',
-];
 
 /**
  * Validate a browser action before it's dispatched.
@@ -282,22 +273,23 @@ export async function validateBrowserAction(
     // pre-validates it to catch obvious escapes.
   }
 
-  // 3. For 'navigate' actions, check the URL
-  if (action.type === 'navigate' && action.url) {
-    for (const scheme of BLOCKED_URL_SCHEMES) {
-      if (action.url.startsWith(scheme)) {
-        return { allowed: false, reason: `Blocked URL scheme: ${scheme}` };
-      }
+  if (action.type === 'type' && action.text) {
+    const instruction = validateUntrustedInstruction(action.text);
+    if (!instruction.allowed) {
+      return { allowed: false, reason: `Blocked hostile browser instruction: ${instruction.reason}`, violation: instruction.violation };
     }
-    try {
-      const parsed = new URL(action.url);
-      for (const domain of BLOCKED_DOMAINS) {
-        if (parsed.hostname === domain || parsed.hostname.endsWith(`.${domain}`)) {
-          return { allowed: false, reason: `Blocked domain: ${parsed.hostname} (matches ${domain})` };
-        }
-      }
-    } catch {
-      return { allowed: false, reason: `Invalid URL: ${action.url}` };
+  }
+
+  // 3. Navigation uses the same DNS/IP-aware external destination policy as
+  // HTTP tools. A bare browser hostname check is not sufficient against SSRF
+  // or DNS answers that contain a private address.
+  if (action.type === 'navigate') {
+    if (!action.url) {
+      return { allowed: false, reason: 'Navigate action requires a destination URL', violation: 'unsafe-destination' };
+    }
+    const destination = await validateExternalDestination(action.url);
+    if (!destination.allowed) {
+      return { allowed: false, reason: `Blocked browser destination: ${destination.reason}`, violation: destination.violation };
     }
   }
 
@@ -311,8 +303,10 @@ export async function validateBrowserAction(
 export interface ShellCommandValidationResult {
   allowed: boolean;
   reason?: string;
-  violation?: SandboxViolation;
+  violation?: PolicyViolation;
 }
+
+const SHELL_CONTROL_SYNTAX = /(?:^|[^\\])(?:;|&&|\|\||\||`|\$\(|\$\{|<\(|>\(|\n|\r|>>?|<<|<&|>&)|(?:^|\s)[.&](?:\s|$)/;
 
 // Commands/patterns that are ALWAYS blocked — non-negotiable.
 const BLOCKED_SHELL_PATTERNS: Array<{ pattern: RegExp; reason: string; violation: SandboxViolation }> = [
@@ -336,6 +330,10 @@ const BLOCKED_SHELL_PATTERNS: Array<{ pattern: RegExp; reason: string; violation
   { pattern: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, reason: 'Fork bomb detected', violation: 'disallowed-call' },
   // > /dev/null 2>&1 on critical paths (obfuscation pattern)
   { pattern: /\brm\s+.*>\s*\/dev\/null/i, reason: 'rm with output suppression — suspicious', violation: 'disallowed-call' },
+  // Network-capable command-line clients bypass the HTTP destination policy.
+  { pattern: /\b(?:curl|wget|ftp|ssh|scp|sftp|nc|ncat|netcat|telnet)\b/i, reason: 'Direct network client bypasses the egress policy', violation: 'disallowed-call' },
+  // Shell interpreters and dynamic evaluation would bypass simple command validation.
+  { pattern: /\b(?:eval|source)\b/i, reason: 'Dynamic shell evaluation is not allowed', violation: 'disallowed-call' },
 ];
 
 export function validateShellCommand(command: string): ShellCommandValidationResult {
@@ -344,10 +342,19 @@ export function validateShellCommand(command: string): ShellCommandValidationRes
     return { allowed: false, reason: 'Empty command', violation: 'runtime-error' };
   }
 
+  const instruction = validateUntrustedInstruction(trimmed);
+  if (!instruction.allowed) {
+    return { allowed: false, reason: `Blocked hostile instruction: ${instruction.reason}`, violation: instruction.violation };
+  }
+
   for (const { pattern, reason, violation } of BLOCKED_SHELL_PATTERNS) {
     if (pattern.test(trimmed)) {
       return { allowed: false, reason, violation };
     }
+  }
+
+  if (SHELL_CONTROL_SYNTAX.test(trimmed)) {
+    return { allowed: false, reason: 'Shell control operators, substitution, redirection, and expansion are not allowed', violation: 'shell-metacharacter' };
   }
 
   return { allowed: true };

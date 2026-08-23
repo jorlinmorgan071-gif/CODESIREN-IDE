@@ -56,6 +56,7 @@ import type { BrowserAction } from '../../security/sandbox.js';
 import { addStep, addToolResult } from '../../observability/traces.js';
 import { makeEvent, broadcast } from '../../ws/events.js';
 import { ghostMode } from '../../orchestration/ghost-mode.js';
+import { validateUntrustedInstruction } from '../../security/egress-policy.js';
 
 const SYSTEM_PROMPT = `You are the Operative Agent of Zero Two: Code Siren.
 
@@ -215,8 +216,42 @@ export class OperativeAgent extends IAgent {
       const parsed = JSON.parse(task.description);
       actions = Array.isArray(parsed) ? parsed : [parsed];
     } catch {
-      const url = task.description.trim();
-      actions = url.startsWith('http') ? [{ type: 'navigate', url }] : [{ type: 'navigate', url: 'https://example.com' }];
+      const instruction = validateUntrustedInstruction(task.description);
+      const reason = instruction.allowed
+        ? 'Natural-language browser planning is unavailable until a real planner produces a reviewable typed action plan.'
+        : `Blocked hostile browser instruction: ${instruction.reason}`;
+      addStep(task.id, {
+        kind: 'loop-guard',
+        label: `browser task refused before action parsing: ${reason}`,
+        meta: { failClosed: true, violation: instruction.violation ?? 'egress-unavailable' },
+      });
+      addToolResult(task.id, {
+        name: 'browser.action-plan',
+        args: { source: 'untrusted-natural-language' },
+        result: `refused: ${reason}`,
+        success: false,
+      });
+      yield { type: 'error', content: reason, meta: { recoverable: true, code: instruction.violation ?? 'BROWSER_PLAN_UNAVAILABLE' } };
+      yield { type: 'done', content: '' };
+      return;
+    }
+
+    const instruction = validateUntrustedInstruction(JSON.stringify(actions));
+    if (!instruction.allowed) {
+      addStep(task.id, {
+        kind: 'loop-guard',
+        label: `browser action payload blocked: ${instruction.reason}`,
+        meta: { failClosed: true, violation: instruction.violation },
+      });
+      addToolResult(task.id, {
+        name: 'browser.action-plan',
+        args: { source: 'typed-action-payload' },
+        result: `blocked: ${instruction.reason}`,
+        success: false,
+      });
+      yield { type: 'error', content: `Blocked hostile browser instruction: ${instruction.reason}`, meta: { recoverable: true, code: instruction.violation } };
+      yield { type: 'done', content: '' };
+      return;
     }
 
     yield { type: 'text', content: `[operative-agent] Executing ${actions.length} browser action(s)\n\n` };

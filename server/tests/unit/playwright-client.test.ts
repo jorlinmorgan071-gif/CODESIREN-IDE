@@ -2,8 +2,8 @@
 // Phase A Section 5: real Playwright browser automation tests.
 //
 // Proves (with REAL headless Chromium, not mocks):
-//   1. navigate to a real safe URL → real page title
-//   2. click/type/scroll/screenshot → real results
+//   1. navigate refuses until redirect-aware isolated browser egress exists
+//   2. click/type/scroll/screenshot → real local browser results
 //   3. evaluate is REFUSED with a clear message (not silently no-op'd)
 //   4. URL validation blocks dangerous targets (file://, localhost, cloud
 //      metadata) with the REAL client, not just the stub
@@ -29,27 +29,24 @@ describe('Phase A Section 5 — Real Playwright browser automation', () => {
   });
 
   // ════════════════════════════════════════════════════════════════════
-  // TEST 1: Real navigate — real page title from a real URL
+  // TEST 1: Real navigate — fail closed pending isolated browser egress
   // ════════════════════════════════════════════════════════════════════
-  it('navigate to https://example.com → real page title "Example Domain"', async () => {
+  it('navigate to https://example.com → refused until isolated redirect-aware browser egress exists', async () => {
     const action: BrowserAction = { type: 'navigate', url: 'https://example.com' };
     const result = await client.execute(action, { timeoutMs: 15_000 });
 
-    expect(result.allowed).toBe(true);
-    expect(result.success).toBe(true);
-    expect(result.result).toBeDefined();
-    const r = result.result as { url: string; title: string };
-    expect(r.title).toBe('Example Domain'); // real page title, not stub-simulated
-    expect(r.url).toContain('example.com');
+    expect(result).toMatchObject({
+      allowed: false,
+      success: false,
+      violation: 'egress-unavailable',
+    });
+    expect(result.reason).toContain('redirect-aware browser egress proxy');
   }, 30_000);
 
   // ════════════════════════════════════════════════════════════════════
   // TEST 2: Real screenshot — real base64 image bytes
   // ════════════════════════════════════════════════════════════════════
   it('screenshot after navigate → real image bytes (non-empty base64)', async () => {
-    // Navigate first so the page has content
-    await client.execute({ type: 'navigate', url: 'https://example.com' }, { timeoutMs: 15_000 });
-
     const action: BrowserAction = { type: 'screenshot' };
     const result = await client.execute(action, { timeoutMs: 15_000 });
 
@@ -86,8 +83,6 @@ describe('Phase A Section 5 — Real Playwright browser automation', () => {
   // TEST 4: Real scroll — PageDown press
   // ════════════════════════════════════════════════════════════════════
   it('scroll → real scroll action (PageDown)', async () => {
-    await client.execute({ type: 'navigate', url: 'https://example.com' }, { timeoutMs: 15_000 });
-
     const action: BrowserAction = { type: 'scroll' };
     const result = await client.execute(action, { timeoutMs: 15_000 });
 
@@ -101,11 +96,8 @@ describe('Phase A Section 5 — Real Playwright browser automation', () => {
   // TEST 5: Real click — click on an element
   // ════════════════════════════════════════════════════════════════════
   it('click on a link → real click result (may navigate, that\'s ok)', async () => {
-    await client.execute({ type: 'navigate', url: 'https://example.com' }, { timeoutMs: 15_000 });
-
-    // example.com's <a> link navigates to iana.org — the click itself succeeds,
-    // but the navigation may cause a timeout. Use a longer timeout + accept
-    // that the result might include a navigation.
+    // A fresh blank page contains no link. The test proves that a local browser
+    // action still reaches Playwright without enabling untrusted navigation.
     const action: BrowserAction = { type: 'click', selector: 'a' };
     const result = await client.execute(action, { timeoutMs: 15_000 });
 
