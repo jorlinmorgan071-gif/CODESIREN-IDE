@@ -32,6 +32,6 @@ The P0 boundary does not retrofit arbitrary legacy agent utility APIs that accep
 | Existing project-file security route suite after root-bound correction | Passed: 6 tests |
 | Frontend suite after client payload and WebSocket identity updates | Passed: 11 files / 63 tests; pre-existing React `act(...)`, Three.js, and Browserslist warnings remain non-blocking |
 
-## Remaining release steps
+## Release evidence
 
-The final P0 gate still requires complete server tests, complete frontend tests, frontend lint and production build, whitespace and protected-asset audit, secret-safe test scan, source/diff review, commit, push to `origin/main`, and remote SHA parity verification. The release status is **not published** until those checks are complete.
+The complete backend suite passed with **65 files and 862 tests**. Backend typecheck, focused WorkspaceService and project-file security suites, frontend tests, frontend lint, and the frontend production build passed. The final source review passed `git diff --check` and found no protected avatar or model assets. The implementation commit is `747cd41`; it was published after safely merging remote documentation-only deletions. Local `main` and `origin/main` both resolve to final merge commit `d6f0be3d592a88599308b46f3c36948ae1513bdf`. The release status is **published**.
