@@ -31,6 +31,7 @@ changesRouter.post('/plan', requireAuth, async (req, res) => {
       path: transaction.path,
       status: transaction.status,
       diff: transaction.diff,
+      impact: transaction.impact,
     });
   } catch (error) {
     if (error instanceof ProjectAccessError || error instanceof WorkspaceAccessError) {

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { getToken } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { summarizeChangeImpact, type ChangeImpactAnalysis } from '@/lib/change-impact';
 import { getActiveEditorContent } from '@/components/editor/CodeEditor';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
@@ -46,6 +47,7 @@ interface DiffPreview {
   path?: string;
   transactionId?: string;
   editorContent?: string;
+  impact?: ChangeImpactAnalysis;
 }
 
 export function InlineAI() {
@@ -171,6 +173,7 @@ export function InlineAI() {
         path,
         transactionId: transaction.transactionId,
         editorContent,
+        impact: transaction.impact,
       });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -367,6 +370,25 @@ export function InlineAI() {
               {diffPreview.resultCode}
             </pre>
           </div>
+          {diffPreview.impact && (
+            <section aria-label="Changed-surface impact analysis" className="p-2 rounded-md space-y-1.5" style={{ backgroundColor: 'rgba(255,255,255,0.025)', border: '1px solid var(--border-subtle)' }}>
+              <div className="text-[10px] font-medium" style={{ color: 'var(--steel-silver)' }}>CHANGED-SURFACE ANALYSIS</div>
+              <p className="text-[10px] leading-relaxed" style={{ color: 'var(--muted-silver)' }}>
+                {summarizeChangeImpact(diffPreview.impact)}
+              </p>
+              {diffPreview.impact.status === 'available' && (
+                <>
+                  {diffPreview.impact.dependents.length > 0 && <div className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>Direct dependents: {diffPreview.impact.dependents.map((entry) => entry.path).join(', ')}</div>}
+                  {diffPreview.impact.routes.length > 0 && <div className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>Static routes: {diffPreview.impact.routes.map((entry) => `${entry.method} ${entry.path}`).join(', ')}</div>}
+                  {diffPreview.impact.tests.length > 0 && <div className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>Affected tests: {diffPreview.impact.tests.map((entry) => entry.path).join(', ')}</div>}
+                  <div className="text-[9px] pt-1" style={{ color: 'var(--steel-silver)' }}>DECLARED VERIFICATION — NOT RUN</div>
+                  {diffPreview.impact.verification.length > 0
+                    ? diffPreview.impact.verification.map((entry) => <code key={`${entry.packagePath}:${entry.command}`} className="block text-[9px] break-all" style={{ color: 'var(--muted-silver)' }}>{entry.packagePath}$ {entry.command}</code>)
+                    : <div className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>No package script could be declared from the affected surface.</div>}
+                </>
+              )}
+            </section>
+          )}
           {/* Accept/Reject */}
           <div className="flex gap-2">
             <button

@@ -16,6 +16,7 @@ import type {
   ElevenLabsVoiceOption,
 } from '@/types';
 import { getToken, clearAuth } from './auth';
+import type { ChangeImpactAnalysis } from './change-impact';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -174,7 +175,7 @@ export const api = {
     after: string;
     expectedContent: string;
     mode: 'refactor' | 'document' | 'optimize' | 'convert';
-  }): Promise<{ transactionId: string; traceId: string; projectId: string; path: string; status: 'planned'; diff: string }> {
+  }): Promise<{ transactionId: string; traceId: string; projectId: string; path: string; status: 'planned'; diff: string; impact?: ChangeImpactAnalysis }> {
     return request('/changes/plan', { method: 'POST', body: JSON.stringify(input) });
   },
 

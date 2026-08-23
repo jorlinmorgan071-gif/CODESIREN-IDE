@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { v4 as uuid } from 'uuid';
 import { writeProjectFile, type ProjectFileWriteResult } from '../agents/_shared/project-files.js';
+import { analyzeChangeImpact, type ChangeImpactAnalysis } from './impact.js';
 import { addStep, addVerification, completeTrace, setOutcome, startTrace } from '../observability/traces.js';
 import { resolveWorkspace, resolveWorkspacePath, workspaceRelativePath, type WorkspaceIdentity } from '../workspace/service.js';
 
@@ -23,6 +24,7 @@ export interface ChangeTransactionResult {
   path: string;
   status: ChangeTransactionStatus;
   diff: string;
+  impact?: ChangeImpactAnalysis;
   verification?: { name: 'disk-reconcile'; status: 'passed' | 'failed'; detail: string };
   reason?: string;
   content?: string;
@@ -66,6 +68,12 @@ export async function planChangeTransaction(input: ChangePlanInput): Promise<Cha
   const transactionId = uuid();
   const traceId = transactionId;
   const diff = makeDiff(relativePath, originalContent, replacementContent);
+  const impact = analyzeChangeImpact({
+    workspace,
+    path: relativePath,
+    before: originalContent,
+    after: replacementContent,
+  });
 
   startTrace({
     taskId: traceId,
@@ -80,6 +88,18 @@ export async function planChangeTransaction(input: ChangePlanInput): Promise<Cha
     label: `change transaction planned for ${relativePath}`,
     meta: { transactionId, mode: input.mode, path: relativePath, stage: 'plan', exactReplacement: true },
   });
+  addStep(traceId, {
+    kind: 'parse',
+    label: `impact analysis ${impact.status} for ${relativePath}`,
+    meta: {
+      transactionId,
+      stage: 'impact-analysis',
+      status: impact.status,
+      dependentCount: impact.dependents.length,
+      testCount: impact.tests.length,
+      verificationCount: impact.verification.length,
+    },
+  });
 
   const transaction: ChangeTransaction = {
     transactionId,
@@ -88,6 +108,7 @@ export async function planChangeTransaction(input: ChangePlanInput): Promise<Cha
     path: relativePath,
     status: 'planned',
     diff,
+    impact,
     workspace,
     absolutePath,
     originalContent,

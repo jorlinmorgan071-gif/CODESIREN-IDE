@@ -32,6 +32,7 @@ describe('authoritative change transaction', () => {
       mode: 'refactor',
     });
     expect(planned.status).toBe('planned');
+    expect(planned.impact).toMatchObject({ status: 'unavailable', confidence: 'unavailable' });
     expect(planned.diff).toContain('-export const answer = 1;');
     expect(planned.diff).toContain('+export const answer = 42;');
     expect(readFileSync(fullPath, 'utf8')).toContain('= 1');
