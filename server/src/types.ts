@@ -126,6 +126,23 @@ export interface ProjectContext {
     endLine: number;
     endColumn: number;
   };
+  /**
+   * Server-selected normal-chat capability. This field is set only after the
+   * request's workspace context is sanitized; it never grants write access.
+   */
+  capability?: {
+    kind: 'read-explain';
+    path: string;
+  };
+  /** Actual bounded evidence returned by a server-selected read-only capability. */
+  capabilityEvidence?: {
+    name: 'workspace_file_read';
+    path: string;
+    content: string;
+    success: boolean;
+  };
+  /** A capability-specific execution block that must be reported exactly. */
+  capabilityUnavailable?: string;
 }
 
 export interface CodeDna {

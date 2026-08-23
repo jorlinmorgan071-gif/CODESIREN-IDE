@@ -118,6 +118,67 @@ export async function generatePlan(sessionId: string, scope: TenantScope): Promi
   return record;
 }
 
+/**
+ * Creates a review-only plan for an explicit change/fix request received in
+ * normal chat. This is policy output, not model output: no agent, file write,
+ * shell command, or test is run while the draft is created.
+ */
+export async function createCapabilityChangePlan(
+  sessionId: string,
+  scope: TenantScope,
+  request: string,
+): Promise<PlanRecord> {
+  const summary = `Review-only change plan for: ${request.trim().slice(0, 500)}. No file was changed and no test was run while this draft was created.`;
+  const plan: RelayPlan = {
+    projectName: 'Selected workspace change',
+    summary,
+    techStack: [],
+    milestones: [
+      {
+        id: 'M01',
+        title: 'Inspect the owned workspace target',
+        description: 'Identify the exact server-owned file and establish the current disk and editor baseline before proposing a patch.',
+        assignedAgent: 'architect-agent',
+        dependsOn: [],
+        acceptanceCriteria: ['The target path is canonical and owned by the selected project.', 'The proposed patch can be reviewed as an exact diff.'],
+      },
+      {
+        id: 'M02',
+        title: 'Apply an approved transaction',
+        description: 'Use the authoritative change transaction for plan, explicit approval, review-gated disk write, reread, and Monaco reconciliation.',
+        assignedAgent: 'architect-agent',
+        dependsOn: ['M01'],
+        acceptanceCriteria: ['A transaction result is applied only after explicit approval.', 'The server reports the exact disk-reconcile outcome.'],
+      },
+      {
+        id: 'M03',
+        title: 'Run the declared verification',
+        description: 'Select and execute a real applicable test or typecheck through the existing verified runner. Do not report a fix as successful without its trace verification evidence.',
+        assignedAgent: 'qa-tester-agent',
+        dependsOn: ['M02'],
+        acceptanceCriteria: ['A real verifier produces a trace verification record.', 'A failed, skipped, or unavailable verifier is reported exactly and never promoted to success.'],
+      },
+      {
+        id: 'M04',
+        title: 'Review verified outcome',
+        description: 'Review the applied diff and authoritative verification evidence before communicating the result.',
+        assignedAgent: 'code-review-agent',
+        dependsOn: ['M03'],
+        acceptanceCriteria: ['The review distinguishes applied work from verified work.', 'No completion claim is made when verification is unverified, skipped, or failed.'],
+      },
+    ],
+  };
+  const record = await createPlan({
+    sessionId,
+    projectId: scope.projectId,
+    engine: 'capability-policy',
+    approvalMode: 'default',
+    plan,
+  });
+  broadcast(makeEvent('relay:plan-ready' as any, { planId: record.id, plan }, scope));
+  return record;
+}
+
 async function loadSessionMessages(sessionId: string, scope: TenantScope): Promise<Array<{ role: string; content: string }>> {
   // The session must belong to the same server-resolved project and user.
   // Degraded mode lacks a durable session ownership mapping, so it fails closed.

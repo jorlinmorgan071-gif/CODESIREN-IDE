@@ -64,6 +64,10 @@ function formatContextBundle(bundle: ContextBundle | undefined, task: AgentTask)
       const sel = task.context.selection;
       fallbackParts.push(`=== EDITOR SELECTION ===\nFile: ${task.context.activeFilePath}\nRange: L${sel.startLine}:C${sel.startColumn} → L${sel.endLine}:C${sel.endColumn}\n\n${sel.text}`);
     }
+    if (task.context.capabilityEvidence && task.context.capability) {
+      const evidence = task.context.capabilityEvidence;
+      fallbackParts.push(`=== CAPABILITY EVIDENCE (${evidence.name}) ===\nPath: ${evidence.path}\nStatus: ${evidence.success ? 'succeeded' : 'failed'}\n${evidence.content}`);
+    }
     if (fallbackParts.length > 0) {
       return '\n\n--- WORKSPACE CONTEXT (fallback — context assembly timed out) ---\n' +
         fallbackParts.join('\n\n') +
@@ -120,6 +124,11 @@ function formatContextBundle(bundle: ContextBundle | undefined, task: AgentTask)
   // Token budget info
   if (bundle.tokenBudget.truncated.length > 0) {
     parts.push(`=== CONTEXT BUDGET ===\nUsed ${bundle.tokenBudget.used}/${bundle.tokenBudget.max} tokens.\nTruncated: ${bundle.tokenBudget.truncated.join(', ')}`);
+  }
+
+  if (task.context.capabilityEvidence && task.context.capability) {
+    const evidence = task.context.capabilityEvidence;
+    parts.push(`=== CAPABILITY EVIDENCE (${evidence.name}) ===\nPath: ${evidence.path}\nStatus: ${evidence.success ? 'succeeded' : 'failed'}\n${evidence.content}`);
   }
 
   return '\n\n--- WORKSPACE CONTEXT ---\n' + parts.join('\n\n') + '\n--- END WORKSPACE CONTEXT ---\n';
@@ -216,4 +225,3 @@ export class ArchitectAgent extends IAgent {
     }
   }
 }
-

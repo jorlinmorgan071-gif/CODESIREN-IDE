@@ -23,12 +23,13 @@ import { v4 as uuid } from 'uuid';
 import { requireAuth } from '../auth/middleware.js';
 import { getOrchestratorSettings, setOrchestratorSettings, TIER1_MODELS } from '../orchestrator/settings.js';
 import { listAvailableEngines, setActiveOrchestratorEngine } from '../orchestrator/engine.js';
-import { generatePlan, runRelayPlan, signalAdvance, stopPlan, isPlanRunning } from '../orchestrator/relay-loop.js';
+import { createCapabilityChangePlan, generatePlan, runRelayPlan, signalAdvance, stopPlan, isPlanRunning } from '../orchestrator/relay-loop.js';
 import { getPlan, listPlansByProject, listMilestoneLogs, updatePlan } from '../orchestrator/plans-repo.js';
 import { runChatViaAgentManager } from '../orchestrator/tier1-chat.js';
+import { selectNormalChatCapability } from '../orchestrator/normal-chat-capabilities.js';
 import { modelRouter } from '../orchestration/model-router.js';
 import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
-import { WorkspaceAccessError, resolveWorkspace } from '../workspace/service.js';
+import { WorkspaceAccessError, resolveWorkspace, workspaceRelativePath } from '../workspace/service.js';
 
 export const orchestratorRouter = Router();
 
@@ -100,6 +101,28 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
     }
     throw error;
   }
+  let activeFilePath: string | undefined;
+  if (parsed.data.context?.activeFile) {
+    try {
+      activeFilePath = workspaceRelativePath(workspace, parsed.data.context.activeFile);
+    } catch {
+      activeFilePath = undefined;
+    }
+  }
+  const capability = selectNormalChatCapability(parsed.data.message, activeFilePath);
+  if (capability.kind === 'change-plan') {
+    const record = await createCapabilityChangePlan(parsed.data.sessionId, workspace, parsed.data.message);
+    res.status(202).json({
+      sessionId: parsed.data.sessionId,
+      projectId: workspace.projectId,
+      status: 'plan-ready',
+      capability: capability.kind,
+      planId: record.id,
+      plan: record.plan,
+      verificationStatus: 'unverified',
+    });
+    return;
+  }
   const taskId = uuid();
   // Route through the authoritative AgentManager lifecycle (Phase 1).
   // runChatViaAgentManager creates an AgentTask and calls
@@ -114,6 +137,7 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
     workspace,
     parsed.data.context,
     workspace,
+    capability,
   ).catch((err) => {
     console.error('[orchestrator:chat] task failed:', err);
   });
@@ -122,6 +146,7 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
     sessionId: parsed.data.sessionId,
     projectId: workspace.projectId,
     status: 'accepted',
+    capability: capability.kind,
   });
 });
 

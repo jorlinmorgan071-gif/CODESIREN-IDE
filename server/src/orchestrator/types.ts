@@ -22,6 +22,9 @@ export interface RelayPlan {
   milestones: Milestone[];
 }
 
+/** A plan may come from a configured model engine or the deterministic P1 policy router. */
+export type PlanSource = OrchestratorEngineId | 'capability-policy';
+
 // ── Plan record (DB row + runtime fields) ────────────────────────────────
 
 export type PlanStatus =
@@ -32,7 +35,7 @@ export interface PlanRecord {
   id: string;
   sessionId: string;
   projectId: string | null;
-  engine: OrchestratorEngineId;
+  engine: PlanSource;
   approvalMode: ApprovalMode;
   status: PlanStatus;
   plan: RelayPlan;

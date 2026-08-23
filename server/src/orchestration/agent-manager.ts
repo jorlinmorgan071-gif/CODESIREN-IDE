@@ -23,6 +23,7 @@ import {
   completeTrace,
   setOutcome,
   addStep,
+  addToolResult,
 } from '../observability/traces.js';
 import { contextManager } from '../context/manager.js';
 import type { TenantScope } from '../tenancy/scope.js';
@@ -175,6 +176,23 @@ class AgentManager {
       input: task.description,
       scope,
     });
+    if (task.context.capabilityEvidence && task.context.capability) {
+      const evidence = task.context.capabilityEvidence;
+      addToolResult(task.id, {
+        name: evidence.name,
+        args: { path: evidence.path },
+        result: evidence.content.slice(0, 500),
+        success: evidence.success,
+      });
+      addStep(task.id, {
+        kind: 'tool-call',
+        label: `capability '${evidence.name}' ${evidence.success ? 'succeeded' : 'failed'}`,
+        input: { path: evidence.path },
+        output: evidence.content.slice(0, 500),
+        meta: { capability: task.context.capability.kind, path: evidence.path },
+        status: evidence.success ? 'succeeded' : 'failed',
+      });
+    }
     addStep(task.id, {
       kind: 'llm-call',
       label: `task received — agent=${agent.id} mode=${task.executionMode} origin=${task.origin}`,
@@ -352,12 +370,49 @@ class AgentManager {
       input: task.description,
       scope,
     });
+    if (task.context.capabilityEvidence && task.context.capability) {
+      const evidence = task.context.capabilityEvidence;
+      addToolResult(task.id, {
+        name: evidence.name,
+        args: { path: evidence.path },
+        result: evidence.content.slice(0, 500),
+        success: evidence.success,
+      });
+      addStep(task.id, {
+        kind: 'tool-call',
+        label: `capability '${evidence.name}' ${evidence.success ? 'succeeded' : 'failed'}`,
+        input: { path: evidence.path },
+        output: evidence.content.slice(0, 500),
+        meta: { capability: task.context.capability.kind, path: evidence.path, via: 'executeAndWait' },
+        status: evidence.success ? 'succeeded' : 'failed',
+      });
+    }
     addStep(task.id, {
       kind: 'llm-call',
       label: `relay task — agent=${agent.id} mode=${task.executionMode} origin=${task.origin}`,
       meta: { taskType: task.type, priority: task.priority, via: 'executeAndWait' },
       status: 'succeeded',  // Phase 5: task received and dispatched
     });
+
+    if (task.context.capabilityUnavailable) {
+      const error = task.context.capabilityUnavailable;
+      addStep(task.id, {
+        kind: 'error',
+        label: 'capability unavailable before model execution',
+        output: error,
+        status: 'failed',
+      });
+      setOutcome(task.id, 'error', error);
+      broadcast(makeEvent('agent:error', {
+        agentId: agent.id,
+        taskId: task.id,
+        voiceOrigin: task.origin === 'voice',
+        error,
+        recoverable: true,
+      }, scope));
+      completeTrace(task.id, `(capability unavailable: ${error})`);
+      return { taskId: task.id, text: '', filesTouched: [], error };
+    }
 
     // ── Phase B (Context Manager) — assemble the contextBundle ────────
     // Same fail-open behavior as send(). Both call paths get context

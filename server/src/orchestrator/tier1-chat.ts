@@ -21,6 +21,9 @@ import { agentManager } from '../orchestration/agent-manager.js';
 import type { AgentTask, ExecutionMode, TaskPriority, TaskType } from '../types.js';
 import type { TenantScope } from '../tenancy/scope.js';
 import { sanitizeWorkspacePaths, workspaceRelativePath, type WorkspaceIdentity } from '../workspace/service.js';
+import { executeWorkspaceFileRead } from '../orchestration/capabilities/workspace-file-read.js';
+import { modelRouter } from '../orchestration/model-router.js';
+import { selectNormalChatCapability, type NormalChatCapability } from './normal-chat-capabilities.js';
 
 // Session-scoped history for Tier 1 chat. We keep this in-memory because
 // the directive says Tier 1 is "99% of the time" — storing every casual
@@ -228,6 +231,7 @@ export async function runChatViaAgentManager(
   scopeOrLegacyUser?: TenantScope | string,
   workspaceContext?: WorkspaceContext,
   workspace?: WorkspaceIdentity,
+  capability?: NormalChatCapability,
 ): Promise<void> {
   // Only legacy in-process tests use the string form. HTTP routes always pass a
   // server-resolved scope. The derived project ID is neither persisted nor an
@@ -262,6 +266,11 @@ export async function runChatViaAgentManager(
     }
   }
   if (!workspace) activeFilePath = workspaceContext?.activeFile;
+
+  const selectedCapability = capability ?? selectNormalChatCapability(userMessage, activeFilePath);
+  const capabilityEvidence = selectedCapability.kind === 'read-explain' && workspace
+    ? await executeWorkspaceFileRead(workspace, selectedCapability.path)
+    : undefined;
 
   // 3. Build task description — include conversation history for context.
   //    Phase 3: Live editor content is NO LONGER injected into the task
@@ -301,6 +310,20 @@ export async function runChatViaAgentManager(
       // Phase 4: live editor selection — ContextManager includes this in
       // the ContextBundle as the active selection.
       selection: activeFilePath ? workspaceContext?.selection : undefined,
+      capability: selectedCapability.kind === 'read-explain'
+        ? { kind: 'read-explain', path: selectedCapability.path }
+        : undefined,
+      capabilityEvidence: capabilityEvidence && selectedCapability.kind === 'read-explain'
+        ? {
+          name: 'workspace_file_read',
+          path: selectedCapability.path,
+          content: capabilityEvidence.content,
+          success: capabilityEvidence.success,
+        }
+        : undefined,
+      capabilityUnavailable: selectedCapability.kind === 'read-explain' && modelRouter.getPreferredEngine() === 'stub'
+        ? 'The workspace file was read, but no real language-model provider is configured to produce an explanation. No synthetic explanation was generated.'
+        : undefined,
     },
     files: [],
     priority: 'normal' as TaskPriority,

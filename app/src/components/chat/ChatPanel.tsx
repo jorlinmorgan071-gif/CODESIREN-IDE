@@ -123,6 +123,18 @@ export function ChatPanel() {
     const handleError = (evt: AgentEvent) => {
       setIsGenerating(false);
       const payload = evt.payload as { error: string };
+      const sessionId = state.activeChatId;
+      if (sessionId) {
+        const chat = state.chatSessions.find(c => c.id === sessionId);
+        const lastAssistant = chat?.messages.find(m => m.isStreaming && m.role === 'assistant');
+        if (lastAssistant) {
+          updateChatMessage(sessionId, lastAssistant.id, {
+            content: payload.error,
+            isStreaming: false,
+            isThinking: false,
+          });
+        }
+      }
       addNotification('error', 'Agent error', payload.error);
     };
 
@@ -167,11 +179,9 @@ export function ChatPanel() {
       addChatMessage(sessionId, assistantMsg);
     }
 
-    // Send to backend — Tier 1 free-chat routing (directive Section 1.2).
-    // Uses POST /api/orchestrator/chat which streams the response back
-    // over WS as orchestrator:chunk events (same shape as agent:chunk).
-    // NEVER calls AgentManager.send() — agents are exclusively activated
-    // by the relay execution loop, not by casual chat.
+    // Normal chat selects only server-owned capabilities. General and read
+    // requests retain the AgentManager stream; write/fix intent returns a
+    // review-only plan and never executes a file change or test here.
     try {
       if (sessionId) {
         // Send editor-relative context only. The server resolves the selected
@@ -180,15 +190,23 @@ export function ChatPanel() {
         // getActiveEditorContent(). This ensures the agent receives
         // the current buffer, not a stale disk read.
         const activeTab = state.editorTabs.find(t => t.isActive);
-        const openFiles = state.editorTabs.map(t => t.fileName);
+        const openFiles = state.editorTabs.flatMap(t => t.workspacePath ? [t.workspacePath] : []);
         const liveContent = getActiveEditorContent();
         const selection = getActiveEditorSelection();
-        await api.orchestratorChat(sessionId, text, {
-          activeFile: activeTab?.fileName,
+        const result = await api.orchestratorChat(sessionId, text, {
+          activeFile: activeTab?.workspacePath,
           openFiles: openFiles.length > 0 ? openFiles : undefined,
           activeFileContent: liveContent ?? undefined,
           selection: selection ?? undefined,
         });
+        if (result.status === 'plan-ready') {
+          updateChatMessage(sessionId, assistantMsg.id, {
+            isStreaming: false,
+            isThinking: false,
+            content: 'Review-only change plan created. No files were changed and no tests have run. Review the plan before approving any work.',
+          });
+          relay.openPlanReview(result.planId);
+        }
       }
     } catch (err) {
       // Mark the assistant message as errored
@@ -201,7 +219,7 @@ export function ChatPanel() {
       }
       addNotification('error', 'Failed to send', err instanceof Error ? err.message : String(err));
     }
-  }, [state.activeChatId, state.editorTabs, addChatMessage, updateChatMessage, addNotification]);
+  }, [state.activeChatId, state.editorTabs, addChatMessage, updateChatMessage, addNotification, relay]);
 
   // ── Follow-up click: send as next message ─────────────────────────────
   const handleFollowUp = useCallback((text: string) => {

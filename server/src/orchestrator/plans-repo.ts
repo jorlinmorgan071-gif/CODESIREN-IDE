@@ -14,7 +14,7 @@ import type {
   PlanRecord, MilestoneLog, RelayPlan, Milestone,
   OrchestratorDecision, PlanStatus, MilestoneLogStatus,
 } from './types.js';
-import type { OrchestratorEngineId } from './engine.js';
+import type { PlanSource } from './types.js';
 import type { ApprovalMode } from './settings.js';
 
 // ── In-memory keys (used only when Postgres is unavailable) ──────────────
@@ -39,7 +39,7 @@ function getMemStore(): MemStore {
 export async function createPlan(params: {
   sessionId: string;
   projectId: string;
-  engine: OrchestratorEngineId;
+  engine: PlanSource;
   approvalMode: ApprovalMode;
   plan: RelayPlan;
 }): Promise<PlanRecord> {
@@ -82,7 +82,7 @@ export async function getPlan(planId: string): Promise<PlanRecord | null> {
     try {
       const rows = await query<{
         id: string; session_id: string; project_id: string | null;
-        engine: OrchestratorEngineId; approval_mode: ApprovalMode; status: PlanStatus;
+        engine: PlanSource; approval_mode: ApprovalMode; status: PlanStatus;
         plan_json: RelayPlan | string; current_milestone_id: string | null;
         created_at: Date; updated_at: Date;
       }>(

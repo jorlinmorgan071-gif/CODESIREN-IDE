@@ -320,7 +320,7 @@ export interface OrchestratorPlanStatus {
   id: string;
   sessionId: string;
   projectId: string | null;
-  engine: 'gemini-flash' | 'nvidia-nemotron';
+  engine: 'gemini-flash' | 'nvidia-nemotron' | 'capability-policy';
   approvalMode: 'auto' | 'default';
   status: PlanStatus;
   plan: OrchestratorPlan;
@@ -336,7 +336,7 @@ export interface OrchestratorPlanSummary {
   projectName: string;
   summary: string;
   status: PlanStatus;
-  engine: 'gemini-flash' | 'nvidia-nemotron';
+  engine: 'gemini-flash' | 'nvidia-nemotron' | 'capability-policy';
   approvalMode: 'auto' | 'default';
   currentMilestoneId: string | null;
   milestoneCount: number;

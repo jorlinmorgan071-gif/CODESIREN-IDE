@@ -15,6 +15,7 @@ export interface ToolResult {
   name: string;
   content: string;
   success: boolean;
+  meta?: Record<string, unknown>;
 }
 
 export interface Tool {
@@ -51,12 +52,21 @@ class ToolRegistry {
         success: false,
       };
     }
+    return this.executeScoped(tool, args);
+  }
+
+  /**
+   * Executes a capability created for one authoritative task context. Scoped
+   * tools share the registry's error normalization but are never enumerable or
+   * callable by global tool name.
+   */
+  async executeScoped(tool: Tool, args: Record<string, unknown>): Promise<ToolResult> {
     try {
       return await tool.execute(args);
     } catch (err: any) {
       return {
-        name,
-        content: `Tool '${name}' threw: ${err.message}`,
+        name: tool.name,
+        content: `Tool '${tool.name}' threw: ${err.message}`,
         success: false,
       };
     }
