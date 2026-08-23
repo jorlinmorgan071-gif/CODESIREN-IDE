@@ -123,7 +123,7 @@ describe('Phase B — ContextManager.assemble() memory + history wiring', () => 
       memoryContent,
       { sourceType: 'agent', sourceRef: 'architect-agent', tags: ['data-structures'] },
       'architect-agent',
-      '00000000-0000-0000-0000-000000000000',
+      { userId: 'test-user', projectId: '00000000-0000-0000-0000-000000000000' },
     );
 
     const task = makeTask({

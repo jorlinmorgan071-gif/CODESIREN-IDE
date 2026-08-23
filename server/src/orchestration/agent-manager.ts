@@ -25,6 +25,8 @@ import {
   addStep,
 } from '../observability/traces.js';
 import { contextManager } from '../context/manager.js';
+import type { TenantScope } from '../tenancy/scope.js';
+import { iterateWithTenantScope } from '../tenancy/execution-scope.js';
 
 class AgentManager {
   private agents = new Map<string, IAgent>();
@@ -95,9 +97,24 @@ class AgentManager {
     return [...this.agents.values()];
   }
 
+  private getTaskScope(task: AgentTask): TenantScope | undefined {
+    const userId = task.context.userId;
+    return userId && task.projectId ? { userId, projectId: task.projectId } : undefined;
+  }
+
+  getActiveTasksForScope(scope: TenantScope): AgentTask[] {
+    return [...this.activeTasks.values()]
+      .map(entry => entry.task)
+      .filter(task => {
+        const taskScope = this.getTaskScope(task);
+        return taskScope?.userId === scope.userId && taskScope.projectId === scope.projectId;
+      });
+  }
+
   // The single entry point. Typed chat → send(). Spoken command → send().
   // Gesture → send(). Same shape, same bus, same governance, same tracing.
   async send(task: AgentTask): Promise<void> {
+    const scope = this.getTaskScope(task);
     const agent = this.agents.get(task.agentId);
     if (!agent) {
       const errEvent = makeEvent('agent:error', {
@@ -105,7 +122,7 @@ class AgentManager {
         taskId: task.id,
         error: `Unknown agent: ${task.agentId}`,
         recoverable: false,
-      });
+      }, scope);
       broadcast(errEvent);
       return;
     }
@@ -117,6 +134,7 @@ class AgentManager {
       domain: agent.domain,
       executionMode: task.executionMode,
       input: task.description,
+      scope,
     });
     addStep(task.id, {
       kind: 'llm-call',
@@ -163,18 +181,18 @@ class AgentManager {
       taskId: task.id,
       taskType: task.type,
       description: task.description,
-    }));
+    }, scope));
 
     // agent:status — agent is now RUNNING
     broadcast(makeEvent('agent:status', {
       agentId: agent.id,
       status: 'RUNNING',
       trustScore: agent.trustScore,
-    }));
+    }, scope));
 
     try {
       let lastProgressEmit = 0;
-      for await (const chunk of agent.execute(task, abort.signal)) {
+      for await (const chunk of iterateWithTenantScope(scope, agent.execute(task, abort.signal))) {
         // agent:chunk — PDF Section 13
         broadcast(makeEvent('agent:chunk', {
           agentId: agent.id,
@@ -182,7 +200,7 @@ class AgentManager {
           type: chunk.type,
           content: chunk.content,
           meta: chunk.meta,
-        }));
+        }, scope));
 
         // Throttle progress events to once per 200ms
         const now = Date.now();
@@ -193,7 +211,7 @@ class AgentManager {
             taskId: task.id,
             progress: chunk.type === 'progress' ? Number(chunk.meta?.progress ?? 0) : undefined,
             eta: chunk.meta?.eta as number | undefined,
-          }));
+          }, scope));
         }
 
         // Don't break on 'done' — let the generator exhaust naturally so
@@ -213,7 +231,7 @@ class AgentManager {
         taskId: task.id,
         result: 'ok',
         duration: Date.now() - task.createdAt,
-      }));
+      }, scope));
 
       // Complete the trace (persists to .traces/runs.jsonl)
       completeTrace(task.id, '(trace captured)');
@@ -226,7 +244,7 @@ class AgentManager {
         taskId: task.id,
         error: err.message,
         recoverable: true,
-      }));
+      }, scope));
       agent.updateTrustScore('failure', 0);
       setOutcome(task.id, 'error', err.message);
       completeTrace(task.id, `(error: ${err.message})`);
@@ -236,7 +254,7 @@ class AgentManager {
         agentId: agent.id,
         status: 'IDLE',
         trustScore: agent.trustScore,
-      }));
+      }, scope));
     }
   }
 
@@ -246,13 +264,13 @@ class AgentManager {
     to: string[];
     type: string;
     payload: Record<string, unknown>;
-  }): Promise<void> {
+  }, scope: TenantScope): Promise<void> {
     const event: AgentEvent = makeEvent('meeting:proposal' as any, {
       from: msg.from,
       to: msg.to,
       type: msg.type,
       payload: msg.payload,
-    });
+    }, scope);
     broadcast(event);
   }
 
@@ -275,6 +293,7 @@ class AgentManager {
     filesTouched: string[];
     error: string | null;
   }> {
+    const scope = this.getTaskScope(task);
     const agent = this.agents.get(task.agentId);
     if (!agent) {
       return { taskId: task.id, text: '', filesTouched: [], error: `Unknown agent: ${task.agentId}` };
@@ -287,6 +306,7 @@ class AgentManager {
       domain: agent.domain,
       executionMode: task.executionMode,
       input: task.description,
+      scope,
     });
     addStep(task.id, {
       kind: 'llm-call',
@@ -335,12 +355,12 @@ class AgentManager {
       voiceOrigin: task.origin === 'voice',
       taskType: task.type,
       description: task.description,
-    }));
+    }, scope));
     broadcast(makeEvent('agent:status', {
       agentId: agent.id,
       status: 'RUNNING',
       trustScore: agent.trustScore,
-    }));
+    }, scope));
 
     // Voice task descriptions are private transcripts. Their scoped voice:*
     // stream already exposes lifecycle state to the owner, so do not place the
@@ -351,7 +371,7 @@ class AgentManager {
         taskId: task.id,
         taskType: task.type,
         description: task.description,
-      }));
+      }, scope));
     }
 
     const chunks: string[] = [];
@@ -359,7 +379,7 @@ class AgentManager {
     let error: string | null = null;
 
     try {
-      for await (const chunk of agent.execute(task, abort.signal)) {
+      for await (const chunk of iterateWithTenantScope(scope, agent.execute(task, abort.signal))) {
         broadcast(makeEvent('agent:chunk', {
           agentId: agent.id,
           taskId: task.id,
@@ -367,7 +387,7 @@ class AgentManager {
           type: chunk.type,
           content: chunk.content,
           meta: chunk.meta,
-        }));
+        }, scope));
 
         if (chunk.type === 'text' || chunk.type === 'code' || chunk.type === 'done') {
           if (chunk.content) chunks.push(chunk.content);
@@ -389,7 +409,7 @@ class AgentManager {
         voiceOrigin: task.origin === 'voice',
         result: error ? 'error' : 'ok',
         duration: Date.now() - task.createdAt,
-      }));
+      }, scope));
       completeTrace(task.id, error ? `(error: ${error})` : '(relay trace captured)');
       if (!error) agent.updateTrustScore('success', 0.9);
     } catch (err: any) {
@@ -400,7 +420,7 @@ class AgentManager {
         voiceOrigin: task.origin === 'voice',
         error: err.message,
         recoverable: true,
-      }));
+      }, scope));
       agent.updateTrustScore('failure', 0);
       setOutcome(task.id, 'error', err.message);
       completeTrace(task.id, `(error: ${err.message})`);
@@ -410,7 +430,7 @@ class AgentManager {
         agentId: agent.id,
         status: 'IDLE',
         trustScore: agent.trustScore,
-      }));
+      }, scope));
     }
 
     return {

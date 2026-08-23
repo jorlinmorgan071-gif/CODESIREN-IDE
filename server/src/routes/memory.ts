@@ -1,106 +1,67 @@
-// server/src/routes/memory.ts
-// Brain Visualizer — memory management API.
-//   GET    /api/memory           — list all memories (paginated, for initial Brain load)
-//   DELETE /api/memory/:id       — delete a memory by ID (real DELETE FROM agent_memory)
-//
-// Both require auth. Delete verifies the memory exists before deleting (404 if not found).
-// Same fail-closed pattern as the approval gate and writeProjectFile.
-
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
 import { memoryEngine } from '../memory/engine.js';
-import { isDbAvailable, query } from '../db/client.js';
+import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
 
 export const memoryRouter = Router();
 
-// ── List all memories (paginated) ────────────────────────────────────────
+function requestedProjectId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+async function resolveRequestScope(req: Parameters<typeof memoryRouter.get>[1] extends never ? never : any) {
+  return resolveTenantScope(req.user!.id, requestedProjectId(req.query.projectId));
+}
+
+function sendScopeError(res: any, err: unknown): boolean {
+  if (err instanceof ProjectAccessError) {
+    res.status(403).json({ error: 'Project access denied' });
+    return true;
+  }
+  return false;
+}
 
 memoryRouter.get('/', requireAuth, async (req, res) => {
-  const limit = parseInt(typeof req.query.limit === 'string' ? req.query.limit : '500', 10);
-  const offset = parseInt(typeof req.query.offset === 'string' ? req.query.offset : '0', 10);
-
+  const limit = Math.min(parseInt(typeof req.query.limit === 'string' ? req.query.limit : '500', 10) || 500, 1000);
+  const offset = Math.max(parseInt(typeof req.query.offset === 'string' ? req.query.offset : '0', 10) || 0, 0);
   try {
-    const entries = await memoryEngine.list(Math.min(limit, 1000), offset);
-    const total = await memoryEngine.count();
-    res.json({
-      entries,
-      total,
-      limit,
-      offset,
-      hasMore: offset + entries.length < total,
-    });
+    const scope = await resolveRequestScope(req);
+    const entries = await memoryEngine.list(limit, offset, scope);
+    const total = await memoryEngine.count(scope);
+    res.json({ entries, total, limit, offset, hasMore: offset + entries.length < total, projectId: scope.projectId });
   } catch (err: any) {
-    res.status(500).json({ error: `Failed to list memories: ${err.message}` });
+    if (sendScopeError(res, err)) return;
+    res.status(500).json({ error: 'Failed to list memories' });
   }
 });
-
-// ── Delete a memory by ID ────────────────────────────────────────────────
 
 memoryRouter.delete('/:id', requireAuth, async (req, res) => {
-  const { id } = req.params;
-
-  // Verify the memory exists before deleting
-  // (fail closed — 404 if not found, same pattern as ghost-mode approval)
-  if (isDbAvailable()) {
-    try {
-      const rows = await query<any>(
-        `SELECT id FROM agent_memory WHERE id = $1`,
-        [id],
-      );
-      if (rows.length === 0) {
-        res.status(404).json({ error: 'Memory not found', id });
-        return;
-      }
-    } catch {
-      // DB check failed — proceed anyway, the delete will handle it
-    }
-  }
-
   try {
-    const deleted = await memoryEngine.delete(id);
+    const scope = await resolveRequestScope(req);
+    const deleted = await memoryEngine.delete(req.params.id, scope);
     if (!deleted) {
-      res.status(404).json({ error: 'Memory not found', id });
+      // Do not reveal whether an entry exists outside this tenant scope.
+      res.status(404).json({ error: 'Memory not found' });
       return;
     }
-    res.json({ deleted: true, id });
+    res.json({ deleted: true, id: req.params.id });
   } catch (err: any) {
-    res.status(500).json({ error: `Failed to delete memory: ${err.message}` });
+    if (sendScopeError(res, err)) return;
+    res.status(500).json({ error: 'Failed to delete memory' });
   }
 });
 
-// ── Get a single memory by ID (for detail panel) ─────────────────────────
-
 memoryRouter.get('/:id', requireAuth, async (req, res) => {
-  const { id } = req.params;
-
-  if (isDbAvailable()) {
-    try {
-      const rows = await query<any>(
-        `SELECT id, content, agent_id, source_type, source_ref, metadata, created_at
-         FROM agent_memory WHERE id = $1`,
-        [id],
-      );
-      if (rows.length === 0) {
-        res.status(404).json({ error: 'Memory not found', id });
-        return;
-      }
-      const row = rows[0];
-      res.json({
-        id: row.id,
-        content: row.content,
-        agentId: row.agent_id,
-        sourceType: row.source_type,
-        sourceRef: row.source_ref,
-        metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata,
-        createdAt: new Date(row.created_at).getTime(),
-      });
-      return;
-    } catch (err: any) {
-      res.status(500).json({ error: `Failed to get memory: ${err.message}` });
+  try {
+    const scope = await resolveRequestScope(req);
+    const entry = await memoryEngine.get(req.params.id, scope);
+    if (!entry) {
+      res.status(404).json({ error: 'Memory not found' });
       return;
     }
+    res.json(entry);
+  } catch (err: any) {
+    if (sendScopeError(res, err)) return;
+    res.status(500).json({ error: 'Failed to get memory' });
   }
-
-  // In-memory fallback — search the store
-  res.status(404).json({ error: 'Memory not found (in-memory mode does not support single lookup)', id });
 });

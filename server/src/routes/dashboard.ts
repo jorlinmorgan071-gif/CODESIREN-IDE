@@ -15,20 +15,34 @@
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
 import { agentManager } from '../orchestration/agent-manager.js';
-import { ghostMode } from '../orchestration/ghost-mode.js';
 import { memoryEngine } from '../memory/engine.js';
 import { toolRegistry } from '../agents/_shared/tool-registry.js';
-import { listTraces, getTrace, getTracesFile } from '../observability/traces.js';
-import { getSecurityEvents, getSecurityStats } from '../monitoring/security-log.js';
+import { listTraces, getTrace } from '../observability/traces.js';
+import { getSecurityEvents } from '../monitoring/security-log.js';
 import { getRateLimitStats } from '../middleware/rate-limiter.js';
-import { getBreakerStats } from '../middleware/circuit-breaker.js';
 import { isDbAvailable, query } from '../db/client.js';
-import { sidecarManager } from '../sidecars/manager.js';
 import { config } from '../config.js';
-import { existsSync, statSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
 
 export const dashboardRouter = Router();
+
+function requestedProjectId(req: any): string | undefined {
+  return typeof req.query.projectId === 'string' && req.query.projectId.length > 0
+    ? req.query.projectId
+    : undefined;
+}
+
+async function dashboardScope(req: any) {
+  return resolveTenantScope(req.user!.id, requestedProjectId(req));
+}
+
+function sendDashboardScopeError(res: any, error: unknown): boolean {
+  if (error instanceof ProjectAccessError) {
+    res.status(403).json({ error: 'Project access denied' });
+    return true;
+  }
+  return false;
+}
 
 // Server start time — used for uptime calculation. Captured at module load.
 const SERVER_STARTED_AT = Date.now();
@@ -54,56 +68,17 @@ function formatBytes(bytes: number): string {
 
 dashboardRouter.get('/system', requireAuth, (_req, res) => {
   const uptimeMs = Date.now() - SERVER_STARTED_AT;
-  const agents = agentManager.list();
-  const memUsage = process.memoryUsage();
 
   res.json({
     server: {
       name: 'Code Siren Server',
       version: '0.2.0-phase3',
-      nodeVersion: process.version,
-      platform: process.platform,
-      pid: process.pid,
-      startedAt: SERVER_STARTED_AT,
       uptimeMs,
       uptimeHuman: formatDuration(uptimeMs),
     },
     database: {
       available: isDbAvailable(),
       mode: isDbAvailable() ? 'postgresql' : 'degraded-in-memory',
-    },
-    agents: {
-      total: agents.length,
-      idle: agents.filter((a) => a.status === 'IDLE').length,
-      running: agents.filter((a) => a.status === 'RUNNING').length,
-      reviewing: agents.filter((a) => a.status === 'REVIEWING').length,
-      error: agents.filter((a) => a.status === 'ERROR').length,
-      paused: agents.filter((a) => a.status === 'PAUSED').length,
-    },
-    ghost: {
-      state: ghostMode.currentState,
-      level: ghostMode.currentLevel,
-    },
-    sidecars: {
-      registered: sidecarManager.list(),
-      count: sidecarManager.list().length,
-    },
-    memory: {
-      rss: memUsage.rss,
-      rssHuman: formatBytes(memUsage.rss),
-      heapUsed: memUsage.heapUsed,
-      heapUsedHuman: formatBytes(memUsage.heapUsed),
-      heapTotal: memUsage.heapTotal,
-      heapTotalHuman: formatBytes(memUsage.heapTotal),
-      external: memUsage.external,
-      externalHuman: formatBytes(memUsage.external),
-    },
-    config: {
-      port: config.PORT,
-      corsOrigins: config.corsOrigins,
-      nodeEnv: config.NODE_ENV,
-      ollamaHost: config.OLLAMA_HOST,
-      ollamaDefaultModel: config.OLLAMA_DEFAULT_MODEL,
     },
   });
 });
@@ -113,9 +88,18 @@ dashboardRouter.get('/system', requireAuth, (_req, res) => {
 // Aggregates per-agent stats from the traces ring buffer + agent roster.
 // No agent mutation — read-only.
 
-dashboardRouter.get('/agents', requireAuth, async (_req, res) => {
+dashboardRouter.get('/agents', requireAuth, async (req, res) => {
+  let scope;
+  try {
+    scope = await dashboardScope(req);
+  } catch (error) {
+    if (sendDashboardScopeError(res, error)) return;
+    res.status(500).json({ error: 'Failed to resolve dashboard scope' });
+    return;
+  }
   const agents = agentManager.list();
-  const traces = listTraces({ limit: 1000 });
+  const traces = listTraces({ limit: 1000, scope });
+  const activeAgentIds = new Set(agentManager.getActiveTasksForScope(scope).map(task => task.agentId));
 
   // Aggregate trace stats per agent
   const statsByAgent = new Map<string, {
@@ -151,7 +135,11 @@ dashboardRouter.get('/agents', requireAuth, async (_req, res) => {
   if (isDbAvailable()) {
     try {
       const rows = await query<{ agent_id: string; count: string }>(
-        `SELECT agent_id, COUNT(*) as count FROM agent_memory GROUP BY agent_id`,
+        `SELECT m.agent_id, COUNT(*) as count
+         FROM agent_memory m JOIN projects p ON p.id = m.project_id
+         WHERE m.project_id = $1 AND p.user_id = $2
+         GROUP BY m.agent_id`,
+        [scope.projectId, scope.userId],
       );
       memoryByAgent = Object.fromEntries(
         rows.map((r) => [r.agent_id ?? '(unassigned)', parseInt(r.count, 10)]),
@@ -172,7 +160,7 @@ dashboardRouter.get('/agents', requireAuth, async (_req, res) => {
         icon: a.icon,
         color: a.color,
         trustScore: a.trustScore,
-        status: a.status,
+        status: activeAgentIds.has(a.id) ? 'RUNNING' : 'IDLE',
         acceptsSkills: a.acceptsSkills,
         skillsCount: a.skills.length,
         lastExecAt: stats?.lastExecAt ?? null,
@@ -194,8 +182,16 @@ dashboardRouter.get('/agents', requireAuth, async (_req, res) => {
 // GET /api/dashboard/execution
 // Aggregates execution mode distribution, outcomes, recent runs.
 
-dashboardRouter.get('/execution', requireAuth, (_req, res) => {
-  const traces = listTraces({ limit: 1000 });
+dashboardRouter.get('/execution', requireAuth, async (req, res) => {
+  let scope;
+  try {
+    scope = await dashboardScope(req);
+  } catch (error) {
+    if (sendDashboardScopeError(res, error)) return;
+    res.status(500).json({ error: 'Failed to resolve dashboard scope' });
+    return;
+  }
+  const traces = listTraces({ limit: 1000, scope });
 
   const byMode: Record<string, number> = { 'single-shot': 0, react: 0, codeact: 0 };
   const byOutcome: Record<string, number> = { success: 0, error: 0, 'loop-blocked': 0, 'max-turns': 0, aborted: 0 };
@@ -261,7 +257,15 @@ dashboardRouter.get('/execution', requireAuth, (_req, res) => {
 // GET /api/dashboard/memory
 // Aggregates stored entries, categories, cache stats. Read-only — no editing.
 
-dashboardRouter.get('/memory', requireAuth, async (_req, res) => {
+dashboardRouter.get('/memory', requireAuth, async (req, res) => {
+  let scope;
+  try {
+    scope = await dashboardScope(req);
+  } catch (error) {
+    if (sendDashboardScopeError(res, error)) return;
+    res.status(500).json({ error: 'Failed to resolve dashboard scope' });
+    return;
+  }
   let entries: Array<{
     id: string;
     agentId: string | null;
@@ -284,10 +288,11 @@ dashboardRouter.get('/memory', requireAuth, async (_req, res) => {
         content: string;
         created_at: string;
         metadata: string;
-      }>(`SELECT id, agent_id, source_type, content, created_at, metadata
-          FROM agent_memory
-          ORDER BY created_at DESC
-          LIMIT 100`);
+      }>(`SELECT m.id, m.agent_id, m.source_type, m.content, m.created_at, m.metadata
+          FROM agent_memory m JOIN projects p ON p.id = m.project_id
+          WHERE m.project_id = $1 AND p.user_id = $2
+          ORDER BY m.created_at DESC
+          LIMIT 100`, [scope.projectId, scope.userId]);
 
       entries = rows.map((r) => ({
         id: r.id,
@@ -300,37 +305,52 @@ dashboardRouter.get('/memory', requireAuth, async (_req, res) => {
 
       // Aggregate categories
       const catRows = await query<{ source_type: string | null; count: string }>(
-        `SELECT source_type, COUNT(*) as count FROM agent_memory GROUP BY source_type`,
+        `SELECT m.source_type, COUNT(*) as count
+         FROM agent_memory m JOIN projects p ON p.id = m.project_id
+         WHERE m.project_id = $1 AND p.user_id = $2
+         GROUP BY m.source_type`,
+        [scope.projectId, scope.userId],
       );
       bySourceType = Object.fromEntries(
         catRows.map((r) => [r.source_type ?? '(unset)', parseInt(r.count, 10)]),
       );
 
       const agentRows = await query<{ agent_id: string | null; count: string }>(
-        `SELECT agent_id, COUNT(*) as count FROM agent_memory GROUP BY agent_id`,
+        `SELECT m.agent_id, COUNT(*) as count
+         FROM agent_memory m JOIN projects p ON p.id = m.project_id
+         WHERE m.project_id = $1 AND p.user_id = $2
+         GROUP BY m.agent_id`,
+        [scope.projectId, scope.userId],
       );
       byAgent = Object.fromEntries(
         agentRows.map((r) => [r.agent_id ?? '(unassigned)', parseInt(r.count, 10)]),
       );
 
-      const totalRows = await query<{ count: string }>(`SELECT COUNT(*) as count FROM agent_memory`);
+      const totalRows = await query<{ count: string }>(
+        `SELECT COUNT(*) as count FROM agent_memory m JOIN projects p ON p.id = m.project_id
+         WHERE m.project_id = $1 AND p.user_id = $2`,
+        [scope.projectId, scope.userId],
+      );
       totalEntries = parseInt(totalRows[0]?.count ?? '0', 10);
 
       // By category — uses tags from metadata
       const tagRows = await query<{ tag: string; count: string }>(`
         SELECT tag.value as tag, COUNT(*) as count
-        FROM agent_memory, jsonb_array_elements_text(COALESCE(metadata->'tags', '[]'::jsonb)) as tag
+        FROM agent_memory m
+        JOIN projects p ON p.id = m.project_id,
+        jsonb_array_elements_text(COALESCE(m.metadata->'tags', '[]'::jsonb)) as tag
+        WHERE m.project_id = $1 AND p.user_id = $2
         GROUP BY tag.value
         ORDER BY count DESC
         LIMIT 20
-      `);
+      `, [scope.projectId, scope.userId]);
       byCategory = Object.fromEntries(tagRows.map((r) => [r.tag, parseInt(r.count, 10)]));
     } catch (err) {
       // Fall through to in-memory fallback
     }
   } else {
     // Degraded mode — in-memory count only (MemoryEngine stores privately)
-    totalEntries = await memoryEngine.count();
+    totalEntries = await memoryEngine.count(scope);
   }
 
   res.json({
@@ -343,7 +363,7 @@ dashboardRouter.get('/memory', requireAuth, async (_req, res) => {
     byAgent,
     byCategory,
     cacheStats: {
-      inMemoryEntries: await memoryEngine.count(),
+      inMemoryEntries: await memoryEngine.count(scope),
       dbAvailable: isDbAvailable(),
       ringBufferCapacity: 1000,
       embeddingModel: config.OLLAMA_DEFAULT_MODEL,
@@ -359,24 +379,8 @@ dashboardRouter.get('/memory', requireAuth, async (_req, res) => {
 // GET /api/dashboard/security
 // Uses existing telemetry (security-log + rate-limiter + circuit-breaker).
 
-dashboardRouter.get('/security', requireAuth, (_req, res) => {
-  const events = getSecurityEvents({ limit: 1000 });
-  const securityStats = getSecurityStats();
-  const rateLimitStats = getRateLimitStats();
-  const breakerStats = getBreakerStats();
-
-  // Threat heat map — aggregate by IP
-  const byIp = new Map<string, { count: number; critical: number; high: number; medium: number; low: number }>();
-  for (const e of events) {
-    if (!e.ip) continue;
-    const entry = byIp.get(e.ip) ?? { count: 0, critical: 0, high: 0, medium: 0, low: 0 };
-    entry.count++;
-    if (e.severity === 'critical') entry.critical++;
-    else if (e.severity === 'high') entry.high++;
-    else if (e.severity === 'medium') entry.medium++;
-    else entry.low++;
-    byIp.set(e.ip, entry);
-  }
+dashboardRouter.get('/security', requireAuth, (req, res) => {
+  const events = getSecurityEvents({ limit: 1000 }).filter(event => event.userId === req.user!.id);
 
   // By event type
   const byType: Record<string, number> = {};
@@ -399,18 +403,17 @@ dashboardRouter.get('/security', requireAuth, (_req, res) => {
 
   res.json({
     summary: {
-      totalEvents: securityStats.total,
-      last5Minutes: securityStats.last5Minutes,
-      byType: securityStats.byType,
-      bySeverity: securityStats.bySeverity,
+      totalEvents: events.length,
+      last5Minutes: events.filter(event => event.timestamp >= Date.now() - 5 * 60_000).length,
+      byType,
+      bySeverity: events.reduce<Record<string, number>>((summary, event) => {
+        summary[event.severity] = (summary[event.severity] ?? 0) + 1;
+        return summary;
+      }, {}),
     },
-    rateLimits: rateLimitStats,
-    circuitBreakers: breakerStats,
+    rateLimits: { requesterScoped: true },
+    circuitBreakers: { requesterScoped: true },
     threatHeatMap: {
-      byIp: Array.from(byIp.entries())
-        .map(([ip, s]) => ({ ip, ...s }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 50),
       byHour: hourBuckets,
     },
     byType,
@@ -419,8 +422,6 @@ dashboardRouter.get('/security', requireAuth, (_req, res) => {
       timestamp: e.timestamp,
       type: e.type,
       severity: e.severity,
-      ip: e.ip,
-      userId: e.userId,
       endpoint: e.endpoint,
       method: e.method,
       description: e.description,
@@ -446,10 +447,8 @@ dashboardRouter.get('/models', requireAuth, async (_req, res) => {
     engines: {
       ollama: {
         available: ollamaCheck.available,
-        host: config.OLLAMA_HOST,
         defaultModel: getActiveOllamaModel(),
         models: ollamaCheck.models.map((m) => ({ name: m.name, size: m.size, modifiedAt: m.modified_at })),
-        error: ollamaCheck.error,
       },
       openrouter: { available: !!config.OPENROUTER_API_KEY },
       openai: { available: !!config.OPENAI_API_KEY },
@@ -486,7 +485,15 @@ dashboardRouter.get('/tools', requireAuth, (_req, res) => {
 // GET /api/dashboard/traces/:taskId
 // Wraps getTrace for a single trace detail.
 
-dashboardRouter.get('/traces', requireAuth, (req, res) => {
+dashboardRouter.get('/traces', requireAuth, async (req, res) => {
+  let scope;
+  try {
+    scope = await dashboardScope(req);
+  } catch (error) {
+    if (sendDashboardScopeError(res, error)) return;
+    res.status(500).json({ error: 'Failed to resolve dashboard scope' });
+    return;
+  }
   const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : undefined;
   const executionMode = typeof req.query.executionMode === 'string'
     ? (req.query.executionMode as 'single-shot' | 'react' | 'codeact')
@@ -495,7 +502,7 @@ dashboardRouter.get('/traces', requireAuth, (req, res) => {
   const search = typeof req.query.search === 'string' ? req.query.search.toLowerCase() : undefined;
   const limit = typeof req.query.limit === 'string' ? Math.min(parseInt(req.query.limit, 10) || 100, 1000) : 100;
 
-  let traces = listTraces({ agentId, executionMode, limit: 1000 });
+  let traces = listTraces({ agentId, executionMode, limit: 1000, scope });
 
   if (outcome) {
     traces = traces.filter((t) => t.outcome === outcome);
@@ -540,8 +547,16 @@ dashboardRouter.get('/traces', requireAuth, (req, res) => {
   });
 });
 
-dashboardRouter.get('/traces/:taskId', requireAuth, (req, res) => {
-  const trace = getTrace(req.params.taskId);
+dashboardRouter.get('/traces/:taskId', requireAuth, async (req, res) => {
+  let scope;
+  try {
+    scope = await dashboardScope(req);
+  } catch (error) {
+    if (sendDashboardScopeError(res, error)) return;
+    res.status(500).json({ error: 'Failed to resolve dashboard scope' });
+    return;
+  }
+  const trace = getTrace(req.params.taskId, scope);
   if (!trace) {
     res.status(404).json({ error: `No trace for taskId ${req.params.taskId}` });
     return;
@@ -554,20 +569,14 @@ dashboardRouter.get('/traces/:taskId', requireAuth, (req, res) => {
   });
 });
 
-dashboardRouter.get('/traces-file/info', requireAuth, (_req, res) => {
-  const file = getTracesFile();
-  let lineCount = 0;
-  let sizeBytes = 0;
-  if (existsSync(file)) {
-    sizeBytes = statSync(file).size;
-    try {
-      const out = execSync(`wc -l < "${file}"`).toString().trim();
-      lineCount = parseInt(out, 10) || 0;
-    } catch {
-      lineCount = -1;
-    }
+dashboardRouter.get('/traces-file/info', requireAuth, async (req, res) => {
+  try {
+    const scope = await dashboardScope(req);
+    res.json({ projectId: scope.projectId, persistentTraceStore: true });
+  } catch (error) {
+    if (sendDashboardScopeError(res, error)) return;
+    res.status(500).json({ error: 'Failed to inspect trace store' });
   }
-  res.json({ file, lineCount, sizeBytes, sizeHuman: formatBytes(sizeBytes) });
 });
 
 // ── STEP 6: Performance ──────────────────────────────────────────────────
@@ -575,8 +584,16 @@ dashboardRouter.get('/traces-file/info', requireAuth, (_req, res) => {
 // Latency, build time (static), requests (active rate-limit buckets),
 // cache hit (in-memory entries), agent runtime. No optimization.
 
-dashboardRouter.get('/performance', requireAuth, async (_req, res) => {
-  const traces = listTraces({ limit: 1000 });
+dashboardRouter.get('/performance', requireAuth, async (req, res) => {
+  let scope;
+  try {
+    scope = await dashboardScope(req);
+  } catch (error) {
+    if (sendDashboardScopeError(res, error)) return;
+    res.status(500).json({ error: 'Failed to resolve dashboard scope' });
+    return;
+  }
+  const traces = listTraces({ limit: 1000, scope });
   const rateLimitStats = getRateLimitStats();
   const memUsage = process.memoryUsage();
 
@@ -631,7 +648,7 @@ dashboardRouter.get('/performance', requireAuth, async (_req, res) => {
       note: 'Total request counter is not currently instrumented. Active bucket counts shown.',
     },
     cacheHit: {
-      inMemoryEntries: await memoryEngine.count(),
+      inMemoryEntries: await memoryEngine.count(scope),
       dbAvailable: isDbAvailable(),
       note: 'Cache hit ratio is not currently instrumented. In-memory entry count shown as proxy.',
     },

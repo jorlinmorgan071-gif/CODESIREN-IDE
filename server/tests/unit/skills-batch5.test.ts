@@ -9,6 +9,15 @@ import { loadLibrarySkills } from '../../src/skills/library/index.js';
 import { listInstalledSkills, executeSkill, getSkill } from '../../src/skills/executor.js';
 import { toolRegistry } from '../../src/agents/_shared/tool-registry.js';
 
+async function withMissingEnv<T>(key: string, run: () => Promise<T>): Promise<T> {
+  vi.stubEnv(key, '');
+  try {
+    return await run();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+}
+
 describe('Phase D Batch 5 — 5 media & entertainment API skills', () => {
   beforeAll(() => {
     loadLibrarySkills();
@@ -37,36 +46,31 @@ describe('Phase D Batch 5 — 5 media & entertainment API skills', () => {
   // ════════════════════════════════════════════════════════════════════
 
   it('CRITICAL — PUBG: missing key → honest unavailable', async () => {
-    expect(process.env.PUBG_API_KEY || '').toBe('');
-    const result = await executeSkill('pubg-player-lookup', { playerName: 'test_player' });
+    const result = await withMissingEnv('PUBG_API_KEY', () => executeSkill('pubg-player-lookup', { playerName: 'test_player' }));
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('PUBG_API_KEY');
   });
 
   it('CRITICAL — TMDb: missing key → honest unavailable', async () => {
-    expect(process.env.TMDB_API_KEY || '').toBe('');
-    const result = await executeSkill('tmdb-movie-search', { query: 'Inception' });
+    const result = await withMissingEnv('TMDB_API_KEY', () => executeSkill('tmdb-movie-search', { query: 'Inception' }));
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('TMDB_API_KEY');
   });
 
   it('CRITICAL — OMDb: missing key → honest unavailable', async () => {
-    expect(process.env.OMDB_API_KEY || '').toBe('');
-    const result = await executeSkill('omdb-title-search', { query: 'Inception' });
+    const result = await withMissingEnv('OMDB_API_KEY', () => executeSkill('omdb-title-search', { query: 'Inception' }));
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('OMDB_API_KEY');
   });
 
   it('CRITICAL — GIPHY: missing key → honest unavailable', async () => {
-    expect(process.env.GIPHY_API_KEY || '').toBe('');
-    const result = await executeSkill('giphy-gif-search', { query: 'cats' });
+    const result = await withMissingEnv('GIPHY_API_KEY', () => executeSkill('giphy-gif-search', { query: 'cats' }));
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('GIPHY_API_KEY');
   });
 
   it('CRITICAL — RAWG: missing key → honest unavailable', async () => {
-    expect(process.env.RAWG_API_KEY || '').toBe('');
-    const result = await executeSkill('rawg-game-search', { query: 'Super Mario' });
+    const result = await withMissingEnv('RAWG_API_KEY', () => executeSkill('rawg-game-search', { query: 'Super Mario' }));
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('RAWG_API_KEY');
   });

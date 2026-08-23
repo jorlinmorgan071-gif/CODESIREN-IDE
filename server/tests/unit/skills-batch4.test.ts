@@ -15,6 +15,15 @@ import { loadLibrarySkills } from '../../src/skills/library/index.js';
 import { listInstalledSkills, executeSkill, getSkill } from '../../src/skills/executor.js';
 import { toolRegistry } from '../../src/agents/_shared/tool-registry.js';
 
+async function withMissingEnv<T>(key: string, run: () => Promise<T>): Promise<T> {
+  vi.stubEnv(key, '');
+  try {
+    return await run();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+}
+
 describe('Phase D Batch 4 — Developer Platform APIs + http_request extensions', () => {
   beforeAll(() => {
     loadLibrarySkills();
@@ -186,17 +195,19 @@ describe('Phase D Batch 4 — Developer Platform APIs + http_request extensions'
   // ════════════════════════════════════════════════════════════════════
 
   it('CRITICAL — GitHub: missing key → honest unavailable (GITHUB_TOKEN empty)', async () => {
-    expect(process.env.GITHUB_TOKEN || '').toBe('');
     // GitHub skill has api_key_env set — even though public endpoints work without auth,
     // the skill manifest specifies api_key_env, so missing key = unavailable
-    const result = await executeSkill('github-repo-search', { query: 'code siren' });
+    const result = await withMissingEnv('GITHUB_TOKEN', () =>
+      executeSkill('github-repo-search', { query: 'code siren' }),
+    );
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('GITHUB_TOKEN');
   });
 
   it('CRITICAL — Dev.to: missing key → honest unavailable (DEVTO_API_KEY empty)', async () => {
-    expect(process.env.DEVTO_API_KEY || '').toBe('');
-    const result = await executeSkill('devto-articles', { tag: 'javascript' });
+    const result = await withMissingEnv('DEVTO_API_KEY', () =>
+      executeSkill('devto-articles', { tag: 'javascript' }),
+    );
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('DEVTO_API_KEY');
   });

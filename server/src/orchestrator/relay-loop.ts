@@ -37,6 +37,7 @@ import type {
   RelayPlan, Milestone, PlanRecord, OrchestratorDecision,
 } from './types.js';
 import type { AgentTask, ExecutionMode, TaskPriority, TaskType } from '../types.js';
+import type { TenantScope } from '../tenancy/scope.js';
 
 // ── 1. Plan generation ───────────────────────────────────────────────────
 
@@ -68,9 +69,9 @@ const AVAILABLE_AGENTS = [
   'fabrication-agent', 'operative-agent', 'sentinel-agent', 'extension-agent',
 ];
 
-export async function generatePlan(sessionId: string): Promise<PlanRecord> {
+export async function generatePlan(sessionId: string, scope: TenantScope): Promise<PlanRecord> {
   // 1. Read session messages
-  const messages = await loadSessionMessages(sessionId);
+  const messages = await loadSessionMessages(sessionId, scope);
   if (messages.length === 0) {
     throw new Error('Cannot generate plan: session has no messages');
   }
@@ -101,6 +102,7 @@ export async function generatePlan(sessionId: string): Promise<PlanRecord> {
   const settings = getOrchestratorSettings();
   const record = await createPlan({
     sessionId,
+    projectId: scope.projectId,
     engine: getActiveOrchestratorEngineId(),
     approvalMode: settings.approvalMode,
     plan,
@@ -110,24 +112,29 @@ export async function generatePlan(sessionId: string): Promise<PlanRecord> {
   broadcast(makeEvent('relay:plan-ready' as any, {
     planId: record.id,
     plan,
-  }));
+  }, scope));
 
   console.log(`[orchestrator:plan] plan ${record.id} generated — ${plan.milestones.length} milestones, engine=${record.engine}`);
   return record;
 }
 
-async function loadSessionMessages(sessionId: string): Promise<Array<{ role: string; content: string }>> {
-  // Try Postgres first
+async function loadSessionMessages(sessionId: string, scope: TenantScope): Promise<Array<{ role: string; content: string }>> {
+  // The session must belong to the same server-resolved project and user.
+  // Degraded mode lacks a durable session ownership mapping, so it fails closed.
   try {
     const rows = await query<{ role: string; content: string }>(
-      'SELECT role, content FROM messages WHERE session_id = $1 ORDER BY created_at ASC',
-      [sessionId],
+      `SELECT m.role, m.content
+       FROM messages m
+       JOIN sessions s ON s.id = m.session_id
+       JOIN projects p ON p.id = s.project_id
+       WHERE m.session_id = $1 AND s.project_id = $2 AND p.user_id = $3
+       ORDER BY m.created_at ASC`,
+      [sessionId, scope.projectId, scope.userId],
     );
     if (rows.length > 0) return rows;
   } catch {
-    // fall through
+    // fall through to the deliberate fail-closed response below
   }
-  // No messages found (Postgres unavailable OR session genuinely empty)
   return [];
 }
 
@@ -147,14 +154,14 @@ const awaitingAdvance = new Map<string, AwaitingAdvance>();
 // In-memory map of plans currently running (so we can stop them).
 const runningPlans = new Map<string, { aborted: boolean }>();
 
-export async function runRelayPlan(planId: string): Promise<void> {
+export async function runRelayPlan(planId: string, scope: TenantScope): Promise<void> {
   const plan = await getPlan(planId);
-  if (!plan) {
-    broadcast(makeEvent('relay:error' as any, { planId, error: 'Plan not found' }));
+  if (!plan || plan.projectId !== scope.projectId) {
+    broadcast(makeEvent('relay:error' as any, { planId, error: 'Plan not found' }, scope));
     return;
   }
   if (plan.status === 'running') {
-    broadcast(makeEvent('relay:error' as any, { planId, error: 'Plan is already running' }));
+    broadcast(makeEvent('relay:error' as any, { planId, error: 'Plan is already running' }, scope));
     return;
   }
 
@@ -177,7 +184,7 @@ export async function runRelayPlan(planId: string): Promise<void> {
       await updatePlan(planId, { currentMilestoneId: milestone.id });
 
       // Run the milestone (with up to MAX_CORRECTION_ATTEMPTS correction retries)
-      const success = await runMilestone(planId, plan, milestone, runState);
+      const success = await runMilestone(planId, plan, milestone, runState, scope);
       if (!success) {
         // Either failed all corrections OR was aborted
         if (runState.aborted) {
@@ -203,7 +210,7 @@ export async function runRelayPlan(planId: string): Promise<void> {
             milestoneId: milestone.id,
             nextMilestoneId: nextMilestone.id,
             summary: `Milestone ${milestone.id} (${milestone.title}) approved. Next: ${nextMilestone.title}`,
-          }));
+          }, scope));
           await updatePlan(planId, { status: 'awaiting-user' });
           await waitForUserAdvance(planId, milestone.id);
           // After resume, check abort
@@ -223,14 +230,14 @@ export async function runRelayPlan(planId: string): Promise<void> {
       broadcast(makeEvent('relay:plan-complete' as any, {
         planId,
         projectName: plan.plan.projectName,
-      }));
+      }, scope));
       console.log(`[orchestrator:relay] plan ${planId} completed`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[orchestrator:relay] plan ${planId} failed:`, msg);
     await updatePlan(planId, { status: 'failed' });
-    broadcast(makeEvent('relay:error' as any, { planId, error: msg }));
+    broadcast(makeEvent('relay:error' as any, { planId, error: msg }, scope));
   } finally {
     runningPlans.delete(planId);
     awaitingAdvance.delete(planId);
@@ -247,6 +254,7 @@ async function runMilestone(
   plan: PlanRecord,
   milestone: Milestone,
   runState: { aborted: boolean },
+  scope: TenantScope,
 ): Promise<boolean> {
   const engine = getOrchestratorEngine();
 
@@ -263,7 +271,7 @@ async function runMilestone(
     console.log(`[orchestrator:relay] plan ${planId} milestone ${milestone.id} attempt ${attempt}`);
 
     // 1. Build + execute the agent task
-    const task = buildAgentTask(plan, milestone, attempt);
+    const task = buildAgentTask(plan, milestone, attempt, scope);
     const result = await agentManager.executeAndWait(task);
 
     if (runState.aborted) {
@@ -286,7 +294,7 @@ async function runMilestone(
       broadcast(makeEvent('relay:awaiting-user' as any, {
         planId, milestoneId: milestone.id,
         summary: `Agent ${milestone.assignedAgent} errored: ${result.error}`,
-      }));
+      }, scope));
       return false;
     }
 
@@ -333,18 +341,18 @@ async function runMilestone(
         planId, milestoneId: milestone.id,
         summary: decision.summary,
         filesProduced: filesProduced.map((f) => f.path),
-      }));
+      }, scope));
       console.log(`[orchestrator:relay] plan ${planId} milestone ${milestone.id} approved (attempt ${attempt})`);
       return true;
     }
 
     // Not approved — emit rejection
-    broadcast(makeEvent('relay:milestone-rejected' as any, {
-      planId, milestoneId: milestone.id,
-      attempt,
-      issues: decision.issues,
-      corrections: decision.corrections,
-    }));
+      broadcast(makeEvent('relay:milestone-rejected' as any, {
+        planId, milestoneId: milestone.id,
+        attempt,
+        issues: decision.issues,
+        corrections: decision.corrections,
+      }, scope));
     console.log(`[orchestrator:relay] plan ${planId} milestone ${milestone.id} rejected (attempt ${attempt}): ${decision.issues.join('; ')}`);
 
     // If we've exhausted correction attempts, surface to user
@@ -354,7 +362,7 @@ async function runMilestone(
         summary: `Milestone ${milestone.id} failed after ${MAX_CORRECTION_ATTEMPTS + 1} attempts. Issues: ${decision.issues.join('; ')}`,
         issues: decision.issues,
         corrections: decision.corrections,
-      }));
+      }, scope));
       return false;
     }
     // Otherwise loop and retry with corrections
@@ -363,24 +371,24 @@ async function runMilestone(
   return false;
 }
 
-function buildAgentTask(plan: PlanRecord, milestone: Milestone, attempt: number): AgentTask {
+function buildAgentTask(plan: PlanRecord, milestone: Milestone, attempt: number, scope: TenantScope): AgentTask {
   const description = attempt === 1
     ? `Milestone ${milestone.id}: ${milestone.title}\n\n${milestone.description}\n\nAcceptance criteria:\n${milestone.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}\n\nProject: ${plan.plan.projectName}\nTech stack: ${plan.plan.techStack.join(', ')}`
     : `Retry milestone ${milestone.id} (attempt ${attempt}). Previous attempt was rejected.\n\nMilestone: ${milestone.title}\n${milestone.description}\n\nCorrections required:\n${milestone.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}`;
 
   return {
     id: uuid(),
-    projectId: plan.projectId ?? '00000000-0000-0000-0000-000000000000',
+    projectId: scope.projectId,
     sessionId: plan.sessionId,
     agentId: milestone.assignedAgent,
     type: 'custom' as TaskType,
     description,
     context: {
-      projectId: plan.projectId ?? '00000000-0000-0000-0000-000000000000',
+      projectId: scope.projectId,
       rootPath: `/tmp/code-siren-relay/${plan.id}`,
       techStack: Object.fromEntries(plan.plan.techStack.map((s) => [s, true])),
       activeFiles: [],
-      userId: undefined,
+      userId: scope.userId,
     },
     files: [],
     priority: 'normal' as TaskPriority,

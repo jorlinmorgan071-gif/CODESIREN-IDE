@@ -7,13 +7,15 @@
 
 import { v4 as uuid } from 'uuid';
 import type { AgentEvent, AgentEventName } from '../types.js';
+import type { TenantScope } from '../tenancy/scope.js';
 
-export function makeEvent<P>(event: AgentEventName, payload: P): AgentEvent<P> {
+export function makeEvent<P>(event: AgentEventName, payload: P, scope?: TenantScope): AgentEvent<P> {
   return {
     event,
     payload,
     ts: Date.now(),
     id: uuid(),
+    scope,
   };
 }
 

@@ -25,6 +25,15 @@ import { loadLibrarySkills } from '../../src/skills/library/index.js';
 import { listInstalledSkills, executeSkill, getSkill } from '../../src/skills/executor.js';
 import { toolRegistry } from '../../src/agents/_shared/tool-registry.js';
 
+async function withMissingEnv<T>(key: string, run: () => Promise<T>): Promise<T> {
+  vi.stubEnv(key, '');
+  try {
+    return await run();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+}
+
 describe('Phase D Batch 8 — Science & Data API skills', () => {
   beforeAll(() => {
     loadLibrarySkills();
@@ -100,8 +109,9 @@ describe('Phase D Batch 8 — Science & Data API skills', () => {
   // ════════════════════════════════════════════════════════════════════
 
   it('CRITICAL — YouTube search: missing key → honest unavailable, no network call', async () => {
-    expect(process.env.YOUTUBE_API_KEY || '').toBe('');
-    const result = await executeSkill('youtube-search', { query: 'typescript tutorial' });
+    const result = await withMissingEnv('YOUTUBE_API_KEY', () =>
+      executeSkill('youtube-search', { query: 'typescript tutorial' }),
+    );
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('YOUTUBE_API_KEY');
     // CRITICAL: must NOT contain any fabricated search results

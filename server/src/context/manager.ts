@@ -64,11 +64,7 @@ class ContextManagerImpl implements IContextManager {
    * dispatches an empty/minimal bundle (fail-open).
    */
   async assemble(params: AssembleParams): Promise<ContextBundle> {
-    const { userId: _userId, agentId, task, modelId } = params;
-    // userId is currently used for tracing only — passed in for future
-    // per-user memory filtering but not strictly needed today since
-    // memoryEngine.search() filters by projectId, not userId.
-    void _userId;
+    const { userId, agentId, task, modelId } = params;
     void agentId;
 
     const projectRoot = task.context.rootPath;
@@ -151,7 +147,7 @@ class ContextManagerImpl implements IContextManager {
       const memoryResults = await memoryEngine.search(
         task.description,
         memLimit,
-        task.projectId,
+        userId && userId !== 'unknown' ? { userId, projectId: task.projectId } : undefined,
       );
       relevantMemory = memoryResults.map(chunk => ({
         content: chunk.content,

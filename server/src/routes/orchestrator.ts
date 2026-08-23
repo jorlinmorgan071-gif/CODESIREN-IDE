@@ -24,11 +24,42 @@ import { requireAuth } from '../auth/middleware.js';
 import { getOrchestratorSettings, setOrchestratorSettings, TIER1_MODELS } from '../orchestrator/settings.js';
 import { listAvailableEngines, setActiveOrchestratorEngine } from '../orchestrator/engine.js';
 import { generatePlan, runRelayPlan, signalAdvance, stopPlan, isPlanRunning } from '../orchestrator/relay-loop.js';
-import { getPlan, listPlans, listPlansBySession, listMilestoneLogs, updatePlan } from '../orchestrator/plans-repo.js';
+import { getPlan, listPlansByProject, listMilestoneLogs, updatePlan } from '../orchestrator/plans-repo.js';
 import { runChatViaAgentManager } from '../orchestrator/tier1-chat.js';
 import { modelRouter } from '../orchestration/model-router.js';
+import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
 
 export const orchestratorRouter = Router();
+
+function projectIdFromRequest(req: any): string | undefined {
+  const candidate = req.method === 'GET' ? req.query?.projectId : req.body?.projectId;
+  return typeof candidate === 'string' ? candidate : undefined;
+}
+
+async function resolveRouteScope(req: any, res: any, requestedProjectId?: string) {
+  try {
+    return await resolveTenantScope(req.user!.id, requestedProjectId);
+  } catch (error) {
+    if (error instanceof ProjectAccessError) {
+      res.status(403).json({ error: 'Project access denied' });
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function getOwnedPlan(req: any, res: any, planId: string, requestedProjectId?: string) {
+  const scope = await resolveRouteScope(req, res, requestedProjectId ?? projectIdFromRequest(req));
+  if (!scope) return null;
+  const plan = await getPlan(planId);
+  // Legacy null-project plans remain unavailable rather than being guessed into
+  // a tenant after P0 ownership enforcement.
+  if (!plan || plan.projectId !== scope.projectId) {
+    res.status(404).json({ error: 'Plan not found' });
+    return null;
+  }
+  return { scope, plan };
+}
 
 // ── POST /api/orchestrator/chat ──────────────────────────────────────────
 
@@ -49,6 +80,7 @@ const chatContextSchema = z.object({
 const chatSchema = z.object({
   sessionId: z.string().min(1),
   message: z.string().min(1).max(8000),
+  projectId: z.string().uuid().optional(),
   context: chatContextSchema,
 });
 
@@ -57,6 +89,16 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
     return;
+  }
+  let scope;
+  try {
+    scope = await resolveTenantScope(req.user!.id, parsed.data.projectId);
+  } catch (error) {
+    if (error instanceof ProjectAccessError) {
+      res.status(403).json({ error: 'Project access denied' });
+      return;
+    }
+    throw error;
   }
   const taskId = uuid();
   // Route through the authoritative AgentManager lifecycle (Phase 1).
@@ -69,7 +111,7 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
     parsed.data.sessionId,
     parsed.data.message,
     taskId,
-    req.user?.id,
+    scope,
     parsed.data.context,
   ).catch((err) => {
     console.error('[orchestrator:chat] task failed:', err);
@@ -77,8 +119,8 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
   res.status(202).json({
     taskId,
     sessionId: parsed.data.sessionId,
+    projectId: scope.projectId,
     status: 'accepted',
-    stream: `ws://localhost:${process.env.PORT ?? 3001}/ws?token=${req.headers.authorization?.slice(7) ?? ''}`,
   });
 });
 
@@ -86,6 +128,7 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
 
 const planSchema = z.object({
   sessionId: z.string().min(1),
+  projectId: z.string().uuid().optional(),
 });
 
 orchestratorRouter.post('/plan', requireAuth, async (req, res) => {
@@ -95,9 +138,12 @@ orchestratorRouter.post('/plan', requireAuth, async (req, res) => {
     return;
   }
   try {
-    const record = await generatePlan(parsed.data.sessionId);
+    const scope = await resolveRouteScope(req, res, parsed.data.projectId);
+    if (!scope) return;
+    const record = await generatePlan(parsed.data.sessionId, scope);
     res.json({
       planId: record.id,
+      projectId: record.projectId,
       plan: record.plan,
       engine: record.engine,
       approvalMode: record.approvalMode,
@@ -114,6 +160,7 @@ orchestratorRouter.post('/plan', requireAuth, async (req, res) => {
 
 const approveSchema = z.object({
   approvalMode: z.enum(['auto', 'default']).optional(),
+  projectId: z.string().uuid().optional(),
   milestones: z.array(z.object({
     id: z.string(),
     title: z.string().optional(),
@@ -132,11 +179,9 @@ orchestratorRouter.post('/plan/:id/approve', requireAuth, async (req, res) => {
     return;
   }
 
-  const current = await getPlan(planId);
-  if (!current) {
-    res.status(404).json({ error: 'Plan not found' });
-    return;
-  }
+  const owned = await getOwnedPlan(req, res, planId, parsed.data.projectId);
+  if (!owned) return;
+  const { scope, plan: current } = owned;
   if (current.status !== 'draft' && current.status !== 'failed' && current.status !== 'stopped') {
     res.status(409).json({ error: `Plan cannot be approved from status "${current.status}"` });
     return;
@@ -174,7 +219,7 @@ orchestratorRouter.post('/plan/:id/approve', requireAuth, async (req, res) => {
   // Fire and forget — the relay loop runs server-side as an async process.
   // The frontend follows progress via WS events (relay:milestone-start,
   // relay:milestone-complete, relay:awaiting-user, etc.).
-  runRelayPlan(planId).catch((err) => {
+  runRelayPlan(planId, scope).catch((err) => {
     console.error('[orchestrator:approve] relay loop crashed:', err);
   });
 
@@ -185,11 +230,9 @@ orchestratorRouter.post('/plan/:id/approve', requireAuth, async (req, res) => {
 
 orchestratorRouter.post('/plan/:id/advance', requireAuth, async (req, res) => {
   const planId = req.params.id;
-  const current = await getPlan(planId);
-  if (!current) {
-    res.status(404).json({ error: 'Plan not found' });
-    return;
-  }
+  const owned = await getOwnedPlan(req, res, planId);
+  if (!owned) return;
+  const { plan: current } = owned;
   if (current.status !== 'awaiting-user') {
     res.status(409).json({ error: `Plan is not awaiting user input (status: ${current.status})` });
     return;
@@ -206,11 +249,9 @@ orchestratorRouter.post('/plan/:id/advance', requireAuth, async (req, res) => {
 
 orchestratorRouter.post('/plan/:id/pause', requireAuth, async (req, res) => {
   const planId = req.params.id;
-  const current = await getPlan(planId);
-  if (!current) {
-    res.status(404).json({ error: 'Plan not found' });
-    return;
-  }
+  const owned = await getOwnedPlan(req, res, planId);
+  if (!owned) return;
+  const { plan: current } = owned;
   if (current.status !== 'running' && current.status !== 'awaiting-user') {
     res.status(409).json({ error: `Plan cannot be paused from status "${current.status}"` });
     return;
@@ -226,11 +267,9 @@ orchestratorRouter.post('/plan/:id/pause', requireAuth, async (req, res) => {
 
 orchestratorRouter.post('/plan/:id/stop', requireAuth, async (req, res) => {
   const planId = req.params.id;
-  const current = await getPlan(planId);
-  if (!current) {
-    res.status(404).json({ error: 'Plan not found' });
-    return;
-  }
+  const owned = await getOwnedPlan(req, res, planId);
+  if (!owned) return;
+  const { plan: current } = owned;
   if (current.status === 'completed' || current.status === 'failed' || current.status === 'stopped') {
     res.status(409).json({ error: `Plan already in terminal status "${current.status}"` });
     return;
@@ -244,11 +283,9 @@ orchestratorRouter.post('/plan/:id/stop', requireAuth, async (req, res) => {
 
 orchestratorRouter.get('/plan/:id/status', requireAuth, async (req, res) => {
   const planId = req.params.id;
-  const current = await getPlan(planId);
-  if (!current) {
-    res.status(404).json({ error: 'Plan not found' });
-    return;
-  }
+  const owned = await getOwnedPlan(req, res, planId);
+  if (!owned) return;
+  const { plan: current } = owned;
   const logs = await listMilestoneLogs(planId);
   res.json({
     planId,
@@ -269,9 +306,9 @@ orchestratorRouter.get('/plan/:id/status', requireAuth, async (req, res) => {
 
 orchestratorRouter.get('/plans', requireAuth, async (req, res) => {
   const sessionId = req.query.sessionId as string | undefined;
-  const plans = sessionId
-    ? await listPlansBySession(sessionId)
-    : await listPlans(50);
+  const scope = await resolveRouteScope(req, res);
+  if (!scope) return;
+  const plans = await listPlansByProject(scope.projectId, sessionId, 50);
   res.json({
     plans: plans.map((p) => ({
       id: p.id,
@@ -294,11 +331,9 @@ orchestratorRouter.get('/plans', requireAuth, async (req, res) => {
 
 orchestratorRouter.get('/plan/:id', requireAuth, async (req, res) => {
   const planId = req.params.id;
-  const current = await getPlan(planId);
-  if (!current) {
-    res.status(404).json({ error: 'Plan not found' });
-    return;
-  }
+  const owned = await getOwnedPlan(req, res, planId);
+  if (!owned) return;
+  const { plan: current } = owned;
   const logs = await listMilestoneLogs(planId);
   res.json({
     ...current,

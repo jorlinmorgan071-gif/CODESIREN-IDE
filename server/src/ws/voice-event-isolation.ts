@@ -1,4 +1,5 @@
 import type { AgentEvent } from '../types.js';
+import { scopesMatch, type TenantScope } from '../tenancy/scope.js';
 
 export interface VoiceEventSessionOwner {
   userId: string;
@@ -18,6 +19,12 @@ export function isVoiceEventForRecipient(
   resolveSession: (sessionId: string) => VoiceEventSessionOwner | undefined,
   resolveVoiceTask?: (taskId: string) => VoiceTaskOwner | undefined,
 ): boolean {
+  const recipientScope: TenantScope | undefined = recipient.projectId
+    ? { userId: recipient.userId, projectId: recipient.projectId }
+    : undefined;
+  const eventScope = event.scope;
+  if (eventScope) return scopesMatch(eventScope, recipientScope);
+
   const payload = event.payload as { sessionId?: unknown };
   const ownsRecipient = (owner: VoiceEventSessionOwner | undefined) => Boolean(
     owner && owner.userId === recipient.userId && owner.projectId === recipient.projectId,
@@ -30,5 +37,7 @@ export function isVoiceEventForRecipient(
     if (typeof agentPayload.taskId !== 'string' || !resolveVoiceTask) return false;
     return ownsRecipient(resolveVoiceTask(agentPayload.taskId));
   }
-  return true;
+  // P0: generic events without a server-resolved scope are never delivered.
+  // This turns missing metadata into a safe omission instead of cross-tenant data.
+  return false;
 }

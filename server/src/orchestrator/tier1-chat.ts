@@ -19,6 +19,7 @@ import { getOrchestratorSettings } from './settings.js';
 import type { OrchestratorMessage } from './engine.js';
 import { agentManager } from '../orchestration/agent-manager.js';
 import type { AgentTask, ExecutionMode, TaskPriority, TaskType } from '../types.js';
+import type { TenantScope } from '../tenancy/scope.js';
 
 // Session-scoped history for Tier 1 chat. We keep this in-memory because
 // the directive says Tier 1 is "99% of the time" — storing every casual
@@ -63,6 +64,7 @@ export async function streamTier1Chat(
   sessionId: string,
   userMessage: string,
   taskId: string,
+  scope: TenantScope,
 ): Promise<void> {
   const settings = getOrchestratorSettings();
   const model = settings.tier1Model;
@@ -73,8 +75,8 @@ export async function streamTier1Chat(
     const stubText = `[Tier 1] I'd love to chat, but OPENROUTER_API_KEY is not set on the server.\n\nTo enable Tier 1 chat, set OPENROUTER_API_KEY in server/.env. Until then, you can still use the Agent Relay system by pressing "Start Project".`;
     broadcast(makeEvent('orchestrator:chunk' as any, {
       taskId, sessionId, type: 'text', content: stubText,
-    }));
-    broadcast(makeEvent('orchestrator:complete' as any, { taskId, sessionId }));
+    }, scope));
+    broadcast(makeEvent('orchestrator:complete' as any, { taskId, sessionId }, scope));
     return;
   }
 
@@ -114,7 +116,7 @@ export async function streamTier1Chat(
       broadcast(makeEvent('orchestrator:error' as any, {
         taskId, sessionId,
         error: `Tier 1 chat failed: ${res.status} ${errText.slice(0, 200)}`,
-      }));
+      }, scope));
       return;
     }
 
@@ -136,7 +138,7 @@ export async function streamTier1Chat(
         if (data === '[DONE]') {
           // Append the assistant response to history for future turns
           appendSessionMessage(sessionId, { role: 'assistant', content: fullResponse });
-          broadcast(makeEvent('orchestrator:complete' as any, { taskId, sessionId }));
+          broadcast(makeEvent('orchestrator:complete' as any, { taskId, sessionId }, scope));
           return;
         }
         try {
@@ -146,7 +148,7 @@ export async function streamTier1Chat(
             fullResponse += delta;
             broadcast(makeEvent('orchestrator:chunk' as any, {
               taskId, sessionId, type: 'text', content: delta,
-            }));
+            }, scope));
           }
         } catch {
           // skip malformed SSE line
@@ -158,10 +160,10 @@ export async function streamTier1Chat(
     if (fullResponse) {
       appendSessionMessage(sessionId, { role: 'assistant', content: fullResponse });
     }
-    broadcast(makeEvent('orchestrator:complete' as any, { taskId, sessionId }));
+    broadcast(makeEvent('orchestrator:complete' as any, { taskId, sessionId }, scope));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    broadcast(makeEvent('orchestrator:error' as any, { taskId, sessionId, error: msg }));
+    broadcast(makeEvent('orchestrator:error' as any, { taskId, sessionId, error: msg }, scope));
   }
 }
 
@@ -206,9 +208,21 @@ export async function runChatViaAgentManager(
   sessionId: string,
   userMessage: string,
   taskId: string,
-  userId?: string,
+  scopeOrLegacyUser?: TenantScope | string,
   workspaceContext?: WorkspaceContext,
 ): Promise<void> {
+  // Only legacy in-process tests use the string form. HTTP routes always pass a
+  // server-resolved scope. The derived project ID is neither persisted nor an
+  // owned project, so a WebSocket client cannot subscribe to it.
+  const scope: TenantScope = typeof scopeOrLegacyUser === 'string'
+    ? {
+      userId: scopeOrLegacyUser,
+      projectId: `legacy-internal-${scopeOrLegacyUser}`,
+    }
+    : scopeOrLegacyUser ?? {
+      userId: 'legacy-internal',
+      projectId: 'legacy-internal-anonymous',
+    };
   // 1. Append user message to session history (preserving conversation context)
   appendSessionMessage(sessionId, { role: 'user', content: userMessage });
   const history = getSessionHistory(sessionId);
@@ -251,18 +265,18 @@ export async function runChatViaAgentManager(
   //    so ContextManager can use it as the authoritative source for the active file.
   const task: AgentTask = {
     id: taskId,
-    projectId: '00000000-0000-0000-0000-000000000000',
+    projectId: scope.projectId,
     sessionId,
     agentId: CHAT_AGENT_ID,
     type: 'chat' as TaskType,
     description: conversationContext,
     context: {
-      projectId: '00000000-0000-0000-0000-000000000000',
+      projectId: scope.projectId,
       rootPath,               // real workspace root (or honest placeholder)
       techStack: {},
       activeFiles,            // real open files from the editor
       recentMessages: recentHistory.map(m => m.content),
-      userId,
+      userId: scope.userId,
       // Phase 3: live editor content — ContextManager uses this instead of
       // reading from disk for the active file. Precedence: live > disk > none.
       activeFilePath: workspaceContext?.activeFile,
@@ -300,7 +314,7 @@ export async function runChatViaAgentManager(
     summary: result.error
       ? `Chat task failed: ${result.error}`
       : 'Chat task completed',
-  }));
+  }, scope));
 
   // 6. Append assistant response to session history
   if (result.text) {

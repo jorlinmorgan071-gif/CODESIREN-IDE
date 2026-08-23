@@ -68,29 +68,16 @@ describe('Phase C Agent 6 — PerformanceAgent', () => {
   describe('Step 2: Anti-pattern detection', () => {
     // ── Pattern 1: execSync in route handlers ─────────────────────────
     describe('Pattern 1: execSync in route handler files', () => {
-      it('FLAGS: execSync in src/routes/*.ts (live-code test against real files)', async () => {
-        // This tests against the REAL codebase — dashboard.ts and traces.ts
-        // both have execSync in route handlers (confirmed in Section 0)
+      it('P0: reports no execSync in src/routes/*.ts after route metadata is removed', async () => {
+        // This tests against the REAL codebase. Route handlers must not invoke
+        // a shell merely to render dashboard metadata.
         const result = await agent.performanceReview(PROJECT_ROOT);
 
         const execSyncFindings = result.antiPatternFindings.filter(
           f => f.pattern === 'execSync-in-route-handler'
         );
 
-        // Should find at least the 2 known instances
-        expect(execSyncFindings.length).toBeGreaterThanOrEqual(2);
-
-        // Verify they're in the expected files
-        const files = execSyncFindings.map(f => f.file);
-        expect(files.some(f => f.includes('dashboard'))).toBe(true);
-        expect(files.some(f => f.includes('traces'))).toBe(true);
-
-        // Verify severity + suggestion
-        for (const finding of execSyncFindings) {
-          expect(finding.severity).toBe('warning');
-          expect(finding.suggestion).toContain('execSync');
-          expect(finding.line).toBeGreaterThan(0);
-        }
+        expect(execSyncFindings).toEqual([]);
       });
 
       it('FALSE-POSITIVE: execSync in non-route files is NOT flagged', async () => {
@@ -354,7 +341,7 @@ describe('Phase C Agent 6 — PerformanceAgent', () => {
       // If there are findings, they should appear as strings in issues[]
       if (result.issues.length > 0) {
         expect(typeof result.issues[0]).toBe('string');
-        expect(result.issues[0]).toContain('execSync-in-route-handler');
+        expect(result.issues[0]).not.toContain('execSync-in-route-handler');
       }
     });
 

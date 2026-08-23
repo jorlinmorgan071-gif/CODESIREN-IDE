@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
 import { voiceProxy } from '../systems/voice/voice-proxy.js';
+import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
 
 export const voiceLiveRouter = Router();
 
@@ -23,12 +24,22 @@ voiceLiveRouter.post('/live/start', requireAuth, async (req, res) => {
     return;
   }
 
-  const projectId = (typeof req.body?.projectId === 'string' ? req.body.projectId : '00000000-0000-0000-0000-000000000000');
+  const requestedProjectId = typeof req.body?.projectId === 'string' ? req.body.projectId : undefined;
+  let scope;
+  try {
+    scope = await resolveTenantScope(userId, requestedProjectId);
+  } catch (error) {
+    if (error instanceof ProjectAccessError) {
+      res.status(403).json({ error: 'Project access denied' });
+      return;
+    }
+    throw error;
+  }
   // Pass the user's display name (from JWT claims) for greeting personalization
   const userDisplayName = req.user?.name ?? '';
 
   try {
-    const sessionId = await voiceProxy.startSession(userId, projectId, userDisplayName);
+    const sessionId = await voiceProxy.startSession(userId, scope.projectId, userDisplayName);
     res.json({
       sessionId,
       status: 'active',

@@ -11,12 +11,22 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import { agentManager } from '../orchestration/agent-manager.js';
-import { sidecarManager, ensureBuild123dSidecar, SidecarCrashedError } from '../sidecars/manager.js';
+import { sidecarManager, ensureBuild123dSidecar } from '../sidecars/manager.js';
 import { getPrinterClient } from '../agents/fabrication/printer-client.js';
 import { v4 as uuid } from 'uuid';
 import type { AgentTask, TaskType } from '../types.js';
+import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
 
 export const fabricationRouter = Router();
+
+async function resolveFabricationScope(req: any, projectId?: string) {
+  try {
+    return await resolveTenantScope(req.user!.id, projectId);
+  } catch (error) {
+    if (error instanceof ProjectAccessError) return null;
+    throw error;
+  }
+}
 
 const generateSchema = z.object({
   prompt: z.string().min(1).max(4000),
@@ -35,7 +45,9 @@ fabricationRouter.post('/generate', requireAuth, async (req, res) => {
     return;
   }
 
-  const projectId = parsed.data.projectId ?? '00000000-0000-0000-0000-000000000000';
+  const scope = await resolveFabricationScope(req, parsed.data.projectId);
+  if (!scope) { res.status(403).json({ error: 'Project access denied' }); return; }
+  const projectId = scope.projectId;
   const task: AgentTask = {
     id: uuid(),
     projectId,
@@ -48,8 +60,7 @@ fabricationRouter.post('/generate', requireAuth, async (req, res) => {
       rootPath: '/tmp/code-siren-step-4',
       techStack: {},
       activeFiles: [],
-      // Approval-gate fix: pass userId so the agent can tag findings
-      userId: req.user?.id,
+      userId: scope.userId,
     },
     priority: 'normal',
     executionMode: 'single-shot',
@@ -64,8 +75,8 @@ fabricationRouter.post('/generate', requireAuth, async (req, res) => {
   res.status(202).json({
     taskId: task.id,
     agentId: 'fabrication-agent',
+    projectId,
     status: 'accepted',
-    stream: `ws://localhost:${process.env.PORT ?? 3001}/ws?token=${req.headers.authorization?.slice(7) ?? ''}&projectId=${projectId}`,
   });
 });
 
@@ -82,7 +93,9 @@ fabricationRouter.post('/fabricate-print', requireAuth, async (req, res) => {
     return;
   }
 
-  const projectId = parsed.data.projectId ?? '00000000-0000-0000-0000-000000000000';
+  const scope = await resolveFabricationScope(req, parsed.data.projectId);
+  if (!scope) { res.status(403).json({ error: 'Project access denied' }); return; }
+  const projectId = scope.projectId;
   const task: AgentTask = {
     id: uuid(),
     projectId,
@@ -90,10 +103,7 @@ fabricationRouter.post('/fabricate-print', requireAuth, async (req, res) => {
     agentId: 'fabrication-agent',
     type: 'fabricate-print' as TaskType,
     description: parsed.data.prompt,
-    // Approval-gate fix: pass userId so the agent can tag the print-submission
-    // finding. Without this, the approval endpoint would 403 with 'no_userId'
-    // and the user could never approve the print.
-    context: { projectId, rootPath: '/tmp/code-siren-step-5', techStack: {}, activeFiles: [], userId: req.user?.id },
+    context: { projectId, rootPath: '/tmp/code-siren-step-5', techStack: {}, activeFiles: [], userId: scope.userId },
     priority: 'normal',
     executionMode: 'single-shot',
     origin: 'api',
@@ -108,8 +118,8 @@ fabricationRouter.post('/fabricate-print', requireAuth, async (req, res) => {
     taskId: task.id,
     agentId: 'fabrication-agent',
     type: 'fabricate-print',
+    projectId,
     status: 'accepted',
-    stream: `ws://localhost:${process.env.PORT ?? 3001}/ws?token=${req.headers.authorization?.slice(7) ?? ''}&projectId=${projectId}`,
   });
 });
 
@@ -131,7 +141,9 @@ fabricationRouter.post('/slice', requireAuth, async (req, res) => {
     return;
   }
 
-  const projectId = parsed.data.projectId ?? '00000000-0000-0000-0000-000000000000';
+  const scope = await resolveFabricationScope(req, parsed.data.projectId);
+  if (!scope) { res.status(403).json({ error: 'Project access denied' }); return; }
+  const projectId = scope.projectId;
   const task: AgentTask = {
     id: uuid(),
     projectId,
@@ -139,7 +151,7 @@ fabricationRouter.post('/slice', requireAuth, async (req, res) => {
     agentId: 'fabrication-agent',
     type: 'slice' as TaskType,
     description: parsed.data.stlPath,
-    context: { projectId, rootPath: '/tmp/code-siren-step-5', techStack: {}, activeFiles: [], userId: req.user?.id },
+    context: { projectId, rootPath: '/tmp/code-siren-step-5', techStack: {}, activeFiles: [], userId: scope.userId },
     priority: 'normal',
     executionMode: 'single-shot',
     origin: 'api',
@@ -154,19 +166,29 @@ fabricationRouter.post('/slice', requireAuth, async (req, res) => {
     taskId: task.id,
     agentId: 'fabrication-agent',
     type: 'slice',
+    projectId,
     status: 'accepted',
   });
 });
 
 // Step 5: discover printers
+const discoverSchema = z.object({ projectId: z.string().uuid().optional() });
+
 fabricationRouter.post('/discover', requireAuth, async (req, res) => {
+  const parsed = discoverSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
   const agent = agentManager.get('fabrication-agent');
   if (!agent) {
     res.status(503).json({ error: 'Fabrication Agent not registered' });
     return;
   }
 
-  const projectId = '00000000-0000-0000-0000-000000000000';
+  const scope = await resolveFabricationScope(req, parsed.data.projectId);
+  if (!scope) { res.status(403).json({ error: 'Project access denied' }); return; }
+  const projectId = scope.projectId;
   const task: AgentTask = {
     id: uuid(),
     projectId,
@@ -174,7 +196,7 @@ fabricationRouter.post('/discover', requireAuth, async (req, res) => {
     agentId: 'fabrication-agent',
     type: 'discover' as TaskType,
     description: 'discover printers',
-    context: { projectId, rootPath: '/tmp/code-siren-step-5', techStack: {}, activeFiles: [], userId: req.user?.id },
+    context: { projectId, rootPath: '/tmp/code-siren-step-5', techStack: {}, activeFiles: [], userId: scope.userId },
     priority: 'normal',
     executionMode: 'single-shot',
     origin: 'api',
@@ -189,6 +211,7 @@ fabricationRouter.post('/discover', requireAuth, async (req, res) => {
     taskId: task.id,
     agentId: 'fabrication-agent',
     type: 'discover',
+    projectId,
     status: 'accepted',
   });
 });

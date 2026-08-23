@@ -15,6 +15,7 @@ import { appendFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ExecutionMode } from '../types.js';
+import { scopesMatch, type TenantScope } from '../tenancy/scope.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TRACES_DIR = join(__dirname, '..', '..', '.traces');
@@ -91,6 +92,8 @@ export interface AgentRunTrace {
   toolResults: Array<{ name: string; args: unknown; result: unknown; success: boolean }>;
   outcome: 'success' | 'error' | 'loop-blocked' | 'max-turns' | 'aborted';
   errorMessage?: string;
+  /** Server-resolved tenant scope; unscoped legacy traces are never public. */
+  scope?: TenantScope;
   // Phase 5: Execution truth — what ACTUALLY happened vs what the model CLAIMED.
   // These fields are populated by real execution evidence, not by model text.
   verificationRecords: VerificationRecord[];         // actual verification runs
@@ -113,6 +116,7 @@ export function startTrace(opts: {
   domain: string;
   executionMode: ExecutionMode;
   input: string;
+  scope?: TenantScope;
 }): string {
   const traceId = opts.taskId;  // 1:1 with task for simplicity
   const trace: AgentRunTrace = {
@@ -127,6 +131,7 @@ export function startTrace(opts: {
     steps: [],
     toolResults: [],
     outcome: 'success',
+    scope: opts.scope,
     // Phase 5: execution truth — starts unverified
     verificationRecords: [],
     verificationStatus: 'unverified',
@@ -221,17 +226,20 @@ export function completeTrace(traceId: string, output: string): AgentRunTrace | 
   return trace;
 }
 
-export function getTrace(traceId: string): AgentRunTrace | null {
+export function getTrace(traceId: string, scope?: TenantScope): AgentRunTrace | null {
   // Phase 5 — O(1) lookup via the index. Falls back to active traces
   // (still O(1) — activeTraces is already a Map).
-  return activeTraces.get(traceId) ?? traceIndex.get(traceId) ?? null;
+  const trace = activeTraces.get(traceId) ?? traceIndex.get(traceId) ?? null;
+  if (!trace) return null;
+  if (scope && !scopesMatch(trace.scope, scope)) return null;
+  return trace;
 }
 
-export function listTraces(opts: { agentId?: string; executionMode?: ExecutionMode; limit?: number } = {}): AgentRunTrace[] {
+export function listTraces(opts: { agentId?: string; executionMode?: ExecutionMode; limit?: number; scope?: TenantScope } = {}): AgentRunTrace[] {
   const limit = opts.limit ?? 100;
   // Phase 5 — avoid copying the entire ring buffer when no filters are set.
   // Just slice the last `limit` entries (still returns newest-first).
-  if (!opts.agentId && !opts.executionMode) {
+  if (!opts.agentId && !opts.executionMode && !opts.scope) {
     // No filters — slice from the end (newest), reverse to newest-first
     const start = Math.max(0, ringBuffer.length - limit);
     const slice = ringBuffer.slice(start);
@@ -240,7 +248,8 @@ export function listTraces(opts: { agentId?: string; executionMode?: ExecutionMo
   // Filtered path — has to scan, but only filters once (combined predicate)
   const pred = (t: AgentRunTrace) =>
     (!opts.agentId || t.agentId === opts.agentId) &&
-    (!opts.executionMode || t.executionMode === opts.executionMode);
+    (!opts.executionMode || t.executionMode === opts.executionMode) &&
+    (!opts.scope || scopesMatch(t.scope, opts.scope));
   // Walk the ring buffer backwards (newest first), collect up to `limit` matches
   const out: AgentRunTrace[] = [];
   for (let i = ringBuffer.length - 1; i >= 0 && out.length < limit; i--) {

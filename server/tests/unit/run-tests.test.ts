@@ -14,13 +14,14 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { __test__ as runTestsTest } from '../../src/orchestration/run-tests.js';
 import { QaTesterAgent } from '../../src/agents/qa-tester/index.js';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 
 describe('Phase A Section 3 — Real test execution', () => {
-  const projectRoot = '/home/z/my-project';
+  const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
   // ════════════════════════════════════════════════════════════════════
   // TEST 1: runTests() on server/ — real pass/fail counts

@@ -223,6 +223,14 @@ export interface AgentEvent<P = unknown> {
   payload: P;
   ts: number;                    // epoch ms — required per PDF Section 20
   id: string;                    // uuid — required per PDF Section 20
+  /**
+   * P0 tenancy boundary. Generic agent data must carry a server-resolved scope
+   * before the WebSocket layer can deliver it. Missing scope means fail closed.
+   */
+  scope?: {
+    userId: string;
+    projectId: string;
+  };
 }
 
 // ── Ghost Mode (PDF Section 16) ───────────────────────────────────────────

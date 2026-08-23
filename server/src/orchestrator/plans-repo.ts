@@ -38,6 +38,7 @@ function getMemStore(): MemStore {
 
 export async function createPlan(params: {
   sessionId: string;
+  projectId: string;
   engine: OrchestratorEngineId;
   approvalMode: ApprovalMode;
   plan: RelayPlan;
@@ -47,7 +48,7 @@ export async function createPlan(params: {
   const record: PlanRecord = {
     id,
     sessionId: params.sessionId,
-    projectId: null,
+    projectId: params.projectId,
     engine: params.engine,
     approvalMode: params.approvalMode,
     status: 'draft',
@@ -62,8 +63,8 @@ export async function createPlan(params: {
       await query(
         `INSERT INTO relay_plans
            (id, session_id, project_id, engine, approval_mode, status, plan_json, current_milestone_id, created_at, updated_at)
-         VALUES ($1, $2, NULL, $3, $4, 'draft', $5, NULL, NOW(), NOW())`,
-        [id, params.sessionId, params.engine, params.approvalMode, JSON.stringify(params.plan)],
+         VALUES ($1, $2, $3, $4, $5, 'draft', $6, NULL, NOW(), NOW())`,
+        [id, params.sessionId, params.projectId, params.engine, params.approvalMode, JSON.stringify(params.plan)],
       );
     } catch (err) {
       console.warn(`[orchestrator:repo] DB insert failed, falling back to memory: ${err instanceof Error ? err.message : err}`);
@@ -175,6 +176,33 @@ export async function listPlansBySession(sessionId: string): Promise<PlanRecord[
   }
   const mem = getMemStore();
   return [...mem.plans.values()].filter((p) => p.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function listPlansByProject(projectId: string, sessionId?: string, limit = 50): Promise<PlanRecord[]> {
+  if (isDbAvailable()) {
+    try {
+      const params: unknown[] = [projectId];
+      const where = sessionId ? 'WHERE project_id = $1 AND session_id = $2' : 'WHERE project_id = $1';
+      if (sessionId) params.push(sessionId);
+      params.push(limit);
+      const rows = await query<{ id: string }>(
+        `SELECT id FROM relay_plans ${where} ORDER BY created_at DESC LIMIT $${params.length}`,
+        params,
+      );
+      const plans: PlanRecord[] = [];
+      for (const row of rows) {
+        const plan = await getPlan(row.id);
+        if (plan) plans.push(plan);
+      }
+      return plans;
+    } catch (err) {
+      console.warn(`[orchestrator:repo] DB list-by-project failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  return [...getMemStore().plans.values()]
+    .filter((plan) => plan.projectId === projectId && (!sessionId || plan.sessionId === sessionId))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit);
 }
 
 // ── Milestone log repository ─────────────────────────────────────────────

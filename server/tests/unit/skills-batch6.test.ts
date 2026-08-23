@@ -9,6 +9,15 @@ import { loadLibrarySkills } from '../../src/skills/library/index.js';
 import { listInstalledSkills, executeSkill, getSkill } from '../../src/skills/executor.js';
 import { toolRegistry } from '../../src/agents/_shared/tool-registry.js';
 
+async function withMissingEnv<T>(key: string, run: () => Promise<T>): Promise<T> {
+  vi.stubEnv(key, '');
+  try {
+    return await run();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+}
+
 describe('Phase D Batch 6 — 3 maps & location API skills', () => {
   beforeAll(() => {
     loadLibrarySkills();
@@ -35,24 +44,21 @@ describe('Phase D Batch 6 — 3 maps & location API skills', () => {
   // ════════════════════════════════════════════════════════════════════
 
   it('CRITICAL — MapTiler: missing key → honest unavailable', async () => {
-    expect(process.env.MAPTILER_API_KEY || '').toBe('');
-    const result = await executeSkill('maptiler-geocode', { query: 'Eiffel Tower' });
+    const result = await withMissingEnv('MAPTILER_API_KEY', () => executeSkill('maptiler-geocode', { query: 'Eiffel Tower' }));
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('MAPTILER_API_KEY');
   });
 
   it('CRITICAL — OpenRouteService: missing key → honest unavailable', async () => {
-    expect(process.env.OPENROUTESERVICE_KEY || '').toBe('');
-    const result = await executeSkill('ors-driving-directions', {
+    const result = await withMissingEnv('OPENROUTESERVICE_KEY', () => executeSkill('ors-driving-directions', {
       startLon: '8.681495', startLat: '49.414599', endLon: '8.687872', endLat: '49.420318',
-    });
+    }));
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('OPENROUTESERVICE_KEY');
   });
 
   it('CRITICAL — OpenWeatherMap: missing key → honest unavailable', async () => {
-    expect(process.env.OPENWEATHERMAP_KEY || '').toBe('');
-    const result = await executeSkill('owm-current-weather', { city: 'London' });
+    const result = await withMissingEnv('OPENWEATHERMAP_KEY', () => executeSkill('owm-current-weather', { city: 'London' }));
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('OPENWEATHERMAP_KEY');
   });

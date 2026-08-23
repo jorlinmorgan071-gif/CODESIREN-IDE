@@ -14,8 +14,18 @@ import { getDeviceClient } from '../agents/operative/device-client.js';
 import { sidecarManager } from '../sidecars/manager.js';
 import { v4 as uuid } from 'uuid';
 import type { AgentTask } from '../types.js';
+import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
 
 export const operativeRouter = Router();
+
+async function resolveOperativeScope(req: any, projectId?: string) {
+  try {
+    return await resolveTenantScope(req.user!.id, projectId);
+  } catch (error) {
+    if (error instanceof ProjectAccessError) return null;
+    throw error;
+  }
+}
 
 // ── Browser (Step 6) ─────────────────────────────────────────────────────
 
@@ -34,7 +44,9 @@ operativeRouter.post('/browse', requireAuth, async (req, res) => {
   const agent = agentManager.get('operative-agent');
   if (!agent) { res.status(503).json({ error: 'Operative Agent not registered' }); return; }
 
-  const projectId = parsed.data.projectId ?? '00000000-0000-0000-0000-000000000000';
+  const scope = await resolveOperativeScope(req, parsed.data.projectId);
+  if (!scope) { res.status(403).json({ error: 'Project access denied' }); return; }
+  const projectId = scope.projectId;
   const description = parsed.data.actions ? JSON.stringify(parsed.data.actions) : parsed.data.prompt ?? 'navigate to https://example.com';
   const task: AgentTask = {
     id: uuid(), projectId, sessionId: projectId, agentId: 'operative-agent',
@@ -43,7 +55,7 @@ operativeRouter.post('/browse', requireAuth, async (req, res) => {
     // browser actions (navigate/click/type/evaluate/scroll). Without this,
     // the approval endpoint would 403 with 'no_userId' and the user could
     // never approve the action.
-    context: { projectId, rootPath: '/tmp/code-siren-step-6', techStack: {}, activeFiles: [], userId: req.user?.id },
+    context: { projectId, rootPath: '/tmp/code-siren-step-6', techStack: {}, activeFiles: [], userId: scope.userId },
     priority: 'normal', executionMode: 'single-shot', origin: 'api', createdAt: Date.now(),
   };
   agentManager.send(task).catch((err) => console.error(`[operative] browse failed:`, err));
@@ -69,13 +81,15 @@ operativeRouter.post('/device', requireAuth, async (req, res) => {
   const agent = agentManager.get('operative-agent');
   if (!agent) { res.status(503).json({ error: 'Operative Agent not registered' }); return; }
 
-  const projectId = parsed.data.projectId ?? '00000000-0000-0000-0000-000000000000';
+  const scope = await resolveOperativeScope(req, parsed.data.projectId);
+  if (!scope) { res.status(403).json({ error: 'Project access denied' }); return; }
+  const projectId = scope.projectId;
   const task: AgentTask = {
     id: uuid(), projectId, sessionId: projectId, agentId: 'operative-agent',
     type: 'device-command', description: JSON.stringify(parsed.data),
     // Approval-gate fix: pass userId so the agent can tag findings for write
     // device commands (turn_on/turn_off/set_brightness/set_color).
-    context: { projectId, rootPath: '/tmp/code-siren-step-7', techStack: {}, activeFiles: [], userId: req.user?.id },
+    context: { projectId, rootPath: '/tmp/code-siren-step-7', techStack: {}, activeFiles: [], userId: scope.userId },
     priority: 'normal', executionMode: 'single-shot', origin: 'api', createdAt: Date.now(),
   };
   agentManager.send(task).catch((err) => console.error(`[operative] device failed:`, err));

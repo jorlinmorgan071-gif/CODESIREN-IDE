@@ -4,6 +4,9 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { memoryEngine } from '../../src/memory/engine.js';
 
+const SCOPE_A = { userId: 'memory-user-a', projectId: 'memory-project-a' };
+const SCOPE_B = { userId: 'memory-user-b', projectId: 'memory-project-b' };
+
 describe('MemoryEngine', () => {
   it('embed() returns 768-dim vector', async () => {
     const vec = await memoryEngine.embed('hello world');
@@ -21,8 +24,8 @@ describe('MemoryEngine', () => {
       sourceType: 'agent',
       sourceRef: 'test-agent',
       tags: ['preference'],
-    }, 'test-agent');
-    expect(await memoryEngine.count()).toBeGreaterThan(0);
+    }, 'test-agent', SCOPE_A);
+    expect(await memoryEngine.count(SCOPE_A)).toBeGreaterThan(0);
   });
 
   it('search() returns results for stored content', async () => {
@@ -30,9 +33,9 @@ describe('MemoryEngine', () => {
       sourceType: 'agent',
       sourceRef: 'backend-agent',
       tags: ['api-design'],
-    }, 'backend-agent');
+    }, 'backend-agent', SCOPE_A);
 
-    const results = await memoryEngine.search('REST API todo', 5);
+    const results = await memoryEngine.search('REST API todo', 5, SCOPE_A);
     expect(results.length).toBeGreaterThan(0);
     // Find the REST API entry in results (may not be first with pseudo-embedding)
     const restResult = results.find(r => r.content.includes('REST API'));
@@ -40,7 +43,7 @@ describe('MemoryEngine', () => {
   });
 
   it('search() returns fewer results for unrelated query', async () => {
-    const results = await memoryEngine.search('xyzzy-no-match-12345', 5);
+    const results = await memoryEngine.search('xyzzy-no-match-12345', 5, SCOPE_A);
     // Pseudo-embedding may still produce low-score matches — verify they're low quality
     for (const r of results) {
       expect(r.score).toBeLessThan(0.5);
@@ -51,9 +54,9 @@ describe('MemoryEngine', () => {
     await memoryEngine.memorize('performance optimization for React components', {
       sourceType: 'agent',
       sourceRef: 'performance-agent',
-    }, 'performance-agent');
+    }, 'performance-agent', SCOPE_A);
 
-    const results = await memoryEngine.search('React performance', 5);
+    const results = await memoryEngine.search('React performance', 5, SCOPE_A);
     for (const r of results) {
       expect(r.score).toBeGreaterThanOrEqual(0);
       expect(r.score).toBeLessThanOrEqual(1);
@@ -66,18 +69,35 @@ describe('MemoryEngine', () => {
       sourceType: 'agent',
       sourceRef: 'database-agent',
       tags: ['database', 'schema'],
-    }, 'database-agent');
+    }, 'database-agent', SCOPE_A);
 
     // Simulate Frontend Agent recalling it
-    const results = await memoryEngine.search('PostgreSQL uuid primary key', 5);
+    const results = await memoryEngine.search('PostgreSQL uuid primary key', 5, SCOPE_A);
     const found = results.find(r => r.content.includes('PostgreSQL'));
     expect(found).toBeDefined();
     expect(found?.metadata?.sourceRef).toBe('database-agent');
   });
 
   it('memorize() ignores trivially short content', async () => {
-    const before = await memoryEngine.count();
-    await memoryEngine.memorize('hi', { sourceType: 'agent', sourceRef: 'test' }, 'test');
-    expect(await memoryEngine.count()).toBe(before);
+    const before = await memoryEngine.count(SCOPE_A);
+    await memoryEngine.memorize('hi', { sourceType: 'agent', sourceRef: 'test' }, 'test', SCOPE_A);
+    expect(await memoryEngine.count(SCOPE_A)).toBe(before);
+  });
+
+  it('never recalls a different user or project memory', async () => {
+    const secret = 'P0 tenant-only architectural secret';
+    await memoryEngine.memorize(secret, { sourceType: 'agent', sourceRef: 'security-agent' }, 'security-agent', SCOPE_A);
+    const foreignResults = await memoryEngine.search(secret, 10, SCOPE_B);
+    expect(foreignResults.some(result => result.content === secret)).toBe(false);
+  });
+
+  it('does not reveal or delete a memory entry across tenant scopes', async () => {
+    const content = 'P0 direct lookup and delete isolation record';
+    await memoryEngine.memorize(content, { sourceType: 'agent', sourceRef: 'security-agent' }, 'security-agent', SCOPE_A);
+    const entry = (await memoryEngine.list(100, 0, SCOPE_A)).find(item => item.content === content);
+    expect(entry).toBeDefined();
+    expect(await memoryEngine.get(entry!.id, SCOPE_B)).toBeNull();
+    expect(await memoryEngine.delete(entry!.id, SCOPE_B)).toBe(false);
+    expect(await memoryEngine.get(entry!.id, SCOPE_A)).not.toBeNull();
   });
 });

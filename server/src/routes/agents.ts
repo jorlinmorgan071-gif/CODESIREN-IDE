@@ -9,6 +9,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { agentManager } from '../orchestration/agent-manager.js';
 import { makeEvent, broadcast } from '../ws/events.js';
 import type { AgentTask, ExecutionMode, TaskPriority, TaskType } from '../types.js';
+import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
 
 export const agentsRouter = Router();
 
@@ -32,15 +33,29 @@ agentsRouter.post('/:agentId/send', requireAuth, async (req, res) => {
     return;
   }
 
+  if (agentId === 'sentinel-agent') {
+    res.status(503).json({ error: 'Sentinel Agent is unavailable until watch ownership is implemented' });
+    return;
+  }
+
   const agent = agentManager.get(agentId);
   if (!agent) {
     res.status(404).json({ error: `Unknown agent: ${agentId}` });
     return;
   }
 
-  // Step 0: use placeholder project/session IDs until project management is wired.
-  // The Architect Agent doesn't need real project context for the end-to-end proof.
-  const projectId = parsed.data.projectId ?? '00000000-0000-0000-0000-000000000000';
+  let scope;
+  try {
+    scope = await resolveTenantScope(req.user!.id, parsed.data.projectId);
+  } catch (error) {
+    if (error instanceof ProjectAccessError) {
+      res.status(403).json({ error: 'Project access denied' });
+      return;
+    }
+    throw error;
+  }
+
+  const projectId = scope.projectId;
   const sessionId = parsed.data.sessionId ?? '00000000-0000-0000-0000-000000000000';
 
   const task: AgentTask = {
@@ -61,7 +76,7 @@ agentsRouter.post('/:agentId/send', requireAuth, async (req, res) => {
       // approval endpoint verifies req.user.id matches finding.userId
       // before transitioning state — this is how we enforce that the
       // user who approves is the user who requested.
-      userId: req.user?.id,
+      userId: scope.userId,
     },
     files: parsed.data.files,
     priority: parsed.data.priority as TaskPriority,
@@ -94,7 +109,7 @@ agentsRouter.post('/:agentId/send', requireAuth, async (req, res) => {
       origin: task.origin,
       createdAt: task.createdAt,
     },
-    stream: `ws://localhost:${process.env.PORT ?? 3001}/ws?token=${req.headers.authorization?.slice(7) ?? ''}&projectId=${projectId}`,
+    projectId,
   });
 });
 
@@ -123,6 +138,7 @@ agentsRouter.get('/', requireAuth, (_req, res) => {
 const meetingSchema = z.object({
   topic: z.string().min(1).max(2000).default('Coordinate next iteration'),
   quorum: z.number().int().min(1).max(20).default(3),
+  projectId: z.string().uuid().optional(),
 });
 
 agentsRouter.post('/meeting', requireAuth, async (req, res) => {
@@ -133,6 +149,16 @@ agentsRouter.post('/meeting', requireAuth, async (req, res) => {
   }
 
   const { topic, quorum } = parsed.data;
+  let scope;
+  try {
+    scope = await resolveTenantScope(req.user!.id, parsed.data.projectId);
+  } catch (error) {
+    if (error instanceof ProjectAccessError) {
+      res.status(403).json({ error: 'Project access denied' });
+      return;
+    }
+    throw error;
+  }
   const allAgents = agentManager.list();
   if (allAgents.length === 0) {
     res.status(503).json({ error: 'No agents registered' });
@@ -153,7 +179,7 @@ agentsRouter.post('/meeting', requireAuth, async (req, res) => {
     topic,
     participants: participants.map((a) => a.id),
     ts,
-  }));
+  }, scope));
 
   // Each participant emits a brief proposal — a single deterministic
   // recommendation string derived from the agent's domain. No LLM call,
@@ -170,7 +196,7 @@ agentsRouter.post('/meeting', requireAuth, async (req, res) => {
       type: 'proposal',
       payload: { text: proposalText, vote, trustScore: a.trustScore },
       ts: eventTs,
-    }));
+    }, scope));
     return {
       agentId: a.id,
       agentName: a.name,
@@ -194,7 +220,7 @@ agentsRouter.post('/meeting', requireAuth, async (req, res) => {
     decision,
     tally: { approve: approveCount, abstain: abstainCount, reject: rejectCount },
     ts: ts + (participants.length + 1) * 10,
-  }));
+  }, scope));
 
   res.json({
     meetingId,

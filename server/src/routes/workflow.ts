@@ -22,6 +22,16 @@ import { runWorkflow, startScheduledWorkflow, stopScheduledWorkflow } from '../o
 
 export const workflowRouter = Router();
 
+// Workflow definitions and scheduled runs currently have no project/user owner
+// in their persistence model. Serving them to authenticated users would expose
+// shared state, so P0 deliberately makes this surface unavailable until an
+// owned workflow model exists instead of guessing a tenant boundary.
+workflowRouter.use(requireAuth, (_req, res) => {
+  res.status(503).json({
+    error: 'Workflow automation is unavailable until project ownership is implemented',
+  });
+});
+
 // GET /api/workflow — list all
 workflowRouter.get('/', requireAuth, (_req, res) => {
   res.json({ workflows: getWorkflows() });

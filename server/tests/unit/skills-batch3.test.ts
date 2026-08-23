@@ -17,6 +17,15 @@ import { loadLibrarySkills } from '../../src/skills/library/index.js';
 import { listInstalledSkills, executeSkill, getSkill } from '../../src/skills/executor.js';
 import { toolRegistry } from '../../src/agents/_shared/tool-registry.js';
 
+async function withMissingEnv<T>(key: string, run: () => Promise<T>): Promise<T> {
+  vi.stubEnv(key, '');
+  try {
+    return await run();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+}
+
 describe('Phase D Batch 3 — 3 news API skills (key-requiring)', () => {
   beforeAll(() => {
     loadLibrarySkills();
@@ -44,10 +53,9 @@ describe('Phase D Batch 3 — 3 news API skills (key-requiring)', () => {
   // WITHOUT making any network call.
 
   it('CRITICAL — NewsAPI: missing key → honest unavailable, no network call', async () => {
-    // Confirm the env var is genuinely empty (not mocked)
-    expect(process.env.NEWSAPI_KEY || '').toBe('');
-
-    const result = await executeSkill('newsapi-headlines', { country: 'us', category: 'technology' });
+    const result = await withMissingEnv('NEWSAPI_KEY', () =>
+      executeSkill('newsapi-headlines', { country: 'us', category: 'technology' }),
+    );
 
     // Must fail honestly
     expect(result.success).toBe(false);
@@ -59,9 +67,9 @@ describe('Phase D Batch 3 — 3 news API skills (key-requiring)', () => {
   });
 
   it('CRITICAL — GNews: missing key → honest unavailable, no network call', async () => {
-    expect(process.env.GNEWS_KEY || '').toBe('');
-
-    const result = await executeSkill('gnews-search', { query: 'artificial intelligence' });
+    const result = await withMissingEnv('GNEWS_KEY', () =>
+      executeSkill('gnews-search', { query: 'artificial intelligence' }),
+    );
 
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('GNEWS_KEY');
@@ -70,9 +78,9 @@ describe('Phase D Batch 3 — 3 news API skills (key-requiring)', () => {
   });
 
   it('CRITICAL — Mediastack: missing key → honest unavailable, no network call', async () => {
-    expect(process.env.MEDIASTACK_KEY || '').toBe('');
-
-    const result = await executeSkill('mediastack-headlines', { country: 'us', category: 'technology' });
+    const result = await withMissingEnv('MEDIASTACK_KEY', () =>
+      executeSkill('mediastack-headlines', { country: 'us', category: 'technology' }),
+    );
 
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('MEDIASTACK_KEY');

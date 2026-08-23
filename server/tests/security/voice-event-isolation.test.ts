@@ -28,9 +28,20 @@ describe('voice WebSocket recipient isolation', () => {
     expect(isVoiceEventForRecipient({ event: 'voice:greeting', payload: { sessionId: 42 } } as never, recipient, resolveSession)).toBe(false);
   });
 
-  it('does not alter non-voice delivery semantics', () => {
+  it('fails closed for an unscoped generic event', () => {
     const event = { event: 'agent:chunk', payload: { taskId: 'task-a' } } as never;
-    expect(isVoiceEventForRecipient(event, { userId: 'user-b', projectId: 'project-b' }, resolveSession, resolveVoiceTask)).toBe(true);
+    expect(isVoiceEventForRecipient(event, { userId: 'user-b', projectId: 'project-b' }, resolveSession, resolveVoiceTask)).toBe(false);
+  });
+
+  it('delivers a scoped generic event only to the exact user and project', () => {
+    const event = {
+      event: 'agent:chunk',
+      payload: { taskId: 'task-a', content: 'private code' },
+      scope: { userId: 'user-a', projectId: 'project-a' },
+    } as never;
+    expect(isVoiceEventForRecipient(event, { userId: 'user-a', projectId: 'project-a' }, resolveSession, resolveVoiceTask)).toBe(true);
+    expect(isVoiceEventForRecipient(event, { userId: 'user-b', projectId: 'project-b' }, resolveSession, resolveVoiceTask)).toBe(false);
+    expect(isVoiceEventForRecipient(event, { userId: 'user-a', projectId: 'project-b' }, resolveSession, resolveVoiceTask)).toBe(false);
   });
 
   it('routes a generic agent chunk from a voice task only to its owner and project', () => {

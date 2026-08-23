@@ -1,51 +1,65 @@
-// server/src/routes/traces.ts
-// GET /api/traces                  — list recent traces (filter by agentId, executionMode, limit)
-// GET /api/traces/:taskId          — get one trace by taskId
-// GET /api/traces/file/preview     — preview the JSONL file path + line count
-//
-// Per user instruction: traces must be inspectable, not just a passing test
-// assertion. This route exposes them.
-
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
-import { listTraces, getTrace, getTracesFile } from '../observability/traces.js';
-import { existsSync, statSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { listTraces, getTrace } from '../observability/traces.js';
+import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
 
 export const tracesRouter = Router();
 
-tracesRouter.get('/', requireAuth, (req, res) => {
-  const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : undefined;
-  const executionMode = typeof req.query.executionMode === 'string'
-    ? (req.query.executionMode as 'single-shot' | 'react' | 'codeact')
-    : undefined;
-  const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 100;
-  const traces = listTraces({ agentId, executionMode, limit });
-  res.json({ count: traces.length, traces });
+function projectIdFrom(req: any): string | undefined {
+  return typeof req.query.projectId === 'string' && req.query.projectId.length > 0 ? req.query.projectId : undefined;
+}
+
+async function scopeFor(req: any) {
+  return resolveTenantScope(req.user!.id, projectIdFrom(req));
+}
+
+function scopeError(res: any, error: unknown): boolean {
+  if (error instanceof ProjectAccessError) {
+    res.status(403).json({ error: 'Project access denied' });
+    return true;
+  }
+  return false;
+}
+
+tracesRouter.get('/', requireAuth, async (req, res) => {
+  try {
+    const scope = await scopeFor(req);
+    const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : undefined;
+    const executionMode = typeof req.query.executionMode === 'string'
+      ? (req.query.executionMode as 'single-shot' | 'react' | 'codeact')
+      : undefined;
+    const limit = Math.min(typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) || 100 : 100, 1000);
+    const traces = listTraces({ agentId, executionMode, limit, scope });
+    res.json({ count: traces.length, traces, projectId: scope.projectId });
+  } catch (error) {
+    if (scopeError(res, error)) return;
+    res.status(500).json({ error: 'Failed to list traces' });
+  }
 });
 
-tracesRouter.get('/file/preview', requireAuth, (_req, res) => {
-  const file = getTracesFile();
-  let lineCount = 0;
-  let sizeBytes = 0;
-  if (existsSync(file)) {
-    sizeBytes = statSync(file).size;
-    try {
-      // wc -l is fast and reliable on the JSONL file
-      const out = execSync(`wc -l < "${file}"`).toString().trim();
-      lineCount = parseInt(out, 10) || 0;
-    } catch {
-      lineCount = -1;
+tracesRouter.get('/file/preview', requireAuth, async (req, res) => {
+  try {
+    const scope = await scopeFor(req);
+    // The physical path and global line count are server-wide metadata; exposing
+    // either would reveal other tenants' activity. Only report scoped availability.
+    res.json({ projectId: scope.projectId, persistentTraceStore: true });
+  } catch (error) {
+    if (scopeError(res, error)) return;
+    res.status(500).json({ error: 'Failed to inspect trace store' });
+  }
+});
+
+tracesRouter.get('/:taskId', requireAuth, async (req, res) => {
+  try {
+    const scope = await scopeFor(req);
+    const trace = getTrace(req.params.taskId, scope);
+    if (!trace) {
+      res.status(404).json({ error: 'Trace not found' });
+      return;
     }
+    res.json({ trace });
+  } catch (error) {
+    if (scopeError(res, error)) return;
+    res.status(500).json({ error: 'Failed to get trace' });
   }
-  res.json({ file, lineCount, sizeBytes });
-});
-
-tracesRouter.get('/:taskId', requireAuth, (req, res) => {
-  const trace = getTrace(req.params.taskId);
-  if (!trace) {
-    res.status(404).json({ error: `No trace for taskId ${req.params.taskId}` });
-    return;
-  }
-  res.json({ trace });
 });

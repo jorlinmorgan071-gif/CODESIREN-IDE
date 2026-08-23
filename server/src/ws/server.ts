@@ -16,11 +16,12 @@ import { wsRateLimit } from '../middleware/rate-limiter.js';
 import { logSecurityEvent } from '../monitoring/security-log.js';
 import { voiceProxy } from '../systems/voice/voice-proxy.js';
 import { isVoiceEventForRecipient } from './voice-event-isolation.js';
+import { resolveTenantScope } from '../tenancy/scope.js';
 
 interface SessionState {
   ws: WebSocket;
   claims: JwtClaims;
-  projectId?: string;
+  projectId: string;
 }
 
 const sessions = new Set<SessionState>();
@@ -46,23 +47,29 @@ export function attachWsServer(server: HttpServer): void {
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      const projectId = url.searchParams.get('projectId') ?? undefined;
-      const state: SessionState = { ws, claims, projectId };
-      sessions.add(state);
-      wss.emit('connection', ws, state);
-    });
+    resolveTenantScope(claims.sub, url.searchParams.get('projectId') ?? undefined)
+      .then((scope) => {
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          const state: SessionState = { ws, claims, projectId: scope.projectId };
+          sessions.add(state);
+          wss.emit('connection', ws, state);
+        });
+      })
+      .catch(() => {
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+        socket.destroy();
+      });
   });
 
   wss.on('connection', (ws, state: SessionState) => {
-    console.log(`[ws] Connected: user=${state.claims.email} project=${state.projectId ?? '-'}`);
+    console.log(`[ws] Connected: user=${state.claims.email} project=${state.projectId}`);
 
     // Welcome event — confirms auth + connection
     ws.send(JSON.stringify(makeEvent('collab:join', {
       userId: state.claims.sub,
       name: state.claims.name,
       color: '#EE1C1C',
-    })));
+    }, { userId: state.claims.sub, projectId: state.projectId })));
 
     ws.on('message', (raw, isBinary) => {
       // ── Binary messages = voice audio chunks ──────────────────────────

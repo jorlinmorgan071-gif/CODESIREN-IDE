@@ -16,6 +16,15 @@ import type { AgentTask } from '../types.js';
 
 export const sentinelRouter = Router();
 
+// Watches are stored in a global singleton without user/project metadata. P0
+// must not expose, scan, mutate, or summarize another tenant's watches, so this
+// router is explicitly unavailable until the watch registry becomes owned.
+sentinelRouter.use(requireAuth, (_req, res) => {
+  res.status(503).json({
+    error: 'Sentinel watches are unavailable until project ownership is implemented',
+  });
+});
+
 const watchSchema = z.object({
   watchType: z.string().min(1),
   config: z.record(z.unknown()).default({}),

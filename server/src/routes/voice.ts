@@ -28,6 +28,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { getVoiceClient } from '../systems/voice/voice-client.js';
 import { agentManager } from '../orchestration/agent-manager.js';
 import type { AgentTask } from '../types.js';
+import { ProjectAccessError, resolveTenantScope } from '../tenancy/scope.js';
 import {
   getVoiceSettings,
   setVoiceSettings,
@@ -101,9 +102,19 @@ voiceRouter.post('/transcript', requireAuth, async (req, res) => {
   const client = getVoiceClient();
   const transcript = await client.transcribe(parsed.data.text);
 
-  // Step 2: Create an AgentTask with origin: 'voice' — the ONLY difference
-  // from a typed chat task. Everything else is identical.
-  const projectId = parsed.data.projectId ?? '00000000-0000-0000-0000-000000000000';
+  // Step 2: Resolve ownership server-side before creating the task. A voice
+  // client cannot choose another project's event, trace, or memory scope.
+  let scope;
+  try {
+    scope = await resolveTenantScope(req.user!.id, parsed.data.projectId);
+  } catch (error) {
+    if (error instanceof ProjectAccessError) {
+      res.status(403).json({ error: 'Project access denied' });
+      return;
+    }
+    throw error;
+  }
+  const projectId = scope.projectId;
   const task: AgentTask = {
     id: uuid(),
     projectId,
@@ -119,7 +130,7 @@ voiceRouter.post('/transcript', requireAuth, async (req, res) => {
       // Approval-gate fix: pass userId so side-effect-capable agents
       // (Terminal/Operative/Fabrication) can tag their findings. Voice
       // transcripts can target any agent, including gated ones.
-      userId: req.user?.id,
+      userId: scope.userId,
     },
     priority: 'normal',
     executionMode: parsed.data.executionMode,

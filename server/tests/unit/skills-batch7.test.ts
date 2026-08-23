@@ -25,6 +25,15 @@ import { loadLibrarySkills } from '../../src/skills/library/index.js';
 import { listInstalledSkills, executeSkill, getSkill } from '../../src/skills/executor.js';
 import { toolRegistry } from '../../src/agents/_shared/tool-registry.js';
 
+async function withMissingEnv<T>(key: string, run: () => Promise<T>): Promise<T> {
+  vi.stubEnv(key, '');
+  try {
+    return await run();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+}
+
 describe('Phase D Batch 7 — Finance & Currency API skills', () => {
   beforeAll(() => {
     loadLibrarySkills();
@@ -103,8 +112,7 @@ describe('Phase D Batch 7 — Finance & Currency API skills', () => {
   // ════════════════════════════════════════════════════════════════════
 
   it('CRITICAL — Alpha Vantage TIME_SERIES_DAILY: missing key → honest unavailable, no network call', async () => {
-    expect(process.env.ALPHA_VANTAGE_KEY || '').toBe('');
-    const result = await executeSkill('alphavantage-time-series', { symbol: 'IBM' });
+    const result = await withMissingEnv('ALPHA_VANTAGE_KEY', () => executeSkill('alphavantage-time-series', { symbol: 'IBM' }));
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('ALPHA_VANTAGE_KEY');
     // CRITICAL: must NOT contain any fabricated stock data
@@ -113,8 +121,7 @@ describe('Phase D Batch 7 — Finance & Currency API skills', () => {
   });
 
   it('CRITICAL — Alpha Vantage GLOBAL_QUOTE: missing key → honest unavailable, no network call', async () => {
-    expect(process.env.ALPHA_VANTAGE_KEY || '').toBe('');
-    const result = await executeSkill('alphavantage-global-quote', { symbol: 'IBM' });
+    const result = await withMissingEnv('ALPHA_VANTAGE_KEY', () => executeSkill('alphavantage-global-quote', { symbol: 'IBM' }));
     expect(result.success).toBe(false);
     expect(result.outputs[0]).toContain('ALPHA_VANTAGE_KEY');
     expect(result.outputs[0]).not.toContain('IBM');
