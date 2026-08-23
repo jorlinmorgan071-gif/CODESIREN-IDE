@@ -13,6 +13,7 @@ import { useGestureInput, dispatchGesture, type GestureType } from '@/systems/pr
 import type { AgentEvent, ChatSession } from '@/types';
 import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
+import { api } from '@/lib/api';
 import { createChatSessionId } from '@/lib/chat-session';
 import { SensoryFeedbackOverlay } from '@/components/voice/SensoryFeedbackOverlay';
 import { ScreenIntelligence } from '@/components/voice/ScreenIntelligence';
@@ -125,21 +126,14 @@ export default function Home() {
   const captureAndAnalyze = async (imageDataUri: string, prompt?: string) => {
     setVisionAnalyzing(true);
     try {
-      const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
-      const token = getToken() ?? '';
-      const res = await fetch(`${API_BASE}/orchestrator/vision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ image: imageDataUri, prompt: prompt ?? visionPrompt }),
+      const data = await api.editorVision({
+        image: imageDataUri,
+        prompt: prompt ?? visionPrompt,
+        sessionId: state.activeChatId,
       });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({ error: 'Vision request failed' })) as { error: string };
-        throw new Error(errData.error ?? `HTTP ${res.status}`);
-      }
-      const data = await res.json() as { analysis: string };
       // Display the result in the InlineAI panel via custom event
       window.dispatchEvent(new CustomEvent('code-siren:vision-result', {
-        detail: { analysis: data.analysis },
+        detail: { analysis: data.analysis, evidence: data.evidence },
       }));
       // Open the InlineAI panel
       if (!state.inlineAIVisible) toggleInlineAI();

@@ -52,6 +52,7 @@ function stopTestServer(): Promise<void> {
 describe('Phase B: Screen Intelligence — Vision endpoint', () => {
   let token: string;
   const email = `vision-test-${Date.now()}@code-siren.test`;
+  const sessionId = crypto.randomUUID();
 
   // Capture console.log to verify no image data is logged
   let consoleLogs: string[] = [];
@@ -111,7 +112,7 @@ describe('Phase B: Screen Intelligence — Vision endpoint', () => {
     const res = await fetch(`${BASE}/api/orchestrator/vision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ image: TINY_PNG_DATA_URI, prompt: 'What is in this image?' }),
+      body: JSON.stringify({ image: TINY_PNG_DATA_URI, prompt: 'What is in this image?', sessionId }),
     });
 
     // The z-ai SDK may fail (no .z-ai-config in CI) — either 200 with analysis
@@ -125,13 +126,18 @@ describe('Phase B: Screen Intelligence — Vision endpoint', () => {
     } else {
       expect(typeof (data as any).error).toBe('string');
     }
+    expect((data as any).evidence).toMatchObject({
+      taskId: expect.any(String), action: 'vision', provider: 'z-ai-vision',
+      inputs: { fields: ['image', 'prompt'], imageRetained: false },
+      apply: { status: 'not-applicable' }, verification: { status: 'unverified' },
+    });
   });
 
   it('returns 400 for missing image', async () => {
     const res = await fetch(`${BASE}/api/orchestrator/vision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ prompt: 'What is this?' }),
+      body: JSON.stringify({ prompt: 'What is this?', sessionId }),
     });
     expect(res.status).toBe(400);
   });
@@ -140,7 +146,7 @@ describe('Phase B: Screen Intelligence — Vision endpoint', () => {
     const res = await fetch(`${BASE}/api/orchestrator/vision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ image: TINY_PNG_DATA_URI }),
+      body: JSON.stringify({ image: TINY_PNG_DATA_URI, sessionId }),
     });
     expect(res.status).toBe(400);
   });
@@ -149,7 +155,7 @@ describe('Phase B: Screen Intelligence — Vision endpoint', () => {
     const res = await fetch(`${BASE}/api/orchestrator/vision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: TINY_PNG_DATA_URI, prompt: 'What is this?' }),
+      body: JSON.stringify({ image: TINY_PNG_DATA_URI, prompt: 'What is this?', sessionId }),
     });
     expect(res.status).toBe(401);
   });
@@ -159,7 +165,7 @@ describe('Phase B: Screen Intelligence — Vision endpoint', () => {
     await fetch(`${BASE}/api/orchestrator/vision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ image: TINY_PNG_DATA_URI, prompt: 'What is this?' }),
+      body: JSON.stringify({ image: TINY_PNG_DATA_URI, prompt: 'What is this?', sessionId }),
     });
 
     // Check ALL console logs — none should contain the base64 image data

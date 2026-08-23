@@ -18,6 +18,24 @@ import type {
 import { getToken, clearAuth } from './auth';
 import type { ChangeImpactAnalysis } from './change-impact';
 
+export type DirectEditorAction = 'completion' | 'explain' | 'refactor' | 'document' | 'optimize' | 'convert' | 'vision';
+export interface DirectEditorEvidence {
+  taskId: string;
+  traceId: string;
+  action: DirectEditorAction;
+  inputs: {
+    fields: string[];
+    characterCounts: Record<string, number>;
+    language?: string;
+    mode?: 'refactor' | 'document' | 'optimize' | 'convert';
+    imageRetained?: false;
+  };
+  provider: string;
+  output: { status: 'succeeded' | 'timed-out' | 'failed'; characterCount: number };
+  apply: { status: 'not-applicable' | 'pending-approval' };
+  verification: { status: 'unverified' };
+}
+
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -150,6 +168,22 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ sessionId, message, context }),
     });
+  },
+
+  editorComplete(input: { prefix: string; suffix: string; sessionId: string; projectId?: string }, options: { signal?: AbortSignal } = {}): Promise<{ text: string; evidence: DirectEditorEvidence }> {
+    return request('/orchestrator/complete', { method: 'POST', body: JSON.stringify(input), signal: options.signal });
+  },
+
+  editorExplain(input: { code: string; language?: string; sessionId: string; projectId?: string }): Promise<{ explanation: string; evidence: DirectEditorEvidence }> {
+    return request('/orchestrator/explain', { method: 'POST', body: JSON.stringify(input) });
+  },
+
+  editorRefactor(input: { code: string; mode: 'refactor' | 'document' | 'optimize' | 'convert'; instruction?: string; targetLanguage?: string; sessionId: string; projectId?: string }): Promise<{ result: string; evidence: DirectEditorEvidence }> {
+    return request('/orchestrator/refactor', { method: 'POST', body: JSON.stringify(input) });
+  },
+
+  editorVision(input: { image: string; prompt: string; sessionId: string; projectId?: string }): Promise<{ analysis: string; evidence: DirectEditorEvidence }> {
+    return request('/orchestrator/vision', { method: 'POST', body: JSON.stringify(input) });
   },
 
   currentWorkspace(projectId?: string): Promise<{ projectId: string; name: string }> {

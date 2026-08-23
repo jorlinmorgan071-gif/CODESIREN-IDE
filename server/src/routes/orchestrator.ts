@@ -28,6 +28,7 @@ import { getPlan, listPlansByProject, listMilestoneLogs, updatePlan } from '../o
 import { runChatViaAgentManager } from '../orchestrator/tier1-chat.js';
 import { selectNormalChatCapability } from '../orchestrator/normal-chat-capabilities.js';
 import { modelRouter } from '../orchestration/model-router.js';
+import { startDirectEditorEvidence, type DirectEditorAction } from '../orchestrator/direct-editor-evidence.js';
 import { ProjectAccessError, SessionAccessError, ensureOwnedSession, resolveTenantScope } from '../tenancy/scope.js';
 import { WorkspaceAccessError, resolveWorkspace, workspaceRelativePath } from '../workspace/service.js';
 
@@ -62,6 +63,24 @@ async function getOwnedPlan(req: any, res: any, planId: string, requestedProject
   }
   return { scope, plan };
 }
+
+async function resolveDirectEditorScope(req: any, res: any, projectId: string | undefined, sessionId: string) {
+  try {
+    const workspace = await resolveWorkspace(req.user!.id, projectId);
+    return await ensureOwnedSession(workspace, sessionId);
+  } catch (error) {
+    if (error instanceof ProjectAccessError || error instanceof WorkspaceAccessError || error instanceof SessionAccessError) {
+      res.status(403).json({ error: 'Direct editor action scope access denied' });
+      return null;
+    }
+    throw error;
+  }
+}
+
+const directEditorScopeSchema = {
+  sessionId: z.string().uuid(),
+  projectId: z.string().uuid().optional(),
+};
 
 // ── POST /api/orchestrator/chat ──────────────────────────────────────────
 
@@ -426,9 +445,9 @@ orchestratorRouter.get('/settings', requireAuth, (_req, res) => {
 // (ghost text, Copilot-style). FIM (Fill-In-the-Middle) prompted.
 //
 // Deliberately bypasses the full agent pipeline (no send(), no executeAndWait(),
-// no dispatchStrategy(), no context bundle, no trace, no trust score, no WS
-// broadcast). Calls modelRouter.stream() directly — the same engine selection
-// (Ollama → OpenRouter → stub) but with minimal overhead.
+// no dispatchStrategy(), no context bundle, no trust score, no WS broadcast).
+// It calls modelRouter.stream() directly for minimal overhead while emitting a
+// tenant-scoped direct-editor evidence trace.
 //
 // Request shape (CHIMERA Inline Completion):
 //   { prefix: string, suffix: string }
@@ -451,6 +470,7 @@ orchestratorRouter.get('/settings', requireAuth, (_req, res) => {
 const completeSchema = z.object({
   prefix: z.string().max(8000),
   suffix: z.string().max(8000),
+  ...directEditorScopeSchema,
 });
 
 const COMPLETION_SYSTEM_PROMPT =
@@ -473,33 +493,42 @@ orchestratorRouter.post('/complete', requireAuth, async (req, res) => {
     return;
   }
 
+  const scope = await resolveDirectEditorScope(req, res, parsed.data.projectId, parsed.data.sessionId);
+  if (!scope) return;
+
   // AbortController for hard timeout — if the model is slow, return what we have.
   const abort = new AbortController();
   const timeoutId = setTimeout(() => abort.abort(), COMPLETION_TIMEOUT_MS);
+  const userPrompt =
+    `CODE BEFORE CURSOR:\n${parsed.data.prefix}\n\n<CURSOR/>\n\n` +
+    `CODE AFTER CURSOR:\n${parsed.data.suffix}`;
+  const routerRequest = {
+    domain: 'ARCHITECT',
+    executionMode: 'single-shot',
+    agentId: 'completion',
+    messages: [
+      { role: 'system', content: COMPLETION_SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ],
+  } as any;
+  const evidenceRun = startDirectEditorEvidence({
+    action: 'completion',
+    scope,
+    provider: modelRouter.getSelectedEngineId(routerRequest),
+    inputs: {
+      fields: ['prefix', 'suffix'],
+      characterCounts: { prefix: parsed.data.prefix.length, suffix: parsed.data.suffix.length },
+    },
+  });
 
   try {
     const chunks: string[] = [];
     let totalChars = 0;
 
-    // Build FIM user prompt — labeled prefix/suffix with <CURSOR/> marker.
-    // The labels make the structure unambiguous to the model; the <CURSOR/>
-    // marker is the explicit "fill here" signal.
-    const userPrompt =
-      `CODE BEFORE CURSOR:\n${parsed.data.prefix}\n\n<CURSOR/>\n\n` +
-      `CODE AFTER CURSOR:\n${parsed.data.suffix}`;
-
     // Call modelRouter.stream() DIRECTLY — no agent dispatch, no context bundle,
     // no trace, no trust score, no WS broadcast. This is the entire point of
     // this endpoint: a fast, lightweight model call for inline completions.
-    const generator = modelRouter.stream({
-      domain: 'ARCHITECT',
-      executionMode: 'single-shot',
-      agentId: 'completion',
-      messages: [
-        { role: 'system', content: COMPLETION_SYSTEM_PROMPT },
-        { role: 'user', content: userPrompt },
-      ],
-    } as any);
+    const generator = modelRouter.stream(routerRequest);
 
     for await (const chunk of generator) {
       if (abort.signal.aborted) break;
@@ -516,24 +545,25 @@ orchestratorRouter.post('/complete', requireAuth, async (req, res) => {
     clearTimeout(timeoutId);
 
     const text = chunks.join('').trim();
-    res.json({ text });
+    res.json({ text, evidence: abort.signal.aborted ? evidenceRun.timeout(text.length) : evidenceRun.succeed(text.length) });
   } catch (err: any) {
     clearTimeout(timeoutId);
     // Don't 500 on abort — return empty text (client treats it as no suggestion)
     if (abort.signal.aborted) {
-      res.json({ text: '' });
+      res.json({ text: '', evidence: evidenceRun.timeout(0) });
       return;
     }
     console.error('[orchestrator:complete] error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, evidence: evidenceRun.fail() });
   }
 });
 
 // ── POST /api/orchestrator/explain ──────────────────────────────────────
 // Phase B: Editor Actions — "Explain" selected code.
 //
-// Mirrors /complete's pattern exactly: direct modelRouter.stream(), no agent
-// dispatch, no context bundle, no trace. Read-only — no writes, no gate.
+// Mirrors /complete's lightweight modelRouter.stream() pattern: no agent
+// dispatch or context bundle, but a tenant-scoped direct-editor evidence trace.
+// Read-only — no writes and no apply gate.
 //
 // Request:  { code: string, language?: string }
 // Response: { explanation: string }
@@ -545,6 +575,7 @@ orchestratorRouter.post('/complete', requireAuth, async (req, res) => {
 const explainSchema = z.object({
   code: z.string().min(1).max(20000),
   language: z.string().max(50).optional(),
+  ...directEditorScopeSchema,
 });
 
 const EXPLAIN_SYSTEM_PROMPT =
@@ -564,26 +595,33 @@ orchestratorRouter.post('/explain', requireAuth, async (req, res) => {
   }
 
   const { code, language } = parsed.data;
+  const scope = await resolveDirectEditorScope(req, res, parsed.data.projectId, parsed.data.sessionId);
+  if (!scope) return;
 
   const abort = new AbortController();
   const timeoutId = setTimeout(() => abort.abort(), EXPLAIN_TIMEOUT_MS);
+  const userPrompt = language
+    ? `Explain this ${language} code:\n\n${code}`
+    : `Explain this code:\n\n${code}`;
+  const routerRequest = {
+    domain: 'ARCHITECT',
+    executionMode: 'single-shot',
+    agentId: 'explain',
+    messages: [
+      { role: 'system', content: EXPLAIN_SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ],
+  } as any;
+  const evidenceRun = startDirectEditorEvidence({
+    action: 'explain',
+    scope,
+    provider: modelRouter.getSelectedEngineId(routerRequest),
+    inputs: { fields: ['code', ...(language ? ['language'] : [])], characterCounts: { code: code.length }, language },
+  });
 
   try {
     const chunks: string[] = [];
-
-    const userPrompt = language
-      ? `Explain this ${language} code:\n\n${code}`
-      : `Explain this code:\n\n${code}`;
-
-    const generator = modelRouter.stream({
-      domain: 'ARCHITECT',
-      executionMode: 'single-shot',
-      agentId: 'explain',
-      messages: [
-        { role: 'system', content: EXPLAIN_SYSTEM_PROMPT },
-        { role: 'user', content: userPrompt },
-      ],
-    } as any);
+    const generator = modelRouter.stream(routerRequest);
 
     for await (const chunk of generator) {
       if (abort.signal.aborted) break;
@@ -595,15 +633,15 @@ orchestratorRouter.post('/explain', requireAuth, async (req, res) => {
     clearTimeout(timeoutId);
 
     const explanation = chunks.join('').trim();
-    res.json({ explanation });
+    res.json({ explanation, evidence: abort.signal.aborted ? evidenceRun.timeout(explanation.length) : evidenceRun.succeed(explanation.length) });
   } catch (err: any) {
     clearTimeout(timeoutId);
     if (abort.signal.aborted) {
-      res.json({ explanation: '(explanation timed out — try again with a shorter selection)' });
+      res.json({ explanation: '', evidence: evidenceRun.timeout(0) });
       return;
     }
     console.error('[orchestrator:explain] error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, evidence: evidenceRun.fail() });
   }
 });
 
@@ -611,8 +649,9 @@ orchestratorRouter.post('/explain', requireAuth, async (req, res) => {
 // Phase B: Editor Actions — Edit-family (refactor/document/optimize/convert).
 //
 // Same lightweight pattern as /complete and /explain: direct modelRouter.stream(),
-// no agent dispatch, no context bundle, no trace. No writeProjectFile() gate —
-// in-editor edits are visible + undoable + not-yet-on-disk (per Section 0).
+// no agent dispatch or context bundle, but a tenant-scoped evidence trace. No
+// writeProjectFile() gate — model output remains a proposed edit until the
+// existing transaction approval path applies it to disk.
 //
 // Request:
 //   { code: string, mode: 'refactor'|'document'|'optimize'|'convert',
@@ -628,6 +667,7 @@ const refactorSchema = z.object({
   mode: z.enum(['refactor', 'document', 'optimize', 'convert']),
   instruction: z.string().max(2000).optional(),
   targetLanguage: z.string().max(50).optional(),
+  ...directEditorScopeSchema,
 });
 
 const REFACTOR_TIMEOUT_MS = 15_000;
@@ -662,6 +702,8 @@ orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
   }
 
   const { code, mode, instruction, targetLanguage } = parsed.data;
+  const scope = await resolveDirectEditorScope(req, res, parsed.data.projectId, parsed.data.sessionId);
+  if (!scope) return;
 
   const systemPrompt = REFACTOR_SYSTEM_PROMPTS[mode];
   let userPrompt: string;
@@ -675,19 +717,29 @@ orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
 
   const abort = new AbortController();
   const timeoutId = setTimeout(() => abort.abort(), REFACTOR_TIMEOUT_MS);
+  const routerRequest = {
+    domain: 'ARCHITECT',
+    executionMode: 'single-shot',
+    agentId: `refactor-${mode}`,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+  } as any;
+  const evidenceRun = startDirectEditorEvidence({
+    action: mode as DirectEditorAction,
+    scope,
+    provider: modelRouter.getSelectedEngineId(routerRequest),
+    inputs: {
+      fields: ['code', 'mode', ...(instruction ? ['instruction'] : []), ...(targetLanguage ? ['targetLanguage'] : [])],
+      characterCounts: { code: code.length, ...(instruction ? { instruction: instruction.length } : {}), ...(targetLanguage ? { targetLanguage: targetLanguage.length } : {}) },
+      mode,
+    },
+  });
 
   try {
     const chunks: string[] = [];
-
-    const generator = modelRouter.stream({
-      domain: 'ARCHITECT',
-      executionMode: 'single-shot',
-      agentId: `refactor-${mode}`,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    } as any);
+    const generator = modelRouter.stream(routerRequest);
 
     for await (const chunk of generator) {
       if (abort.signal.aborted) break;
@@ -699,15 +751,15 @@ orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
     clearTimeout(timeoutId);
 
     const result = chunks.join('').trim();
-    res.json({ result });
+    res.json({ result, evidence: abort.signal.aborted ? evidenceRun.timeout(result.length) : evidenceRun.succeed(result.length) });
   } catch (err: any) {
     clearTimeout(timeoutId);
     if (abort.signal.aborted) {
-      res.json({ result: '(operation timed out — try again with a shorter selection)' });
+      res.json({ result: '', evidence: evidenceRun.timeout(0) });
       return;
     }
     console.error('[orchestrator:refactor] error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, evidence: evidenceRun.fail() });
   }
 });
 
@@ -715,7 +767,8 @@ orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
 // Phase B: Screen Intelligence — image/screenshot analysis via z-ai createVision.
 //
 // Same lightweight family as /complete, /explain, /refactor: direct z-ai SDK
-// call, no agent dispatch, no gate, no trace.
+// call, no agent dispatch or apply gate, and a tenant-scoped evidence trace
+// containing declared metadata only.
 //
 // PRIVACY (hard requirement, not nice-to-have):
 //   - Image content is NEVER logged (console.log, traces, memory beyond request)
@@ -732,6 +785,7 @@ orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
 const visionSchema = z.object({
   image: z.string().min(1).max(5_000_000), // max ~5MB base64
   prompt: z.string().min(1).max(2000),
+  ...directEditorScopeSchema,
 });
 
 const VISION_TIMEOUT_MS = 20_000;
@@ -744,6 +798,18 @@ orchestratorRouter.post('/vision', requireAuth, async (req, res) => {
   }
 
   const { image, prompt } = parsed.data;
+  const scope = await resolveDirectEditorScope(req, res, parsed.data.projectId, parsed.data.sessionId);
+  if (!scope) return;
+  const evidenceRun = startDirectEditorEvidence({
+    action: 'vision',
+    scope,
+    provider: 'z-ai-vision',
+    inputs: {
+      fields: ['image', 'prompt'],
+      characterCounts: { image: image.length, prompt: prompt.length },
+      imageRetained: false,
+    },
+  });
 
   // Ensure the image is a data URI — createVision expects image_url.url
   let dataUri = image;
@@ -774,10 +840,11 @@ orchestratorRouter.post('/vision', requireAuth, async (req, res) => {
     });
 
     // Extract text from the response — z-ai returns { choices: [{ message: { content } }] }
-    const analysis = (result as any)?.choices?.[0]?.message?.content ?? '(no analysis returned)';
+    const analysis = (result as any)?.choices?.[0]?.message?.content ?? '';
 
     // PRIVACY: the image dataUri goes out of scope here — no retention
-    res.json({ analysis: typeof analysis === 'string' ? analysis : String(analysis) });
+    const output = typeof analysis === 'string' ? analysis : String(analysis);
+    res.json({ analysis: output, evidence: evidenceRun.succeed(output.length) });
   } catch (err: any) {
     // PRIVACY: strip any base64 data from error messages before logging.
     // The z-ai SDK may include request details in error messages.
@@ -787,6 +854,6 @@ orchestratorRouter.post('/vision', requireAuth, async (req, res) => {
       .replace(/[A-Za-z0-9+/=]{50,}/g, '(base64 redacted)')
       .slice(0, 200);
     console.error('[orchestrator:vision] error:', safeError);
-    res.status(500).json({ error: safeError });
+    res.status(500).json({ error: safeError, evidence: evidenceRun.fail() });
   }
 });

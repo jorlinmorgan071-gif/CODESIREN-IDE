@@ -17,12 +17,10 @@ import {
   Check,
   XCircle,
 } from 'lucide-react';
-import { getToken } from '@/lib/auth';
-import { api } from '@/lib/api';
+import { api, type DirectEditorEvidence } from '@/lib/api';
 import { summarizeChangeImpact, type ChangeImpactAnalysis } from '@/lib/change-impact';
+import { summarizeDirectEditorEvidence } from '@/lib/direct-editor-evidence';
 import { getActiveEditorContent } from '@/components/editor/CodeEditor';
-
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
 // Phase B: Editor Actions — 'explain' + edit-family (refactor/document/optimize/convert)
 // are functional. 'test' (Generate Tests) is honestly disabled — needs writeProjectFile() gate.
@@ -48,6 +46,20 @@ interface DiffPreview {
   transactionId?: string;
   editorContent?: string;
   impact?: ChangeImpactAnalysis;
+  evidence?: DirectEditorEvidence;
+}
+
+function DirectEditorEvidenceSummary({ evidence }: { evidence: DirectEditorEvidence }) {
+  return (
+    <section aria-label="Direct editor action evidence" className="p-2 rounded-md space-y-1" style={{ backgroundColor: 'rgba(255,255,255,0.025)', border: '1px solid var(--border-subtle)' }}>
+      <div className="text-[10px] font-medium" style={{ color: 'var(--steel-silver)' }}>ACTION EVIDENCE</div>
+      <div className="text-[9px] break-all" style={{ color: 'var(--muted-silver)' }}>Task: {evidence.taskId}</div>
+      <div className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>Provider: {evidence.provider} · Output: {evidence.output.status} ({evidence.output.characterCount} chars)</div>
+      <div className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>Apply: {evidence.apply.status} · Verification: {evidence.verification.status}</div>
+      <div className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>Declared inputs: {evidence.inputs.fields.join(', ')}</div>
+      <p className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>{summarizeDirectEditorEvidence(evidence)}</p>
+    </section>
+  );
 }
 
 export function InlineAI() {
@@ -57,6 +69,7 @@ export function InlineAI() {
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [response, setResponse] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [directEvidence, setDirectEvidence] = useState<DirectEditorEvidence | null>(null);
   const [diffPreview, setDiffPreview] = useState<DiffPreview | null>(null);
   const [applyStatus, setApplyStatus] = useState<'idle' | 'applied' | 'rejected'>('idle');
   const panelRef = useRef<HTMLDivElement>(null);
@@ -90,9 +103,10 @@ export function InlineAI() {
   // Listen for vision results from ScreenIntelligence (screen share / drag-and-drop / paste)
   useEffect(() => {
     const handleVisionResult = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { analysis?: string; error?: string };
+      const detail = (e as CustomEvent).detail as { analysis?: string; error?: string; evidence?: DirectEditorEvidence };
       setDiffPreview(null);
       setApplyStatus('idle');
+      setDirectEvidence(detail?.evidence ?? null);
       if (detail?.error) {
         setError(detail.error);
         setResponse(null);
@@ -109,27 +123,19 @@ export function InlineAI() {
     setActiveAction('explain');
     setResponse(null);
     setError(null);
+    setDirectEvidence(null);
     setDiffPreview(null);
     setApplyStatus('idle');
     try {
-      const token = getToken() ?? '';
-      const res = await fetch(`${API_BASE}/orchestrator/explain`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ code, language }),
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({ error: 'Request failed' })) as { error: string };
-        throw new Error(errData.error ?? `HTTP ${res.status}`);
-      }
-      const data = await res.json() as { explanation: string };
-      setResponse(data.explanation || '(no explanation returned)');
+      const data = await api.editorExplain({ code, language, sessionId: state.activeChatId });
+      setDirectEvidence(data.evidence);
+      setResponse(data.explanation || 'No explanation content was returned.');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setActiveAction(null);
     }
-  }, []);
+  }, [state.activeChatId]);
 
   const runRefactor = useCallback(async (code: string, mode: string, language?: string, selectionRange?: DiffPreview['selectionRange'], fileId?: string, path?: string, editorContent?: string) => {
     if (!path || !fileId || editorContent === undefined) {
@@ -139,23 +145,20 @@ export function InlineAI() {
     setActiveAction(mode);
     setResponse(null);
     setError(null);
+    setDirectEvidence(null);
     setDiffPreview(null);
     setApplyStatus('idle');
     try {
-      const token = getToken() ?? '';
-      const res = await fetch(`${API_BASE}/orchestrator/refactor`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ code, mode, targetLanguage: mode === 'convert' ? language : undefined }),
+      const data = await api.editorRefactor({
+        code,
+        mode: mode as 'refactor' | 'document' | 'optimize' | 'convert',
+        targetLanguage: mode === 'convert' ? language : undefined,
+        sessionId: state.activeChatId,
       });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({ error: 'Request failed' })) as { error: string };
-        throw new Error(errData.error ?? `HTTP ${res.status}`);
+      if (!data.result) {
+        throw new Error(data.evidence.output.status === 'timed-out' ? 'Direct editor action timed out without output.' : 'No proposed replacement was returned.');
       }
-      const data = await res.json() as { result: string };
-      if (!data.result || data.result.startsWith('(operation timed out')) {
-        throw new Error(data.result || 'Empty result');
-      }
+      setDirectEvidence(data.evidence);
       // Plan the server-owned patch before showing an approval affordance.
       const transaction = await api.planChange({
         path,
@@ -174,13 +177,14 @@ export function InlineAI() {
         transactionId: transaction.transactionId,
         editorContent,
         impact: transaction.impact,
+        evidence: data.evidence,
       });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setActiveAction(null);
     }
-  }, []);
+  }, [state.activeChatId]);
 
   const handleAccept = useCallback(async () => {
     if (!diffPreview?.transactionId || !diffPreview.fileId) return;
@@ -344,6 +348,7 @@ export function InlineAI() {
           <div className="text-[12px] leading-relaxed p-2.5 rounded-md whitespace-pre-wrap" style={{ backgroundColor: 'rgba(238, 28, 28, 0.05)', borderLeft: '2px solid var(--siren-red)', color: 'var(--bright-silver)' }}>
             {response}
           </div>
+          {directEvidence && <div className="mt-2"><DirectEditorEvidenceSummary evidence={directEvidence} /></div>}
           <button className="mt-2 text-[11px] px-3 py-1.5 rounded-md transition-colors hover:bg-white/5 flex items-center gap-1" style={{ color: 'var(--siren-red)' }} onClick={() => setResponse(null)}>
             <Wand2 className="w-3 h-3" /> New Action
           </button>
@@ -356,6 +361,7 @@ export function InlineAI() {
           <div className="text-[12px] font-medium" style={{ color: 'var(--bright-silver)' }}>
             {diffPreview.mode === 'refactor' ? 'Refactored' : diffPreview.mode === 'document' ? 'Documented' : diffPreview.mode === 'optimize' ? 'Optimized' : 'Converted'} Code Preview
           </div>
+          {diffPreview.evidence && <DirectEditorEvidenceSummary evidence={diffPreview.evidence} />}
           {/* Original */}
           <div>
             <div className="text-[10px] mb-1" style={{ color: 'var(--muted-silver)' }}>ORIGINAL</div>

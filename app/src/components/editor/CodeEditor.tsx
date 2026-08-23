@@ -3,6 +3,7 @@ import Editor from '@monaco-editor/react';
 import type * as MonacoType from 'monaco-editor';
 import { useApp } from '@/store/AppContext';
 import { X, FilePlus2, Files, Keyboard, Wand2 } from 'lucide-react';
+import { api } from '@/lib/api';
 
 const languageMap: Record<string, string> = {
   typescript: 'typescript',
@@ -338,28 +339,12 @@ export function CodeEditor() {
               return;
             }
             try {
-              const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
-              const { getToken } = await import('@/lib/auth');
-              const token = getToken() ?? '';
               const tStart = Date.now();
-              const res = await fetch(`${API_BASE}/orchestrator/complete`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${token}`,
-                },
-                body: JSON.stringify({ prefix, suffix }),
-                signal: myAbort.signal,
-              });
-
-              if (!res.ok) {
-                if (myToken === aiCompletionToken) {
-                  resolve(undefined);
-                }
-                return;
-              }
-
-              const data = await res.json() as { text: string };
+              const data = await api.editorComplete({
+                prefix,
+                suffix,
+                sessionId: stateRef.current.activeChatId,
+              }, { signal: myAbort.signal });
               const elapsed = Date.now() - tStart;
 
               // Superseded by a newer request — drop our result
@@ -385,7 +370,7 @@ export function CodeEditor() {
               }
 
               console.log(
-                `[editor] AI inline completion: "${cleanText.slice(0, 60)}..." (${elapsed}ms)`
+                `[editor] AI inline completion task=${data.evidence.taskId} provider=${data.evidence.provider} output=${data.evidence.output.status} (${elapsed}ms)`
               );
 
               // InlineCompletions response shape — different from the old

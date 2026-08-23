@@ -39,6 +39,7 @@ function stopTestServer(): Promise<void> {
 describe('Phase B: Editor Actions — Refactor endpoint (edit-family)', () => {
   let token: string;
   const email = `refactor-test-${Date.now()}@code-siren.test`;
+  const sessionId = crypto.randomUUID();
 
   beforeAll(async () => {
     await initDb();
@@ -76,12 +77,17 @@ describe('Phase B: Editor Actions — Refactor endpoint (edit-family)', () => {
     const res = await fetch(`${BASE}/api/orchestrator/refactor`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ code: 'const x = 1; if (x == 1) { console.log("yes"); }', mode: 'refactor' }),
+      body: JSON.stringify({ code: 'const x = 1; if (x == 1) { console.log("yes"); }', mode: 'refactor', sessionId }),
     });
     expect(res.status).toBe(200);
-    const data = await res.json() as { result: string };
+    const data = await res.json() as { result: string; evidence: Record<string, any> };
     expect(typeof data.result).toBe('string');
     expect(data.result.length).toBeGreaterThan(0);
+    expect(data.evidence).toMatchObject({
+      taskId: expect.any(String), action: 'refactor', provider: expect.any(String),
+      apply: { status: 'pending-approval' }, verification: { status: 'unverified' },
+      output: { status: 'succeeded', characterCount: data.result.length },
+    });
     // Verify it's real stub output (not hardcoded mock)
     expect(data.result).not.toContain('I would extract the mobile menu');
     console.log(`  [refactor] result: "${data.result.slice(0, 80)}..."`);
@@ -91,7 +97,7 @@ describe('Phase B: Editor Actions — Refactor endpoint (edit-family)', () => {
     const res = await fetch(`${BASE}/api/orchestrator/refactor`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ code: 'function add(a, b) { return a + b; }', mode: 'document' }),
+      body: JSON.stringify({ code: 'function add(a, b) { return a + b; }', mode: 'document', sessionId }),
     });
     expect(res.status).toBe(200);
     const data = await res.json() as { result: string };
@@ -104,7 +110,7 @@ describe('Phase B: Editor Actions — Refactor endpoint (edit-family)', () => {
     const res = await fetch(`${BASE}/api/orchestrator/refactor`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ code: 'for (let i = 0; i < arr.length; i++) { total += arr[i]; }', mode: 'optimize' }),
+      body: JSON.stringify({ code: 'for (let i = 0; i < arr.length; i++) { total += arr[i]; }', mode: 'optimize', sessionId }),
     });
     expect(res.status).toBe(200);
     const data = await res.json() as { result: string };
@@ -117,7 +123,7 @@ describe('Phase B: Editor Actions — Refactor endpoint (edit-family)', () => {
     const res = await fetch(`${BASE}/api/orchestrator/refactor`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ code: 'const add = (a, b) => a + b;', mode: 'convert', targetLanguage: 'python' }),
+      body: JSON.stringify({ code: 'const add = (a, b) => a + b;', mode: 'convert', targetLanguage: 'python', sessionId }),
     });
     expect(res.status).toBe(200);
     const data = await res.json() as { result: string };
@@ -130,7 +136,7 @@ describe('Phase B: Editor Actions — Refactor endpoint (edit-family)', () => {
     const res = await fetch(`${BASE}/api/orchestrator/refactor`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ code: 'const x = 1;', mode: 'invalid-mode' }),
+      body: JSON.stringify({ code: 'const x = 1;', mode: 'invalid-mode', sessionId }),
     });
     expect(res.status).toBe(400);
   });
@@ -139,7 +145,7 @@ describe('Phase B: Editor Actions — Refactor endpoint (edit-family)', () => {
     const res = await fetch(`${BASE}/api/orchestrator/refactor`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ mode: 'refactor' }),
+      body: JSON.stringify({ mode: 'refactor', sessionId }),
     });
     expect(res.status).toBe(400);
   });
@@ -157,7 +163,7 @@ describe('Phase B: Editor Actions — Refactor endpoint (edit-family)', () => {
     const res = await fetch(`${BASE}/api/orchestrator/refactor`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ code: 'const x = 1;', mode: 'refactor', instruction: 'use const instead of let' }),
+      body: JSON.stringify({ code: 'const x = 1;', mode: 'refactor', instruction: 'use const instead of let', sessionId }),
     });
     expect(res.status).toBe(200);
     const data = await res.json() as { result: string };
@@ -171,7 +177,7 @@ describe('Phase B: Editor Actions — Refactor endpoint (edit-family)', () => {
       const res = await fetch(`${BASE}/api/orchestrator/refactor`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ code: 'const x = 1;', mode }),
+        body: JSON.stringify({ code: 'const x = 1;', mode, sessionId }),
       });
       const data = await res.json() as { result: string };
       expect(data.result).not.toContain('I would extract the mobile menu');

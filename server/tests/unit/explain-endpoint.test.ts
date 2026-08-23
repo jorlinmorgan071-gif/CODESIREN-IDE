@@ -19,6 +19,7 @@ import { ghostMode } from '../../src/orchestration/ghost-mode.js';
 import { agentManager } from '../../src/orchestration/agent-manager.js';
 import { ArchitectAgent } from '../../src/agents/architect/index.js';
 import { attachWsServer } from '../../src/ws/server.js';
+import { getTrace } from '../../src/observability/traces.js';
 
 let server: http.Server;
 const BASE = 'http://localhost:3097';
@@ -43,6 +44,7 @@ function stopTestServer(): Promise<void> {
 describe('Phase B: Editor Actions — Explain endpoint', () => {
   let token: string;
   const email = `explain-test-${Date.now()}@code-siren.test`;
+  const sessionId = crypto.randomUUID();
 
   beforeAll(async () => {
     await initDb();
@@ -89,20 +91,77 @@ describe('Phase B: Editor Actions — Explain endpoint', () => {
     const res = await fetch(`${BASE}/api/orchestrator/explain`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ code: 'const x = 1 + 2;', language: 'typescript' }),
+      body: JSON.stringify({ code: 'const x = 1 + 2;', language: 'typescript', sessionId }),
     });
 
     expect(res.status).toBe(200);
-    const data = await res.json() as { explanation: string };
+    const data = await res.json() as { explanation: string; evidence: Record<string, any> };
     expect(typeof data.explanation).toBe('string');
     expect(data.explanation.length).toBeGreaterThan(0);
+    expect(data.evidence).toMatchObject({
+      taskId: expect.any(String), action: 'explain', provider: expect.any(String),
+      inputs: { fields: ['code', 'language'], characterCounts: { code: 16 } },
+      output: { status: 'succeeded', characterCount: data.explanation.length },
+      apply: { status: 'not-applicable' }, verification: { status: 'unverified' },
+    });
+    const trace = getTrace(data.evidence.traceId);
+    expect(trace?.scope).toMatchObject({ sessionId });
+    expect(JSON.stringify(trace)).not.toContain('const x = 1 + 2;');
+  });
+
+  it('returns scoped evidence for inline completion without retaining code in the trace', async () => {
+    const prefix = 'const completionSecret = ';
+    const res = await fetch(`${BASE}/api/orchestrator/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ prefix, suffix: ';', sessionId }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json() as { text: string; evidence: Record<string, any> };
+    expect(typeof data.text).toBe('string');
+    expect(data.evidence).toMatchObject({
+      taskId: expect.any(String), action: 'completion', provider: expect.any(String),
+      inputs: { fields: ['prefix', 'suffix'], characterCounts: { prefix: prefix.length, suffix: 1 } },
+      apply: { status: 'not-applicable' }, verification: { status: 'unverified' },
+    });
+    const trace = getTrace(data.evidence.traceId);
+    expect(trace?.scope).toMatchObject({ sessionId });
+    expect(JSON.stringify(trace)).not.toContain(prefix);
+  });
+
+  it('fails closed when a different user reuses an owned direct-editor session', async () => {
+    const protectedSessionId = crypto.randomUUID();
+    const ownerRes = await fetch(`${BASE}/api/orchestrator/explain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ code: 'const ownerOnly = true;', sessionId: protectedSessionId }),
+    });
+    expect(ownerRes.status).toBe(200);
+
+    const secondEmail = `explain-other-${Date.now()}@code-siren.test`;
+    const otherRegister = await fetch(`${BASE}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: secondEmail, password: 'test-password-123', name: 'Other Explain Test' }),
+    });
+    expect(otherRegister.status).toBe(201);
+    const otherToken = (await otherRegister.json() as { token: string }).token;
+
+    const deniedRes = await fetch(`${BASE}/api/orchestrator/explain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${otherToken}` },
+      body: JSON.stringify({ code: 'const crossScope = false;', sessionId: protectedSessionId }),
+    });
+    expect(deniedRes.status).toBe(403);
+    expect(await deniedRes.json()).toMatchObject({ error: 'Direct editor action scope access denied' });
   });
 
   it('returns 200 without language field (optional)', async () => {
     const res = await fetch(`${BASE}/api/orchestrator/explain`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ code: 'console.log("hello")' }),
+      body: JSON.stringify({ code: 'console.log("hello")', sessionId }),
     });
 
     expect(res.status).toBe(200);
@@ -136,7 +195,7 @@ describe('Phase B: Editor Actions — Explain endpoint', () => {
     const res = await fetch(`${BASE}/api/orchestrator/explain`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ code: 'function add(a, b) { return a + b; }' }),
+      body: JSON.stringify({ code: 'function add(a, b) { return a + b; }', sessionId }),
     });
     const data = await res.json() as { explanation: string };
 

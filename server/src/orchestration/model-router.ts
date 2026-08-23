@@ -330,6 +330,15 @@ class ModelRouter {
   }
 
   /**
+   * Return the engine that this exact request will use without changing routing
+   * policy. Direct-editor evidence uses this disclosure rather than guessing a
+   * provider or hardcoding a model name.
+   */
+  getSelectedEngineId(req: ModelRouterRequest): EngineId {
+    return this.pickEngine(req).id;
+  }
+
+  /**
    * Phase A Section 6: register a custom engine at runtime.
    *
    * Minimal API — no validation, no health check, no priority change.
