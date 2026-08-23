@@ -18,6 +18,8 @@ import {
   XCircle,
 } from 'lucide-react';
 import { getToken } from '@/lib/auth';
+import { api } from '@/lib/api';
+import { getActiveEditorContent } from '@/components/editor/CodeEditor';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -40,10 +42,14 @@ interface DiffPreview {
   resultCode: string;
   mode: string;
   selectionRange: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
+  fileId?: string;
+  path?: string;
+  transactionId?: string;
+  editorContent?: string;
 }
 
 export function InlineAI() {
-  const { state, toggleInlineAI, setInlineAIPosition } = useApp();
+  const { state, toggleInlineAI, setInlineAIPosition, dispatch } = useApp();
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [activeAction, setActiveAction] = useState<string | null>(null);
@@ -60,13 +66,16 @@ export function InlineAI() {
         code: string;
         language?: string;
         editMode?: string;
+        fileId?: string;
+        path?: string;
+        editorContent?: string;
         selectionRange?: DiffPreview['selectionRange'];
       };
       if (!detail?.code) return;
 
       // If editMode is present, route to the refactor endpoint instead of explain
       if (detail.editMode && EDIT_MODES.has(detail.editMode)) {
-        void runRefactor(detail.code, detail.editMode, detail.language, detail.selectionRange);
+        void runRefactor(detail.code, detail.editMode, detail.language, detail.selectionRange, detail.fileId, detail.path, detail.editorContent);
       } else {
         void runExplain(detail.code, detail.language);
       }
@@ -120,7 +129,11 @@ export function InlineAI() {
     }
   }, []);
 
-  const runRefactor = useCallback(async (code: string, mode: string, language?: string, selectionRange?: DiffPreview['selectionRange']) => {
+  const runRefactor = useCallback(async (code: string, mode: string, language?: string, selectionRange?: DiffPreview['selectionRange'], fileId?: string, path?: string, editorContent?: string) => {
+    if (!path || !fileId || editorContent === undefined) {
+      setError('This editor tab is not bound to a real workspace-relative path. Code Siren will not apply a filesystem change until one is selected.');
+      return;
+    }
     setActiveAction(mode);
     setResponse(null);
     setError(null);
@@ -141,12 +154,23 @@ export function InlineAI() {
       if (!data.result || data.result.startsWith('(operation timed out')) {
         throw new Error(data.result || 'Empty result');
       }
-      // Show diff preview — don't apply yet
+      // Plan the server-owned patch before showing an approval affordance.
+      const transaction = await api.planChange({
+        path,
+        before: code,
+        after: data.result,
+        expectedContent: editorContent,
+        mode: mode as 'refactor' | 'document' | 'optimize' | 'convert',
+      });
       setDiffPreview({
         originalCode: code,
         resultCode: data.result,
         mode,
         selectionRange: selectionRange ?? { startLineNumber: 0, startColumn: 0, endLineNumber: 0, endColumn: 0 },
+        fileId,
+        path,
+        transactionId: transaction.transactionId,
+        editorContent,
       });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -155,22 +179,27 @@ export function InlineAI() {
     }
   }, []);
 
-  const handleAccept = useCallback(() => {
-    if (!diffPreview) return;
-    // Dispatch apply-edit event — CodeEditor listens and calls executeEdits()
-    window.dispatchEvent(new CustomEvent('code-siren:apply-edit', {
-      detail: {
-        range: diffPreview.selectionRange,
-        newText: diffPreview.resultCode,
-      },
-    }));
-    setApplyStatus('applied');
-    setDiffPreview(null);
-    setTimeout(() => {
-      setApplyStatus('idle');
-      setResponse(null);
-    }, 2000);
-  }, [diffPreview]);
+  const handleAccept = useCallback(async () => {
+    if (!diffPreview?.transactionId || !diffPreview.fileId) return;
+    try {
+      if (getActiveEditorContent() !== diffPreview.editorContent) {
+        throw new Error('The editor buffer changed after planning. Reload the server diff and plan a new transaction before approval.');
+      }
+      const applied = await api.approveChange(diffPreview.transactionId);
+      if (applied.status !== 'applied' || !applied.content || applied.verification?.status !== 'passed') {
+        throw new Error(applied.reason ?? 'Change transaction did not reconcile the workspace file');
+      }
+      dispatch({ type: 'RECONCILE_FILE_CONTENT', payload: { fileId: diffPreview.fileId, content: applied.content } });
+      setApplyStatus('applied');
+      setDiffPreview(null);
+      setTimeout(() => {
+        setApplyStatus('idle');
+        setResponse(`Applied and verified: ${applied.verification?.detail}`);
+      }, 2000);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [diffPreview, dispatch]);
 
   const handleReject = useCallback(() => {
     setApplyStatus('rejected');

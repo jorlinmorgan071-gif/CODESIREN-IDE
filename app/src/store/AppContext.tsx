@@ -108,6 +108,9 @@ export type AppAction =
   | { type: 'LOGOUT' }
   | { type: 'AUTH_READY' }
   | { type: 'UPDATE_CHAT_MESSAGE'; payload: { sessionId: string; messageId: string; patch: Partial<ChatMessage> } }
+  | { type: 'LOAD_WORKSPACE_FILES'; payload: Array<{ path: string; name: string }> }
+  | { type: 'SET_WORKSPACE_FILE_CONTENT'; payload: { fileId: string; path: string; content: string } }
+  | { type: 'RECONCILE_FILE_CONTENT'; payload: { fileId: string; content: string } }
   | { type: 'UPDATE_PROBLEMS'; payload: Problem[] };
 
 export const initialState: AppState = {
@@ -206,6 +209,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           {
             fileId: file.id,
             fileName: file.name,
+            workspacePath: file.workspacePath,
             language: file.language || 'plaintext',
             isModified: false,
             isActive: false,
@@ -219,6 +223,40 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }));
 
       return { ...state, editorTabs: newTabs, activeFileId: fileId };
+    }
+
+    case 'LOAD_WORKSPACE_FILES': {
+      const languageForPath = (path: string) => {
+        if (/\.(ts|tsx)$/i.test(path)) return 'typescript';
+        if (/\.(js|jsx|mjs|cjs)$/i.test(path)) return 'javascript';
+        if (/\.css$/i.test(path)) return 'css';
+        if (/\.json$/i.test(path)) return 'json';
+        if (/\.md$/i.test(path)) return 'markdown';
+        if (/\.html?$/i.test(path)) return 'html';
+        return 'plaintext';
+      };
+      return {
+        ...state,
+        fileTree: action.payload.map((file) => ({
+          id: `workspace:${file.path}`,
+          name: file.name,
+          workspacePath: file.path,
+          type: 'file' as const,
+          language: languageForPath(file.path),
+        })),
+        editorTabs: [],
+        activeFileId: null,
+        fileContents: {},
+      };
+    }
+
+    case 'SET_WORKSPACE_FILE_CONTENT': {
+      const matchingTab = state.editorTabs.find((tab) => tab.fileId === action.payload.fileId && tab.workspacePath === action.payload.path);
+      if (!matchingTab) return state;
+      return {
+        ...state,
+        fileContents: { ...state.fileContents, [action.payload.fileId]: action.payload.content },
+      };
     }
 
     case 'CLOSE_TAB': {
@@ -350,6 +388,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'RECONCILE_FILE_CONTENT':
+      return {
+        ...state,
+        fileContents: { ...state.fileContents, [action.payload.fileId]: action.payload.content },
+        editorTabs: state.editorTabs.map((tab) =>
+          tab.fileId === action.payload.fileId ? { ...tab, isModified: false } : tab
+        ),
+      };
+
     case 'UPDATE_PROBLEMS':
       // Phase A — Monaco IDE Intelligence. Replace the entire problems
       // array on each marker change (Monaco sends the full marker set,
@@ -397,7 +444,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
 
   const toggleFolder = useCallback((id: string) => dispatch({ type: 'TOGGLE_FOLDER', payload: id }), []);
-  const openFile = useCallback((id: string) => dispatch({ type: 'OPEN_FILE', payload: id }), []);
+  const openFile = useCallback((id: string) => {
+    const findFile = (nodes: FileNode[]): FileNode | undefined => {
+      for (const node of nodes) {
+        if (node.id === id) return node;
+        const found = node.children ? findFile(node.children) : undefined;
+        if (found) return found;
+      }
+      return undefined;
+    };
+    const file = findFile(state.fileTree);
+    dispatch({ type: 'OPEN_FILE', payload: id });
+    if (!file?.workspacePath || file.type !== 'file') return;
+    void api.readWorkspaceFile(file.workspacePath).then((result) => {
+      if (result.path !== file.workspacePath) return;
+      dispatch({ type: 'SET_WORKSPACE_FILE_CONTENT', payload: { fileId: id, path: result.path, content: result.content } });
+    }).catch((error) => console.warn('[workspace] file read failed:', error instanceof Error ? error.message : error));
+  }, [state.fileTree]);
   const closeTab = useCallback((id: string) => dispatch({ type: 'CLOSE_TAB', payload: id }), []);
   const setActiveFile = useCallback((id: string) => dispatch({ type: 'SET_ACTIVE_FILE', payload: id }), []);
   const setActiveChat = useCallback((id: string) => dispatch({ type: 'SET_ACTIVE_CHAT', payload: id }), []);
@@ -425,14 +488,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Called by CodeEditor's onDidChangeMarkers listener.
   const updateProblems = useCallback((problems: Problem[]) =>
     dispatch({ type: 'UPDATE_PROBLEMS', payload: problems }), []);
+  const loadWorkspaceFiles = useCallback(() => {
+    void api.listWorkspaceFiles()
+      .then((workspace) => dispatch({ type: 'LOAD_WORKSPACE_FILES', payload: workspace.files }))
+      .catch((error) => console.warn('[workspace] file inventory failed:', error instanceof Error ? error.message : error));
+  }, []);
 
   const login = useCallback((token: string, user: AuthUser) => {
     setAuth(token, user);
     dispatch({ type: 'LOGIN', payload: { token, user } });
     void api.currentWorkspace()
-      .then((workspace) => wsClient.connect(workspace.projectId))
+      .then((workspace) => {
+        wsClient.connect(workspace.projectId);
+        loadWorkspaceFiles();
+      })
       .catch(() => wsClient.connect());
-  }, []);
+  }, [loadWorkspaceFiles]);
 
   const logout = useCallback(() => {
     clearAuth();
@@ -446,7 +517,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (state.authToken && state.authUser) {
       void api.currentWorkspace()
-        .then((workspace) => wsClient.connect(workspace.projectId))
+        .then((workspace) => {
+          wsClient.connect(workspace.projectId);
+          loadWorkspaceFiles();
+        })
         .catch(() => wsClient.connect());
       dispatch({ type: 'AUTH_READY' });
       return;
@@ -468,7 +542,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         console.warn('[auth] auto-login failed:', err.message);
         dispatch({ type: 'AUTH_READY' });
       });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loadWorkspaceFiles, login, state.authToken, state.authUser]);
 
   return (
     <AppContext.Provider

@@ -78,6 +78,8 @@ export function getActiveEditorSelection(): EditorSelection | null {
 export function CodeEditor() {
   const { state, closeTab, setActiveFile, updateProblems } = useApp();
   const [mounted] = useState(true);
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
 
   // Bug F fix — ResizeObserver on the tab bar's parent flex container.
   const tabBarContainerRef = useRef<HTMLDivElement>(null);
@@ -508,11 +510,15 @@ export function CodeEditor() {
         const selectedText = model.getValueInRange(selection);
         if (!selectedText.trim()) return;
         const language = model.getLanguageId?.() ?? undefined;
+        const activeTab = stateRef.current.editorTabs.find((tab) => tab.isActive);
         window.dispatchEvent(new CustomEvent('code-siren:explain', {
           detail: {
             code: selectedText,
             language,
             editMode: detail.mode,
+            fileId: activeTab?.fileId,
+            path: activeTab?.workspacePath,
+            editorContent: model.getValue(),
             selectionRange: {
               startLineNumber: selection.startLineNumber,
               startColumn: selection.startColumn,
@@ -524,28 +530,9 @@ export function CodeEditor() {
       };
       window.addEventListener('code-siren:request-selection-for-edit', requestSelectionForEditHandler);
 
-      // Listen for apply-edit from InlineAI Accept button — applies the edit
-      // via executeEdits() with undo stops (Ctrl+Z reverts).
-      const applyEditHandler = (e: Event) => {
-        const detail = (e as CustomEvent).detail as {
-          range: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
-          newText: string;
-        };
-        if (!detail?.range || !detail.newText) return;
-        _editor.pushUndoStop();
-        _editor.executeEdits('code-siren-refactor', [{
-          range: detail.range,
-          text: detail.newText,
-        }]);
-        _editor.pushUndoStop();
-        console.log('[code-editor] edit applied via executeEdits (undoable via Ctrl+Z)');
-      };
-      window.addEventListener('code-siren:apply-edit', applyEditHandler);
-
       _editor.onDidDispose(() => {
         window.removeEventListener('code-siren:request-selection', requestSelectionHandler);
         window.removeEventListener('code-siren:request-selection-for-edit', requestSelectionForEditHandler);
-        window.removeEventListener('code-siren:apply-edit', applyEditHandler);
         activeEditorRef = null;  // Phase 2: clear on dispose
       });
 
@@ -558,7 +545,7 @@ export function CodeEditor() {
       if (activeTab) {
         const content = state.fileContents[activeTab.fileId] ?? '';
         const lang = languageMap[activeTab.language] ?? 'plaintext';
-        const uri = monaco.Uri.parse(`file:///${activeTab.fileName}`);
+        const uri = monaco.Uri.parse(`file:///${activeTab.workspacePath ?? `demo/${activeTab.fileId}`}`);
         let model = monaco.editor.getModel(uri);
         if (!model) {
           model = monaco.editor.createModel(content, lang, uri);
@@ -589,7 +576,7 @@ export function CodeEditor() {
     // Ensure the active tab's model exists + is bound to the editor.
     const activeContent = state.fileContents[activeTab.fileId] ?? '';
     const activeLang = languageMap[activeTab.language] ?? 'plaintext';
-    const activeUri = monaco.Uri.parse(`file:///${activeTab.fileName}`);
+    const activeUri = monaco.Uri.parse(`file:///${activeTab.workspacePath ?? `demo/${activeTab.fileId}`}`);
     let activeModel = monaco.editor.getModel(activeUri);
     if (!activeModel) {
       activeModel = monaco.editor.createModel(activeContent, activeLang, activeUri);
@@ -608,7 +595,7 @@ export function CodeEditor() {
       const content = state.fileContents[tab.fileId] ?? '';
       if (!content) continue;
       const lang = languageMap[tab.language] ?? 'plaintext';
-      const uri = monaco.Uri.parse(`file:///${tab.fileName}`);
+      const uri = monaco.Uri.parse(`file:///${tab.workspacePath ?? `demo/${tab.fileId}`}`);
       const existingModel = monaco.editor.getModel(uri);
       if (!existingModel) {
         monaco.editor.createModel(content, lang, uri);
@@ -619,10 +606,9 @@ export function CodeEditor() {
 
     // Dispose models for tabs that have been closed. Walk all models and
     // remove any whose URI doesn't correspond to a currently-open tab.
-    const openFileNames = new Set(state.editorTabs.map((t) => t.fileName));
+    const openModelPaths = new Set(state.editorTabs.map((tab) => `/${tab.workspacePath ?? `demo/${tab.fileId}`}`));
     for (const model of monaco.editor.getModels()) {
-      const fileName = model.uri.path.split('/').pop();
-      if (fileName && !openFileNames.has(fileName)) {
+      if (!openModelPaths.has(model.uri.path)) {
         // Don't dispose the active model — that would blank the editor.
         if (model.uri.toString() !== activeUri.toString()) {
           model.dispose();

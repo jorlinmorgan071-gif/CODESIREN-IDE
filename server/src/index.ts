@@ -33,6 +33,7 @@ import { memoryRouter } from './routes/memory.js';
 import { voiceLiveRouter } from './routes/voice-live.js';
 import { orchestratorRouter } from './routes/orchestrator.js';
 import { workspaceRouter } from './routes/workspace.js';
+import { changesRouter } from './routes/changes.js';
 import { rateLimitApi } from './middleware/rate-limiter.js';
 import { requestTimeout, errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { cacheMiddleware, getCacheStats } from './middleware/cache.js';
@@ -155,6 +156,7 @@ async function main() {
   app.use('/api/voice', voiceLiveRouter);
   app.use('/api/orchestrator', orchestratorRouter);
   app.use('/api/workspace', workspaceRouter);
+  app.use('/api/changes', changesRouter);
 
   // Phase B: Serve custom VRM avatar files directly from the server.
   // Vite dev server doesn't reliably serve newly-created files in nested

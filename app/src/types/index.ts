@@ -12,6 +12,8 @@ export interface Project {
 export interface FileNode {
   id: string;
   name: string;
+  /** Canonical workspace-relative path returned by the server; never derive it from name. */
+  workspacePath?: string;
   type: 'file' | 'folder';
   language?: string;
   content?: string;
@@ -130,6 +132,8 @@ export interface Problem {
 export interface EditorTab {
   fileId: string;
   fileName: string;
+  /** Canonical workspace-relative path returned by the server; never derive it from fileName. */
+  workspacePath?: string;
   language: string;
   isModified: boolean;
   isActive: boolean;

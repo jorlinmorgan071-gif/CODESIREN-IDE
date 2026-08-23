@@ -158,6 +158,41 @@ export const api = {
     return request(`/workspace/current${suffix}`);
   },
 
+  listWorkspaceFiles(projectId?: string): Promise<{ projectId: string; files: Array<{ path: string; name: string; size: number }> }> {
+    const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+    return request(`/workspace/files${suffix}`);
+  },
+
+  readWorkspaceFile(path: string, projectId?: string): Promise<{ projectId: string; path: string; content: string }> {
+    const query = new URLSearchParams({ path });
+    if (projectId) query.set('projectId', projectId);
+    return request(`/workspace/file?${query.toString()}`);
+  },
+
+  planChange(input: {
+    projectId?: string;
+    path: string;
+    before: string;
+    after: string;
+    expectedContent: string;
+    mode: 'refactor' | 'document' | 'optimize' | 'convert';
+  }): Promise<{ transactionId: string; traceId: string; projectId: string; path: string; status: 'planned'; diff: string }> {
+    return request('/changes/plan', { method: 'POST', body: JSON.stringify(input) });
+  },
+
+  approveChange(transactionId: string): Promise<{
+    transactionId: string;
+    traceId: string;
+    projectId: string;
+    path: string;
+    status: 'applied' | 'rejected' | 'failed';
+    content?: string;
+    reason?: string;
+    verification?: { name: 'disk-reconcile'; status: 'passed' | 'failed'; detail: string };
+  }> {
+    return request(`/changes/${encodeURIComponent(transactionId)}/approve`, { method: 'POST', body: '{}' });
+  },
+
   // Generate a build plan from the session's chat history.
   generatePlan(sessionId: string): Promise<{
     planId: string;
