@@ -1,7 +1,8 @@
 # P0 Tenant Isolation Hardening Record
 
-**Status:** Implementation and final local validation complete; staged-diff review, commit, push, and remote verification remain required.  
+**Status:** Published to `origin/main`; implementation, validation, staged-diff review, and remote parity verification are complete.
 **Baseline:** `main` at `0d5ee544e9caf652bbb949d8df3ce493e7a1652e` before this P0 slice.  
+**P0 implementation commit:** `ac2d40b61ad83d24a56777f5cebf1240f7aca7a3` (`fix(security): scope Code Siren tenant events and data`).
 **Scope:** User/project tenancy for generic WebSocket delivery, tasks, relay plans, traces, memory, and dashboard data. This record is intentionally kept in the repository so later implementation sessions can distinguish audited behavior from outstanding work.
 
 ## Security Contract
@@ -53,13 +54,9 @@ Some pre-existing systems are globally shared and lack project ownership. P0 doe
 | Diff and protected-asset boundary | Passed | `git diff --check` passed; no `.vrm`, `.vrma`, `.glb`, `.fbx`, manifest, catalog, environment, or credential-file path is in the P0 diff. |
 | Secret-safe test-source scan | Passed | No direct environment-value assertion or logging pattern remained in server test sources. |
 
-## Remaining Release Gate
+## Publication Verification
 
-Before this P0 slice can be committed and published, complete the following release-only steps:
-
-1. Re-read `todo.md` and inspect the staged diff, including the protected-asset and secret-file boundary.
-2. Commit the reviewed P0 source, tests, and this record.
-3. Push only `origin/main`, verify that its SHA equals local `main`, and verify a clean working tree.
+The P0 implementation commit was pushed only after the final staged-diff review. Local `main` and `origin/main` both resolved to `ac2d40b61ad83d24a56777f5cebf1240f7aca7a3` immediately after push, and the repository working tree was clean. The committed boundary contained no protected avatar/model/animation assets, manifests, catalogs, environment files, or credential files.
 
 ## Next P0 Follow-Up After Release
 
