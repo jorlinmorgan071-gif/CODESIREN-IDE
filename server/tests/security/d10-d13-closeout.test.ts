@@ -13,6 +13,8 @@
 // security tests.
 
 import { describe, it, expect, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { toolRegistry } from '../../src/agents/_shared/tool-registry.js';
 import { ghostMode } from '../../src/orchestration/ghost-mode.js';
 
@@ -83,5 +85,30 @@ describe('D10 #3 — Ghost Mode level endpoints (server-side FSM transition)', (
     }
     // Restore the default.
     ghostMode.setLevel('approval-required');
+  });
+});
+
+describe('D10 #3 — cache middleware does NOT cache /ghost-mode/level (regression)', () => {
+  // Live spot-check found that the Phase 5 GET response cache was caching
+  // /api/ghost-mode/level for 5s (default TTL). After POSTing a new level,
+  // the immediate GET returned the stale pre-POST value, causing the StatusBar
+  // to drift. Fix: cache.ts now skips /ghost-mode/level entirely.
+  //
+  // This test confirms the cache.ts source code skips this path so future
+  // changes don't accidentally re-introduce the staleness bug.
+
+  it('cache.ts skips /ghost-mode/level paths', () => {
+    const cacheSource = readFileSync(
+      resolve(process.cwd(), 'src/middleware/cache.ts'),
+      'utf8',
+    );
+    expect(cacheSource).toContain("req.path.startsWith('/ghost-mode/level')");
+    // The skip must come BEFORE the cache lookup (i.e., inside the early-return
+    // chain that bypasses caching, not as part of the TTL config).
+    // We verify this by checking the skip block calls next() and returns.
+    const skipBlock = cacheSource.match(
+      /if \(req\.path\.startsWith\('\/ghost-mode\/level'\)\)\s*\{\s*next\(\);\s*return;\s*\}/,
+    );
+    expect(skipBlock).not.toBeNull();
   });
 });

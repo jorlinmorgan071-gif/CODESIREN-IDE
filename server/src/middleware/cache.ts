@@ -94,6 +94,19 @@ export function cacheMiddleware(req: Request, res: Response, next: NextFunction)
     return;
   }
 
+  // D10 #3 live spot-check found that /ghost-mode/level GET was cached for
+  // 5s (default TTL). When the user changed the level via POST, the server
+  // state updated correctly, but a subsequent GET within 5s returned the
+  // stale pre-POST value from cache. This caused the StatusBar to drift
+  // (showed 'approval-required' even after the user picked 'observation-only'
+  // and the server confirmed the change). Skip cache for /ghost-mode/level
+  // entirely — the endpoint is cheap (just reads a singleton field) and the
+  // freshness requirement is strict.
+  if (req.path.startsWith('/ghost-mode/level')) {
+    next();
+    return;
+  }
+
   // Don't cache if explicitly disabled via ?nocache=1
   if (req.query.nocache === '1' || req.query.nocache === 'true') {
     skips++;
