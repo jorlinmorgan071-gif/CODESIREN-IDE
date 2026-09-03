@@ -1234,3 +1234,71 @@ Both gaps the user flagged are now closed:
 The 2 PARTIAL D10 items I had previously counted as CLOSED remain CLOSED, but with the cache-staleness fix applied. The P0/P1/P2 remediation order is now genuinely closed (not just reported closed) — the highest-risk CLOSED items survived live runtime verification, and the one bug found during verification is fixed + tested.
 
 Combined D1-D17 final ledger: 24 CLOSED + 8 PARTIAL + 0 OPEN across 17 investigations. The 8 PARTIAL items are well-scoped stopgaps that the Universal Provider Router plan (Phase 1 registry + Phase 4 routing) plus a future "Voice → Workspace Bridge" directive are specifically designed to close.
+
+---
+Task ID: ci-red-fix-body-parser-advisory
+Agent: main (super-z)
+Task: User reported CI was red on 4 commits (f38c689, 43fa30d, 7f62521, a5d5ed0). Check them and make them green.
+
+Work Log:
+
+=== CI status check ===
+- Queried GitHub Actions API for each commit's check-runs.
+- 43fa30d (a 22 Aug 22 commit with a UUID-style message) — not in recent CI runs; pre-dates CI workflow or the workflow didn't trigger. Not a regression to fix.
+- a5d5ed0 (my D10/D13 closeout) — [failure]
+- 7f62521 (my UPR Phase 1 Section 0 worklog) — [failure]
+- f38c689 (my cache-staleness fix) — [failure]
+- 815498b (Manus's prior commit) — [success]
+
+Pattern: 3 of my 4 commits failed CI; Manus's commit just before them was green. Suggested an external-dependency drift between Manus's commit and mine.
+
+=== Failure details ===
+Downloaded CI logs via the actions/jobs/{id}/logs endpoint. Found 2 failing tests in tests/security/security-agent.test.ts:
+
+  1. Line 141 — "APPROVES: clean fixture with patched versions has no dependency findings"
+     Expected: dependencyFindings = []
+     Got: 2 findings (body-parser moderate, qs moderate)
+
+  2. Line 450 — "does NOT report moderate/low findings to Ghost Mode"
+     Expected: bodyParserFinding.severity === 'low'
+     Got: 'moderate'
+
+Total CI result: 2 failed | 887 passed (889). App job was fully green; only the server test step failed.
+
+=== Root cause ===
+NOT a code regression. The npm advisory database was updated to flag body-parser 1.20.5–1.20.6 as moderate severity (via the transitive qs dependency — qs versions 2.2.5–6.15.3 are vulnerable to "qs array-limit bypass via bracket-key comma parsing" + "qs: Denial of Service via Attacker Controlled isBuffer").
+
+Verified by creating a local fixture with body-parser@1.20.6:
+  - `npm audit --json` returns: body-parser severity=moderate, range=1.20.5 - 1.20.6, via=['qs']
+  - Fix available: body-parser@2.3.0 (SemVer-major bump because the qs transitive fix is breaking)
+
+When the tests were originally written:
+  - body-parser@1.20.6 was the patched version (clean fixture)
+  - body-parser@1.20.5 was low-severity (Ghost Mode coupling test fixture)
+
+Both assumptions became stale when the npm advisory DB was updated. The timing of my 3 commits (Sept 3) just happened to land after the advisory was published.
+
+=== Fix ===
+File changed: server/tests/security/security-agent.test.ts (1 file, +20 / −8)
+
+1. Bumped clean-fixture body-parser from 1.20.6 to 2.3.0 (the actual patched version per the advisory). The clean fixture now correctly has zero dependency findings.
+2. Updated test 2's assertion from 'low' to 'moderate'. The test's purpose — proving that moderate/low findings are NOT reported to Ghost Mode — still holds. Ghost Mode's threshold (security/index.ts:500) only reports critical/high, so moderate findings still aren't reported. Test name + Ghost Mode check logic unchanged.
+3. Updated fixture name from 'ghost-test-low' to 'ghost-test-moderate' to reflect actual classification.
+4. Added explanatory comments documenting the npm advisory DB update so future maintainers don't think this is a code regression.
+
+=== Verification ===
+Local:
+  - tests/security/security-agent.test.ts: 25/25 PASS (was 23/25)
+  - Directive-required regression (12 files): 105/105 PASS
+  - TypeScript: clean
+
+CI on commit 8b64ca9 (pushed after fix):
+  - App job: [success] all 11 steps green (typecheck, lint, vitest, build)
+  - Server job: [success] all 11 steps green (typecheck, vitest with 889 tests, npm audit, grep-audit)
+  - Total tests passing in CI: 889/889 (was 887/889)
+
+Stage Summary:
+- CI was red on 3 of my 4 recent commits due to an external npm advisory DB update, NOT a code regression.
+- Fixed by bumping the clean-fixture body-parser to the actually-patched 2.3.0 and updating one assertion's severity label from 'low' to 'moderate'.
+- CI on commit 8b64ca9 is now green. All 889 server tests + all app tests + typecheck + lint + build + grep-audit all pass.
+- 43fa30d (the older UUID-named commit from Aug 22) wasn't in the recent CI runs list — predates the CI workflow or wasn't built. Not a regression to fix.
