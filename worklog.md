@@ -1088,3 +1088,69 @@ Stage Summary:
 - 0 regressions introduced — full directive-required regression suite (79 tests) + broader regression (115 tests) + app suite (88 tests) all green.
 - TypeScript + ESLint + grep-audit all clean.
 - P0/P1/P2 remediation order is now ready to be declared closed (next step).
+
+---
+Task ID: upr-phase1-section0-investigation
+Agent: main (super-z)
+Task: Universal Provider Router Phase 1 Section 0 investigation. Catalog every current model-call site on the server, confirm what /api/models/engines does (hardcoded or real?), and identify gaps the Phase 1 build must close. Research only — no code changes.
+
+Work Log:
+
+Method: 1 subagent (agent-bcebc429) launched to read all production model-router code + engines + dispatch flow + /api/models/engines endpoint + per-agent override mechanism + every ModelRouter.stream/embed/pickEngine caller. Findings verified by ripgrep + direct file reads.
+
+Key findings (12 total):
+
+1. **5 real engines exist** (stub, ollama, openrouter, anthropic, groq) but only 3 are reachable through pickEngine() (stub, ollama, openrouter). Anthropic + Groq are registered but the routing policy was never updated to select them. This is the #1 gap Phase 1 must close.
+
+2. **No .chat() method exists on ModelRouter** — only .stream() and .embed(). The plan's mention of .chat() was based on the orchestrator subsystem, which is separate.
+
+3. **Three parallel model-routing systems** in the codebase:
+   - ModelRouter (5 engines: stub/ollama/openrouter/anthropic/groq) — used by agents + lightweight HTTP endpoints
+   - OrchestratorEngine (2 engines: gemini-flash/nvidia-nemotron) — used by relay-loop.ts for plan generation + milestone review; deliberately separate per the engine.ts:13-15 comment
+   - z-ai SDK direct call in routes/orchestrator.ts:822-840 for /vision (model glm-4v-plus) — bypasses both routers
+   Phase 1 must decide whether to unify these into one Universal Provider Router or keep them separate.
+
+4. **Per-agent model selection exists ONLY for Ollama** (engines/ollama.ts:148-184 — agentModelOverrides Map). Anthropic/Groq/OpenRouter have hardcoded pickXxxModel(domain) functions — and both currently return the SAME model for every domain (the switch statements are no-ops). Phase 1 must generalize the per-agent override pattern.
+
+5. **/api/models/engines returns hardcoded data** — `models: []` for OpenRouter (no /api/v1/models call); missing groq entirely; includes phantom openai entry; preferredEngine computed inline rather than reading modelRouter.getPreferredEngine() (transient inconsistency window during boot when Ollama probe hasn't completed).
+
+6. **No model metadata exists** beyond hardcoded model ID strings:
+   - No context-window constants (agent-manager.ts:67 explicitly comments "modelId is '' in Phase B — the budget module falls back to 32K + warning")
+   - No cost-tier data
+   - No free/paid flags (except :free suffix in OpenRouter IDs)
+   - No vision/tool-use capability flags
+   - No per-model embedding dimensions (hardcoded 768 everywhere; padTo768 silently truncates/pads)
+   - No model display labels (TIER1_MODELS has them but no other engine surfaces them)
+   - No max-output-token metadata
+
+7. **EngineId enum has 4 phantom entries** (types.ts:336-345 — openai, vllm, sglang, llamacpp have zero implementation). openai is detected at boot (model-router.ts:257 logs "[router] OPENAI_API_KEY detected (not implemented — use OpenRouter for OpenAI models)") but no engine is constructed. The /api/models/engines endpoint still reports openai as "available" — misleading UI data.
+
+8. **Stale model ID strings**:
+   - model-router.ts:210 — `anthropic/claude-3.5-sonnet` (no longer a valid OpenRouter ID)
+   - model-router.ts:214 — `deepseek/deepseek-coder` (current is `deepseek/deepseek-chat-v3.1`)
+   These are hardcoded in pickModelForDomain() and will fail at runtime when OpenRouter rejects them.
+
+9. **Engine picking is per-task in dispatcher but per-call everywhere else** — no stickiness guarantee for fabrication's CAD retry loop or any direct caller. If preferredEngine changes between calls (e.g. Ollama went down), different calls get different engines — even for the same conceptual task.
+
+10. **Asymmetric robustness**: orchestrator engines retry with exponential backoff (2s/4s/8s) on 429/5xx; ModelRouter engines do NOT retry and do NOT fall back to stub on error (they just yield an error delta and terminate). Phase 4's "mid-task failure recovery" depends on closing this gap.
+
+11. **Boot sequence is non-blocking** on engine readiness — Ollama probe runs async (~5s); pickEngine() returns stub for the first ~5 seconds after boot regardless of actual Ollama availability. recheckEngines() exists but no caller invokes it automatically.
+
+12. **Dead/legacy code** that Phase 1 should consider removing:
+    - streamTier1Chat (orchestrator/tier1-chat.ts:84-189) — deprecated, no live caller, parallel OpenRouter bypass
+    - single-shot.ts:8 unused `modelRouter` import
+    - Stub engine's pre-scripted ReAct/CodeAct outputs (model-router.ts:68-114) — masquerade as real agent behavior in stub-mode tests
+
+Stage Summary:
+
+Phase 1 Section 0 investigation complete. The full 12-finding report is in the conversation history and will inform the Phase 1 build decisions.
+
+Key gaps that Phase 1's ProviderRegistry + "Test & load models" button must close:
+- /api/models/engines must hit each provider's REAL models-list endpoint (OpenRouter: /api/v1/models; Anthropic: /v1/models; etc.) instead of returning hardcoded `models: []`
+- /api/models/engines must drop the phantom openai entry and add the missing groq entry
+- ProviderRegistry must store real model metadata: context window, output tokens, cost tier, free/paid, vision/tool-use capabilities, embedding dimensions
+- pickEngine() must be updated to actually consider Anthropic + Groq (currently unreachable through normal routing)
+- Per-agent model selection must be generalized from Ollama-only to all engines (currently agentModelOverrides is ollama.ts-only)
+- Stale model IDs in pickModelForDomain must be replaced with real provider-derived IDs
+
+P0/P1/P2 remediation order: CLOSED. Universal Provider Router Phase 1 Section 0: COMPLETE. Ready for Phase 1 build step when user confirms direction.
