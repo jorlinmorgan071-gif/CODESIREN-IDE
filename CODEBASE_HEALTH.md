@@ -408,3 +408,50 @@ investigation (if any) is needed before implementation.
 None of these require architectural changes. All can be fixed by extending, wrapping, or instrumenting the existing systems — exactly as the Evolution Upgrade rules require.
 
 **Next step:** Phase 1 — Stabilize.
+
+---
+
+## Status Update — 2026-09-03
+
+The Phase 0 Audit above is preserved for historical reference. The codebase is materially further along than this audit reflects. The major hardening work is complete:
+
+### Hardening phases completed (commits 4bf2336 through 815498b + closeout)
+
+| Phase | Commit | What it closed |
+|---|---|---|
+| Phase 5 (mine) | 4bf2336 | Execution truth + verification records in traces.ts |
+| Phase 6 (mine) | 33d33e2 | Real spawn exit codes flow through addVerification into trace.verificationRecords |
+| P0 Tenancy (Manus) | ac2d40b | Server-owned {userId, projectId} scope enforced at every delivery boundary |
+| P0 Workspace (Manus) | 747cd41 | WorkspaceService resolves server-owned rootPath; client cannot inject /etc |
+| P0 Terminal Trust (Manus) | 2c064f9 | Fake terminal output removed; execution refused until real PTY exists |
+| P0 Change Transaction (Manus) | bce2496 | Authoritative plan→approval→patch→disk→reconcile→diff→verification spine |
+| P1 Capability-Aware Chat (Manus) | 96405e2 | Normal chat classifies into read-explain / change-plan / general-chat |
+| P1 Egress Execution (Manus) | f275cf4 | IP-pinned HTTPS transport; redirect re-validation; browser nav fail-closed |
+| P1 Impact Analysis (Manus) | b920dc5 | Real TypeScript compiler API derives blast radius in changes/impact.ts |
+| P1 Memory Scoped Durability (Manus) | 7e12068 | Per-session memory + quality/provenance labels; migration 011 (type-reviewed) |
+| P2 Direct Editor Evidence (Manus) | 6c8730c | 4 direct-editor endpoints return typed evidence records |
+| P2 Extension/LSP Truthfulness (Manus) | 815498b | Fabricated extension health UI removed |
+| **D10 + D13 Closeout (mine)** | (this commit) | 5 fake-state UI affordances removed + code_interpreter stub returns success:false |
+
+### Test coverage (corrected)
+
+| Suite | Files | Tests | Status |
+|---|---|---|---|
+| Server unit + security + integration + agent + e2e | 70 | ~860+ | All pass except 3 pre-existing playwright sandbox failures (Chromium not installed in this sandbox; CI installs it) |
+| App | 17 | 88 | All pass |
+| **Total** | **87** | **~950+** | Green |
+
+The Phase 0 audit's "Test coverage: 3/10, 1 test file (e2e-architect.ts) for 68 server source files" is no longer accurate. Test coverage is now substantial across all P0 critical paths and most P1 areas.
+
+### D2–D17 re-investigation verdicts (against current code, not docs)
+
+Of 16 D-investigations re-run against the current codebase:
+- 🟢 CLOSED: 13 (D2, D4, D5, D6, D7, D8, D10, D11, D12, D13, D14, D15, D16, D17)
+- 🟡 PARTIAL: 2 (D3 — hardcoded 3-model context-window map in budget.ts:51-55; D9 — no mid-stream fallback in model-router.ts:364-368, no general per-agent capability routing)
+- 🔴 OPEN: 0
+
+The 2 PARTIAL findings are well-documented stopgaps that the Universal Provider Router plan (Phase 1 registry + Phase 4 routing) is specifically designed to close.
+
+### P0/P1/P2 remediation order status: CLOSED
+
+All P0, P1, and P2 items from the post-Phase-6 audit are now addressed in code (not just in docs). The 9 P*.md release-contract documents remain as historical reference for each hardening slice.

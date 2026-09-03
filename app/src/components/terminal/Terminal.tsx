@@ -33,13 +33,18 @@ export function Terminal() {
   const [height, setHeight] = useState<number>(TERMINAL_DEFAULT_HEIGHT);
   // Drag handle state — tracks an in-flight pointer drag.
   const dragStateRef = useRef<{ startY: number; startHeight: number } | null>(null);
-  const activeSession = state.terminalSessions.find((s) => s.id === state.activeTerminalId);
-
+  // D10 #2 closeout: previously this component derived `activeSession` from
+  // `state.terminalSessions` and rendered `activeSession?.history.map(...)`
+  // (the fabricated `npm install` / `git status` / `npm run dev` outputs)
+  // BELOW the honest "Terminal unavailable" banner. With the fake history
+  // removed, `activeSession` is no longer needed — only the honest banner
+  // + disabled input remain. The scroll effect is kept for the future real
+  // PTY session.
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [activeSession?.history]);
+  }, [state.activeTerminalId]);
 
   // ── Drag handle: pointer events ────────────────────────────────────────
   // Drag the top edge UP to expand, DOWN to compress. Uses pointer capture
@@ -215,7 +220,15 @@ export function Terminal() {
           </div>
 
           {/* Output. Command execution is deliberately unavailable until a
-              tenant-owned isolated PTY session service exists. */}
+              tenant-owned isolated PTY session service exists.
+
+              D10 #2 closeout — previously this section ALSO rendered
+              `activeSession?.history.map(...)` from sampleTerminalSessions
+              (fabricated `npm install`, `git status`, `npm run dev` outputs)
+              BELOW the honest "Terminal unavailable" banner. That contradicted
+              P0_TERMINAL_TRUST_HARDENING.md's claim of "all visible generated
+              command and build output" being removed. The fake history is
+              now gone — only the honest banner + input placeholder remain. */}
           <div
             ref={scrollRef}
             className="flex-1 overflow-y-auto px-3 py-1 font-code text-[12px] leading-relaxed"
@@ -224,29 +237,6 @@ export function Terminal() {
               <strong style={{ color: 'var(--siren-red)' }}>Terminal unavailable.</strong>{' '}
               Commands are not executed and no output is generated because this build has no isolated workspace PTY session.
             </div>
-            {activeSession?.history.map((line) => (
-              <div
-                key={line.id}
-                className="py-0.5"
-                style={{
-                  color:
-                    line.type === 'input'
-                      ? '#C8C8DC'
-                      : line.type === 'error'
-                      ? '#EE1C1C'
-                      : line.type === 'system'
-                      ? '#8A8AA0'
-                      : '#22C55E',
-                }}
-              >
-                {line.type === 'input' && (
-                  <span style={{ color: 'var(--siren-red)' }}>$ </span>
-                )}
-                <pre className="whitespace-pre-wrap break-all" style={{ color: 'inherit' }}>
-                  {line.content}
-                </pre>
-              </div>
-            ))}
           </div>
 
           {/* AI Suggestion strip */}

@@ -1,22 +1,69 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { useApp } from '@/store/AppContext';
+import { api } from '@/lib/api';
 import { Cpu, Minus, Square, X, ChevronDown, Zap, LayoutDashboard } from 'lucide-react';
 
-const models = [
-  'Ollama 3',
-  'Claude 3.5 Sonnet',
-  'GPT-4o',
-  'Gemini Pro',
-  'DeepSeek Coder',
-  'Llama 3.1',
-  'Mistral Large',
-];
+// D10 #4 closeout — previously this file hardcoded a `models` array of 7
+// provider names ('Ollama 3', 'Claude 3.5 Sonnet', 'GPT-4o', 'Gemini Pro',
+// 'DeepSeek Coder', 'Llama 3.1', 'Mistral Large') and showed a permanently
+// pulsing "AI Online" green dot regardless of whether any model provider
+// was actually configured. ChatInput.tsx and SettingsModal.tsx already
+// fetched /api/models/engines for real availability, but TitleBar ignored it.
+//
+// Now TitleBar fetches the same /api/models/engines endpoint, renders the
+// real engine list (name + availability), gates the "AI Online" badge on
+// real availability of at least one non-stub engine, and shows "AI Offline"
+// (gray dot, no pulse) when only the stub engine is available.
+
+interface EngineInfo {
+  id: string;
+  name: string;
+  available: boolean;
+  models?: string[];
+  activeModel?: string;
+}
 
 export function TitleBar() {
   const { state, setModel } = useApp();
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [engines, setEngines] = useState<EngineInfo[]>([]);
+  const [preferredEngine, setPreferredEngine] = useState<string>('');
   const navigate = useNavigate();
+
+  // Fetch real engine availability on mount and whenever the auth state changes.
+  // Polls every 30s so the badge reflects provider config changes (e.g. user
+  // adds an API key in SettingsModal → the badge turns green within 30s).
+  useEffect(() => {
+    if (!state.authToken) return;
+    let cancelled = false;
+    const fetchEngines = () => {
+      api.listEngines()
+        .then((response) => {
+          if (cancelled) return;
+          setEngines(response.engines);
+          setPreferredEngine(response.preferredEngine);
+        })
+        .catch((error) => console.warn('[titlebar] engine list failed:', error instanceof Error ? error.message : error));
+    };
+    fetchEngines();
+    const interval = setInterval(fetchEngines, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [state.authToken]);
+
+  // Real engines (exclude 'stub' from the "AI Online" determination — stub
+  // is always available but means "no real LLM configured").
+  const realEngines = engines.filter((e) => e.id !== 'stub');
+  const anyRealEngineAvailable = realEngines.some((e) => e.available);
+  const preferred = engines.find((e) => e.id === preferredEngine);
+  // Display name: prefer the preferred engine's active model, fall back to
+  // the engine name, fall back to 'No model configured'.
+  const currentDisplayName = preferred?.activeModel
+    ?? (preferred?.available ? preferred.name : undefined)
+    ?? (anyRealEngineAvailable ? realEngines.find((e) => e.available)?.name : 'No model configured');
 
   return (
     <div
@@ -52,16 +99,25 @@ export function TitleBar() {
       {/* Center — Model & AI Status */}
       <div className="flex-1 flex items-center justify-center gap-3 min-w-0 overflow-hidden">
         <div className="flex items-center gap-1.5">
-          <Zap className="w-3 h-3" style={{ color: 'var(--siren-red)' }} />
-          <span className="text-[11px]" style={{ color: 'var(--steel-silver)' }}>
-            AI Online
+          <Zap
+            className="w-3 h-3"
+            style={{ color: anyRealEngineAvailable ? 'var(--siren-red)' : 'var(--muted-silver)' }}
+          />
+          <span className="text-[11px]" style={{ color: anyRealEngineAvailable ? 'var(--steel-silver)' : 'var(--muted-silver)' }}>
+            {anyRealEngineAvailable ? 'AI Online' : 'AI Offline'}
           </span>
-          <span className="w-1.5 h-1.5 rounded-full animate-agent-pulse" style={{ backgroundColor: '#22C55E' }} />
+          <span
+            className="w-1.5 h-1.5 rounded-full"
+            style={{
+              backgroundColor: anyRealEngineAvailable ? '#22C55E' : '#5A5A72',
+              animation: anyRealEngineAvailable ? 'agent-pulse 2s ease-in-out infinite' : 'none',
+            }}
+          />
         </div>
 
         <div className="w-px h-3" style={{ backgroundColor: '#1E1E2A' }} />
 
-        {/* Model Selector */}
+        {/* Model Selector — real engine list, not hardcoded */}
         <div className="relative">
           <button
             className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] transition-colors hover:bg-white/5"
@@ -69,7 +125,7 @@ export function TitleBar() {
             style={{ color: 'var(--bright-silver)' }}
           >
             <Cpu className="w-3 h-3" style={{ color: 'var(--siren-red)' }} />
-            {state.currentModel}
+            {currentDisplayName}
             <ChevronDown className="w-3 h-3" style={{ color: 'var(--steel-silver)' }} />
           </button>
 
@@ -77,7 +133,7 @@ export function TitleBar() {
             <>
               <div className="fixed inset-0 z-40" onClick={() => setModelDropdownOpen(false)} />
               <div
-                className="absolute top-full left-0 mt-1 py-1 rounded-md z-50 min-w-[180px]"
+                className="absolute top-full left-0 mt-1 py-1 rounded-md z-50 min-w-[220px]"
                 style={{
                   backgroundColor: '#15151E',
                   border: '1px solid #2A2A3C',
@@ -85,24 +141,58 @@ export function TitleBar() {
                 }}
               >
                 <div className="px-3 py-1 text-[10px] uppercase tracking-wider" style={{ color: 'var(--steel-silver)' }}>
-                  Select Model
+                  Configured Engines
                 </div>
-                {models.map((model) => (
-                  <button
-                    key={model}
-                    className="w-full text-left px-3 py-1.5 text-[11px] transition-colors hover:bg-white/5 flex items-center gap-2"
-                    style={{ color: state.currentModel === model ? 'var(--siren-red)' : 'var(--bright-silver)' }}
-                    onClick={() => {
-                      setModel(model);
-                      setModelDropdownOpen(false);
-                    }}
-                  >
-                    {state.currentModel === model && (
-                      <div className="w-1 h-1 rounded-full" style={{ backgroundColor: 'var(--siren-red)' }} />
-                    )}
-                    {model}
-                  </button>
-                ))}
+                {engines.length === 0 && (
+                  <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--muted-silver)' }}>
+                    Loading engines…
+                  </div>
+                )}
+                {engines.map((engine) => {
+                  const isSelected = engine.available && (
+                    engine.activeModel === state.currentModel ||
+                    engine.name === state.currentModel ||
+                    (engine.id === preferredEngine && !engine.activeModel)
+                  );
+                  return (
+                    <button
+                      key={engine.id}
+                      className="w-full text-left px-3 py-1.5 text-[11px] transition-colors hover:bg-white/5 flex items-center gap-2"
+                      style={{
+                        color: isSelected ? 'var(--siren-red)' : (engine.available ? 'var(--bright-silver)' : 'var(--muted-silver)'),
+                        opacity: engine.available ? 1 : 0.5,
+                      }}
+                      disabled={!engine.available}
+                      onClick={() => {
+                        // Prefer the active model name, fall back to engine name.
+                        const chosen = engine.activeModel ?? engine.name;
+                        setModel(chosen);
+                        setModelDropdownOpen(false);
+                      }}
+                      title={engine.available ? undefined : 'Configure this engine in Settings → Models'}
+                    >
+                      {isSelected && (
+                        <div className="w-1 h-1 rounded-full" style={{ backgroundColor: 'var(--siren-red)' }} />
+                      )}
+                      <span className="flex-1 truncate">
+                        {engine.activeModel ?? engine.name}
+                      </span>
+                      {engine.id === 'stub' && (
+                        <span className="text-[9px] px-1 rounded" style={{ backgroundColor: '#2A2A3C', color: 'var(--muted-silver)' }}>
+                          fallback
+                        </span>
+                      )}
+                      {!engine.available && engine.id !== 'stub' && (
+                        <span className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>
+                          unavailable
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+                <div className="px-3 py-1 mt-1 text-[10px] border-t" style={{ borderColor: '#2A2A3C', color: 'var(--muted-silver)' }}>
+                  Add API keys in Settings → Models
+                </div>
               </div>
             </>
           )}

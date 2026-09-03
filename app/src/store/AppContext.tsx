@@ -104,6 +104,14 @@ export type AppAction =
   | { type: 'TOGGLE_SETTINGS' }
   | { type: 'SET_ACTIVE_TERMINAL'; payload: string }
   | { type: 'ADD_TERMINAL_LINE'; payload: { sessionId: string; line: TerminalSession['history'][0] } }
+  // D10 #1 closeout — replace the hardcoded sampleAgents roster with real
+  // server-derived agent status. Dispatched by:
+  //   - the new fetchAgents() effect in AppProvider (calls api.listAgents()
+  //     after login)
+  //   - the new agent:status WS event listener (updates a single agent's
+  //     status without refetching the whole list)
+  | { type: 'SET_AGENTS'; payload: Agent[] }
+  | { type: 'UPDATE_AGENT_STATUS'; payload: { agentId: string; status: Agent['status'] } }
   | { type: 'LOGIN'; payload: { token: string; user: AuthUser } }
   | { type: 'LOGOUT' }
   | { type: 'AUTH_READY' }
@@ -132,9 +140,13 @@ export const initialState: AppState = {
   agents: sampleAgents,
 
   terminalSessions: sampleTerminalSessions,
-  activeTerminalId: 't1',
+  // D10 #2 closeout: with sampleTerminalSessions now empty, the activeTerminalId
+  // default is null instead of 't1' (which no longer exists). Terminal.tsx
+  // handles this gracefully — it shows the honest "Terminal unavailable"
+  // banner regardless of whether a session is active.
+  activeTerminalId: '',
 
-  ghostMode: 'approval',
+  ghostMode: 'approval-required',
   currentTheme: defaultTheme,
   currentModel: 'Ollama 3',
   isAIGenerating: false,
@@ -362,6 +374,29 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    // D10 #1 closeout — SET_AGENTS replaces the hardcoded sampleAgents roster
+    // with real server-derived agent data. The initial state still uses
+    // sampleAgents (so the UI has something to render before login), but
+    // after login the fetchAgents() effect dispatches SET_AGENTS with real
+    // data from GET /api/agents.
+    case 'SET_AGENTS':
+      return { ...state, agents: action.payload };
+
+    // D10 #1 closeout — UPDATE_AGENT_STATUS is dispatched by the agent:status
+    // WS event listener. Updates a single agent's status in-place without
+    // refetching the whole list. Maps the server's 'RUNNING'/'IDLE'/
+    // 'REVIEWING'/'ERROR'/'PAUSED' enum to the client's 'working'/'idle'/
+    // 'reviewing'/'debating' enum (see mapServerAgentStatus).
+    case 'UPDATE_AGENT_STATUS': {
+      const { agentId, status } = action.payload;
+      return {
+        ...state,
+        agents: state.agents.map((a) =>
+          a.id === agentId ? { ...a, status } : a
+        ),
+      };
+    }
+
     case 'LOGIN':
       return { ...state, authUser: action.payload.user, authToken: action.payload.token, authReady: true };
 
@@ -468,7 +503,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'CREATE_CHAT_SESSION', payload: { session } }), []);
   const addChatMessage = useCallback((sessionId: string, message: ChatMessage) =>
     dispatch({ type: 'ADD_CHAT_MESSAGE', payload: { sessionId, message } }), []);
-  const setGhostMode = useCallback((mode: GhostMode) => dispatch({ type: 'SET_GHOST_MODE', payload: mode }), []);
+  // D10 #3 closeout — setGhostMode now ALSO calls POST /api/ghost-mode/level
+  // so the server's FSM actually transitions. Pre-closeout this only
+  // dispatched a local reducer action, so the dropdown was cosmetic-only —
+  // the server stayed at 'approval-required' (hardcoded at boot from
+  // index.ts:82) regardless of what the user picked. Now the server's
+  // ghostMode.setLevel() is called via the new /level endpoint, and the
+  // local reducer mirrors the server state for immediate UI feedback.
+  const setGhostMode = useCallback((mode: GhostMode) => {
+    dispatch({ type: 'SET_GHOST_MODE', payload: mode });
+    void api.setGhostModeLevel(mode).catch((error) =>
+      console.warn('[ghost-mode] setLevel failed:', error instanceof Error ? error.message : error)
+    );
+  }, []);
   const setTheme = useCallback((theme: ThemeName) => dispatch({ type: 'SET_THEME', payload: theme }), []);
   const setModel = useCallback((model: string) => dispatch({ type: 'SET_MODEL', payload: model }), []);
   const setAIGenerating = useCallback((generating: boolean) => dispatch({ type: 'SET_AI_GENERATING', payload: generating }), []);
@@ -482,6 +529,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setActiveTerminal = useCallback((id: string) => dispatch({ type: 'SET_ACTIVE_TERMINAL', payload: id }), []);
   const addTerminalLine = useCallback((sessionId: string, line: TerminalSession['history'][0]) =>
     dispatch({ type: 'ADD_TERMINAL_LINE', payload: { sessionId, line } }), []);
+  // D10 #1 closeout — fetchAgents() calls GET /api/agents (which already
+  // existed but was never called from anywhere in the UI) and dispatches
+  // SET_AGENTS with the real server-derived roster. Called once after login.
+  // Subsequent status changes are pushed via the agent:status WS event
+  // (see the WS listener registered in the same useEffect).
+  const fetchAgents = useCallback(() => {
+    void api.listAgents()
+      .then((response) => {
+        // Map server status enum to client status enum.
+        // Server: 'IDLE' | 'RUNNING' | 'REVIEWING' | 'ERROR' | 'PAUSED'
+        // Client: 'idle' | 'working' | 'reviewing' | 'debating'
+        const mapStatus = (serverStatus: string): Agent['status'] => {
+          if (serverStatus === 'RUNNING') return 'working';
+          if (serverStatus === 'REVIEWING') return 'reviewing';
+          if (serverStatus === 'PAUSED' || serverStatus === 'ERROR') return 'debating';
+          return 'idle';  // 'IDLE' or unknown
+        };
+        const agents: Agent[] = response.agents.map((a) => ({
+          id: a.id,
+          name: a.name,
+          role: a.domain,  // server exposes `domain` as the role-like tag
+          specialization: a.domain,  // server doesn't expose specialization — reuse domain
+          trustScore: a.trustScore,
+          status: mapStatus(a.status),
+          currentTask: a.status === 'RUNNING' ? 'Working' : undefined,
+          icon: a.icon,
+          color: a.color,
+        }));
+        dispatch({ type: 'SET_AGENTS', payload: agents });
+      })
+      .catch((error) => console.warn('[agents] listAgents failed:', error instanceof Error ? error.message : error));
+  }, []);
   const updateChatMessage = useCallback((sessionId: string, messageId: string, patch: Partial<ChatMessage>) =>
     dispatch({ type: 'UPDATE_CHAT_MESSAGE', payload: { sessionId, messageId, patch } }), []);
   // Phase A — Monaco IDE Intelligence: replace the problems array.
@@ -501,9 +580,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .then((workspace) => {
         wsClient.connect(workspace.projectId);
         loadWorkspaceFiles();
+        // D10 #1 closeout — fetch real agent roster from /api/agents after
+        // login. Replaces the hardcoded sampleAgents with real server data.
+        fetchAgents();
       })
       .catch(() => wsClient.connect());
-  }, [loadWorkspaceFiles]);
+  }, [fetchAgents, loadWorkspaceFiles]);
 
   const logout = useCallback(() => {
     clearAuth();
@@ -520,6 +602,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         .then((workspace) => {
           wsClient.connect(workspace.projectId);
           loadWorkspaceFiles();
+          // D10 #1 closeout — fetch real agent roster on mount when already
+          // authenticated (covers page refresh).
+          fetchAgents();
         })
         .catch(() => wsClient.connect());
       dispatch({ type: 'AUTH_READY' });
@@ -542,7 +627,51 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         console.warn('[auth] auto-login failed:', err.message);
         dispatch({ type: 'AUTH_READY' });
       });
-  }, [loadWorkspaceFiles, login, state.authToken, state.authUser]);
+  }, [fetchAgents, loadWorkspaceFiles, login, state.authToken, state.authUser]);
+
+  // D10 #1 closeout — subscribe to agent:status WS events. The server
+  // broadcasts these on every agent state transition (RUNNING → IDLE etc.).
+  // The handler maps the server's status enum to the client's enum and
+  // dispatches UPDATE_AGENT_STATUS so the StatusBar/AgentPanel/Terminal
+  // agent-chat tab reflect the real server-side state in real time, instead
+  // of the hardcoded sampleAgents "working"/"reviewing" values.
+  useEffect(() => {
+    const unsubscribe = wsClient.on('agent:status', (event) => {
+      const payload = event.payload as { agentId: string; status: string };
+      if (!payload?.agentId || !payload?.status) return;
+      const mapStatus = (serverStatus: string): Agent['status'] => {
+        if (serverStatus === 'RUNNING') return 'working';
+        if (serverStatus === 'REVIEWING') return 'reviewing';
+        if (serverStatus === 'PAUSED' || serverStatus === 'ERROR') return 'debating';
+        return 'idle';
+      };
+      dispatch({
+        type: 'UPDATE_AGENT_STATUS',
+        payload: { agentId: payload.agentId, status: mapStatus(payload.status) },
+      });
+    });
+    return unsubscribe;
+  }, []);
+
+  // D10 #3 closeout — sync the ghost mode level from the server on mount.
+  // The server may have been started with a different default level (or
+  // another client may have changed it), so we fetch the real current level
+  // and dispatch SET_GHOST_MODE to align the local reducer with the server.
+  // Without this, the StatusBar dropdown would show the client's default
+  // ('approval-required') even if the server was actually running at
+  // 'observation-only' or 'autonomous'.
+  useEffect(() => {
+    if (!state.authToken) return;
+    void api.getGhostModeLevel()
+      .then((response) => {
+        if (response?.level) {
+          dispatch({ type: 'SET_GHOST_MODE', payload: response.level as GhostMode });
+        }
+      })
+      .catch((error) =>
+        console.warn('[ghost-mode] getLevel failed:', error instanceof Error ? error.message : error)
+      );
+  }, [state.authToken]);
 
   return (
     <AppContext.Provider

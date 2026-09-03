@@ -16,14 +16,19 @@ import {
   Loader2,
 } from 'lucide-react';
 
+// D10 #3 closeout — GhostMode client strings now match the server's
+// GhostModeLevel enum ('observation-only', 'approval-required',
+// 'auto-amend', 'autonomous'). The dropdown now calls the real
+// POST /api/ghost-mode/level endpoint instead of dispatching a local
+// reducer action that the server never sees.
 const ghostModeConfig: Record<GhostMode, { icon: LucideIcon; label: string; color: string; description: string }> = {
-  observation: { icon: Eye, label: 'Observation', color: '#8A8AA0', description: 'AI monitors and reports only' },
-  approval: { icon: CheckCircle, label: 'Approval', color: '#F59E0B', description: 'AI prepares fixes, waits for approval' },
-  auto: { icon: Zap, label: 'Auto-Amend', color: '#F97316', description: 'AI applies safe improvements silently' },
-  autonomous: { icon: Flame, label: 'Autonomous', color: '#EE1C1C', description: 'Full AI autonomy with notifications' },
+  'observation-only': { icon: Eye, label: 'Observation', color: '#8A8AA0', description: 'AI monitors and reports only' },
+  'approval-required': { icon: CheckCircle, label: 'Approval', color: '#F59E0B', description: 'AI prepares fixes, waits for approval' },
+  'auto-amend': { icon: Zap, label: 'Auto-Amend', color: '#F97316', description: 'AI applies safe improvements silently' },
+  'autonomous': { icon: Flame, label: 'Autonomous', color: '#EE1C1C', description: 'Full AI autonomy with notifications' },
 };
 
-const ghostModes: GhostMode[] = ['observation', 'approval', 'auto', 'autonomous'];
+const ghostModes: GhostMode[] = ['observation-only', 'approval-required', 'auto-amend', 'autonomous'];
 
 export function StatusBar() {
   const { state, setGhostMode, setTheme } = useApp();

@@ -1002,3 +1002,89 @@ Stage Summary:
 - Phase 5 guarantees preserved: outcome (execution truth) and verificationStatus (verification truth) remain independent. Failed verification cannot become green (TEST F). Unverified cannot become passed (TEST D). Completed execution does not imply verified execution (TEST D).
 - No duplicate architecture. No new runner. No new orchestration. No protected systems modified. Out-of-scope items (streamTier1Chat cleanup, context timeout, UI displays, voice/relay, workspace selector, editor sync) NOT touched.
 - Git push deferred until token is restored. User action: provide GitHub PAT, re-run `bash /home/z/my-project/setup-git.sh`, then `git push`.
+
+---
+Task ID: d10-d13-closeout
+Agent: main (super-z)
+Task: Close D10 (UX Truthfulness — 5 fake-state UI affordances) and D13 (code_interpreter stub masquerading as success). Once both are closed, declare the P0/P1/P2 remediation order closed, then open Universal Provider Router Phase 1 Section 0 investigation.
+
+Work Log:
+
+=== Setup ===
+- The session reset had wiped /home/z/my-project/extracted/code_siren. Re-cloned by:
+  - Restoring GitHub PAT to /home/z/my-project/.github-token (sandbox reset had wiped it).
+  - `bash /home/z/my-project/setup-git.sh` to restore ~/.git-credentials.
+  - `git fetch origin` + `git merge --ff-only origin/main` — pulled Manus's 24 commits (815498b on top of my Phase 6 0d5ee54) into the existing repo.
+- Reset accidental skill-file modifications (`git checkout -- skills/`).
+- Final state: clean working tree, HEAD=815498b, all 9 P*.md docs present.
+
+=== D13 closeout — code_interpreter stub returns success:false ===
+File changed: server/src/agents/_shared/tool-registry.ts
+- Pre-closeout: stub returned `{ success: true, content: "[step-2 stub] would execute:\n<code>\n(no real execution yet)" }` — masquerading as successful execution. CodeAct strategy at codeact.ts:131 then recorded `code_interpreter ok` in the trace, implying real execution.
+- Post-closeout: stub returns `{ success: false, content: "code_interpreter is unavailable — no real Python sidecar is wired through the security sandbox. ...", meta: { violation: 'unavailable', codePreview: code.slice(0,200) } }`. CodeAct now honestly records `code_interpreter failed`.
+- The tool is still globally registered (invocable through CodeAct/ReAct), but can no longer be mistaken for a successful execution.
+- Future phase: wire it to security/sandbox.ts (currently JS-only via isolated-vm) or a dedicated Python sidecar.
+
+=== D10 #5 closeout — "AI Meeting Room" honestly relabeled ===
+File changed: app/src/components/modals/AgentPanel.tsx
+- Pre-closeout: footer said "Agents collaborate in the AI Meeting Room for major decisions" (implying real deliberation); button labels "Open Meeting Room" / "Reconvene Meeting" / "Convening..."; status label "AI Meeting: Ready".
+- Post-closeout: footer says "Meeting simulation — deterministic proposals, no LLM calls. Useful for visualizing quorum, not real agent deliberation."; button labels "Run Meeting Simulation" / "Re-run Simulation" / "Running simulation..."; status label "Meeting Simulation: Ready".
+- The /api/agents/meeting route's existing honest comment ("No LLM call, no side effects; this is a UI demonstration") is now matched by the UI labels.
+
+=== D10 #2 closeout — fake terminal output no longer rendered ===
+Files changed: app/src/components/terminal/Terminal.tsx, app/src/store/demoData.ts, app/src/store/AppContext.tsx
+- Pre-closeout: sampleTerminalSessions in demoData.ts had 2 fabricated sessions (bash with `npm install`/`git status`/`npm run dev` outputs, node with `console.log` output). Terminal.tsx:227-249 rendered `activeSession?.history.map(...)` BELOW the red "Terminal unavailable" banner at lines 223-226 — directly contradicting P0_TERMINAL_TRUST_HARDENING.md's claim that "all visible generated command and build output" was removed.
+- Post-closeout:
+  - sampleTerminalSessions is now `[]` (empty array) — kept the export because AppContext initialState references it, future real PTY session will populate it.
+  - Terminal.tsx no longer declares `activeSession` (removed) and no longer renders `activeSession?.history.map(...)`. Only the honest banner + disabled input remain.
+  - AppContext initialState `activeTerminalId: 't1'` → `activeTerminalId: ''` (since 't1' no longer exists).
+  - The scroll-to-bottom useEffect is kept (deps changed from `activeSession?.history` to `state.activeTerminalId`) for the future real PTY session.
+
+=== D10 #1 closeout — UI agent badges wired to real /api/agents + WS events ===
+Files changed: app/src/store/AppContext.tsx
+- Pre-closeout: `agents: sampleAgents` (hardcoded initial state with 5 agents having `status: 'working'|'reviewing'` + fabricated `currentTask` strings). `listAgents()` existed in api.ts:83 but was never called. The `agent:status` WS event type existed in types.ts:184 but no listener updated `state.agents`. StatusBar/AgentPanel/Terminal-Agent-Chat tab all read from the static demo data.
+- Post-closeout:
+  - New actions: `SET_AGENTS` (replace entire roster), `UPDATE_AGENT_STATUS` (update single agent in-place).
+  - New `fetchAgents()` callback: calls `api.listAgents()`, maps server `RUNNING`/`IDLE`/`REVIEWING`/`ERROR`/`PAUSED` → client `working`/`idle`/`reviewing`/`debating`, dispatches `SET_AGENTS`.
+  - `fetchAgents()` called from both the login callback AND the auto-login useEffect (covers page refresh).
+  - New useEffect subscribes to `agent:status` WS events, dispatches `UPDATE_AGENT_STATUS` with the mapped status. Unsubscribes on unmount.
+  - Initial state still uses sampleAgents (so the UI renders before login), but the moment login completes the roster is replaced with real server data.
+
+=== D10 #4 closeout — TitleBar uses real /api/models/engines ===
+Files changed: app/src/components/layout/TitleBar.tsx (rewritten), app/src/lib/api.ts
+- Pre-closeout: TitleBar.tsx:6-14 hardcoded `const models = ['Ollama 3', 'Claude 3.5 Sonnet', 'GPT-4o', 'Gemini Pro', 'DeepSeek Coder', 'Llama 3.1', 'Mistral Large']`. TitleBar.tsx:54-60 showed "AI Online" with a permanently pulsing green dot regardless of whether any model provider was configured. ChatInput.tsx and SettingsModal.tsx already fetched /api/models/engines for real availability, but TitleBar ignored that data.
+- Post-closeout:
+  - TitleBar fetches `api.listEngines()` on mount, polls every 30s so the badge reflects provider config changes (e.g. user adds an API key in SettingsModal → badge turns green within 30s).
+  - Renders the real engine list (name + availability), excluding 'stub' from the "AI Online" determination.
+  - "AI Online" badge is now gated on `anyRealEngineAvailable`. When only the stub engine is available, the badge shows "AI Offline" (gray dot, no pulse).
+  - Dropdown shows real engines with their actual `activeModel` (or `name` if no active model), marks unavailable engines as disabled with "unavailable" tag, includes "Add API keys in Settings → Models" footer hint.
+  - api.ts adds `listEngines()` calling `request('/models/engines')`.
+
+=== D10 #3 closeout — Ghost Mode dropdown wired to real /api/ghost-mode/level ===
+Files changed: server/src/routes/ghost-mode.ts, app/src/types/index.ts, app/src/store/AppContext.tsx, app/src/components/layout/StatusBar.tsx, app/src/lib/api.ts
+- Pre-closeout: StatusBar.tsx:124-176 setGhostMode dispatched a local reducer action only. No /api/ghost-mode/level endpoint existed. Server FSM stayed at 'approval-required' (hardcoded at boot from index.ts:82) regardless of what the user picked. Client/server GhostModeLevel strings didn't even match: client used 'observation'|'approval'|'auto'|'autonomous'; server used 'observation-only'|'approval-required'|'auto-amend'|'autonomous'.
+- Post-closeout:
+  - server/routes/ghost-mode.ts: added `GET /api/ghost-mode/level` (returns `ghostMode.currentLevel`) and `POST /api/ghost-mode/level` (validates level is one of the 4 enum values, calls `ghostMode.setLevel(level)`, returns `{ level, previousLevel }`).
+  - app/types/index.ts: GhostMode type now matches server's GhostModeLevel enum 1:1 — `'observation-only' | 'approval-required' | 'auto-amend' | 'autonomous'`.
+  - app/store/AppContext.tsx: setGhostMode callback now ALSO calls `api.setGhostModeLevel(mode)` (not just dispatch). New useEffect syncs ghost mode from server on mount via `api.getGhostModeLevel()`.
+  - app/components/layout/StatusBar.tsx: ghostModeConfig keys + ghostModes array use the new aligned strings.
+  - app/lib/api.ts: added `setGhostModeLevel(level)` and `getGhostModeLevel()` calling the new endpoints.
+
+=== Tests added (25 new tests, all pass) ===
+- app/tests/d10-d13-closeout.test.ts (NEW, 17 tests): proves D10 #1, #2, #3, #4, #5 closeouts via source-text inspection (pattern from extension-claim-removal.test.ts). Strips both `//` line comments AND `{/* */}` JSX comments before checking for old patterns, so closeout comments mentioning the old behavior as historical reference don't false-positive.
+- server/tests/security/d10-d13-closeout.test.ts (NEW, 8 tests): proves D13 (code_interpreter returns success:false + meta.violation='unavailable') and D10 #3 (ghostMode.setLevel actually transitions the FSM, accepts all 4 enum values) via direct tool-registry + ghostMode singleton invocation.
+
+=== Regression verification ===
+TypeScript: server tsc --noEmit clean; app tsc -b clean.
+ESLint: app eslint . clean (0 errors, 0 warnings).
+grep-audit: PASS.
+Directive-required server regression (11 files: d10-d13-closeout, capability-aware-chat, change-transaction, impact-analysis, tenant-scope, workspace-service, egress-execution-policy, memory-route-scope, execution-truth, phase6-verification-pipeline, agent-manager): 79/79 PASS (14.62s).
+Broader regression (11 files including playwright-client): 115/115 PASS (83.27s) — playwright tests passed because the new D10 #3 navigation-refusal test was added separately; the pre-existing screenshot/scroll failures from prior sessions did NOT recur in this run (sandbox may have Chromium available now or the test selection avoided them).
+App suite: 17 files / 88 tests / 0 failures (20.92s) — was 16/71 before; my 17 new tests bring the total to 88.
+
+Stage Summary:
+- D10 (5 sub-items) + D13 (1 item) = 6 fixes total, all closed in code.
+- 25 new tests added (17 app + 8 server), all pass.
+- 0 regressions introduced — full directive-required regression suite (79 tests) + broader regression (115 tests) + app suite (88 tests) all green.
+- TypeScript + ESLint + grep-audit all clean.
+- P0/P1/P2 remediation order is now ready to be declared closed (next step).

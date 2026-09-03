@@ -237,34 +237,17 @@ export const sampleAgents: Agent[] = [
   { id: 'a20', name: 'Sentinel Agent', role: 'Core', specialization: 'Continuous ambient monitoring — reuses Ghost Mode FSM for life/ambient signals', trustScore: 70, status: 'idle', currentTask: undefined, icon: 'eye', color: '#8B5CF6' },
 ];
 
-export const sampleTerminalSessions: TerminalSession[] = [
-  {
-    id: 't1',
-    name: 'bash',
-    shell: 'bash',
-    isActive: true,
-    history: [
-      { id: 'tl1', type: 'system', content: 'Zero Two Terminal v4.0', timestamp: '10:30:00' },
-      { id: 'tl2', type: 'input', content: 'npm install @monaco-editor/react motion/react', timestamp: '10:30:15' },
-      { id: 'tl3', type: 'output', content: 'added 42 packages in 3.2s\n\n13 packages are looking for funding', timestamp: '10:30:18' },
-      { id: 'tl4', type: 'input', content: 'git status', timestamp: '10:31:00' },
-      { id: 'tl5', type: 'output', content: 'On branch main\nYour branch is up to date with origin/main.\n\nChanges not staged for commit:\n  modified: src/components/Header.tsx\n  modified: src/components/Button.tsx\n  modified: src/pages/Dashboard.tsx', timestamp: '10:31:01' },
-      { id: 'tl6', type: 'input', content: 'npm run dev', timestamp: '10:32:00' },
-      { id: 'tl7', type: 'output', content: 'VITE v5.0.0 ready in 420 ms\n\n  Local: http://localhost:5173/\n  Network: http://192.168.1.100:5173/', timestamp: '10:32:01' },
-    ],
-  },
-  {
-    id: 't2',
-    name: 'node',
-    shell: 'node',
-    isActive: false,
-    history: [
-      { id: 'tl8', type: 'system', content: 'Node.js v20.10.0', timestamp: '10:25:00' },
-      { id: 'tl9', type: 'input', content: 'console.log("Hello from Zero Two")', timestamp: '10:25:10' },
-      { id: 'tl10', type: 'output', content: 'Hello from Zero Two\nundefined', timestamp: '10:25:10' },
-    ],
-  },
-];
+// D10 #2 closeout: previously this exported two fabricated TerminalSession
+// entries (`t1` bash with fake `npm install`/`git status`/`npm run dev` output,
+// `t2` node with fake `console.log` output). Those fake outputs were rendered
+// in Terminal.tsx BELOW the honest "Terminal unavailable" banner, contradicting
+// P0_TERMINAL_TRUST_HARDENING.md's claim that all fake output was removed.
+//
+// Now the array is empty — Terminal.tsx renders only the honest banner.
+// The export is kept (rather than deleted) because AppContext initialState
+// references it, and a future real PTY session will populate this array
+// from the server.
+export const sampleTerminalSessions: TerminalSession[] = [];
 
 export const sampleEditorTabs: EditorTab[] = [
   { fileId: 'f17', fileName: 'App.tsx', language: 'typescript', isModified: false, isActive: true },

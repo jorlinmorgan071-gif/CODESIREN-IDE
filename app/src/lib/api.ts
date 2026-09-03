@@ -319,6 +319,46 @@ export const api = {
     return request('/orchestrator/settings');
   },
 
+  // D10 #4 closeout — listEngines() calls GET /api/models/engines (which
+  // already existed but was only called from ChatInput.tsx and
+  // SettingsModal.tsx). TitleBar now uses this same endpoint to render the
+  // real engine list + gate the "AI Online" badge on real availability,
+  // instead of hardcoding 7 model names and showing a perpetually pulsing
+  // green dot.
+  async listEngines(): Promise<{
+    engines: Array<{
+      id: string;
+      name: string;
+      available: boolean;
+      models?: string[];
+      activeModel?: string;
+      autoStart?: boolean;
+    }>;
+    preferredEngine: string;
+  }> {
+    return request('/models/engines');
+  },
+
+  // D10 #3 closeout — setGhostModeLevel() calls POST /api/ghost-mode/level
+  // so the server's GhostMode FSM actually transitions. Pre-closeout the
+  // StatusBar dropdown only dispatched a local reducer action — the server
+  // stayed at 'approval-required' regardless. Now the server's
+  // ghostMode.setLevel() is called via this endpoint.
+  async setGhostModeLevel(level: 'observation-only' | 'approval-required' | 'auto-amend' | 'autonomous'): Promise<{ level: string }> {
+    return request('/ghost-mode/level', {
+      method: 'POST',
+      body: JSON.stringify({ level }),
+    });
+  },
+
+  // D10 #3 closeout — getGhostModeLevel() calls GET /api/ghost-mode/level
+  // so the StatusBar can sync to the server's actual current level on mount
+  // (in case the server's level was changed by another client or by the
+  // boot-time hardcoded default).
+  async getGhostModeLevel(): Promise<{ level: string }> {
+    return request('/ghost-mode/level');
+  },
+
   // ── Phase E Build 2: Voice provider settings ───────────────────────────
   // Mirrors getOrchestratorSettings/setOrchestratorSettings pattern.
 

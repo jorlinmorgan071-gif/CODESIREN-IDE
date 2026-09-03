@@ -103,14 +103,27 @@ toolRegistry.register({
 
 toolRegistry.register({
   name: 'code_interpreter',
-  description: 'Execute a Python code block. Args: { "code": "print(2+2)" } — Step 2 stub returns the code echo; real Python sidecar comes in Step 6.',
+  description: 'Execute a Python code block. Args: { "code": "print(2+2)" } — Unavailable until a real Python sidecar is wired through the security sandbox. Returns success:false with meta.violation="unavailable" so callers cannot mistake it for successful execution.',
   async execute(args) {
     const code = String(args.code ?? '').trim();
     if (!code) return { name: 'code_interpreter', content: 'Missing "code" arg', success: false };
-    // Step 2 stub: echo the code with a fake stdout. Real Python sidecar
-    // (Security Sandbox, Node isolated-vm per PDF Module 12) lands in Step 6.
-    const fakeStdout = `[step-2 stub code_interpreter] would execute:\n${code}\n\n(no real execution yet — arrives with Security Sandbox in Step 6)`;
-    return { name: 'code_interpreter', content: fakeStdout, success: true };
+    // D13 closeout — until a real Python sidecar is wired through
+    // security/sandbox.ts (which currently executes JS via isolated-vm, not
+    // Python), the code_interpreter tool MUST return success:false with
+    // meta.violation='unavailable'. This prevents the tool from masquerading
+    // as a successful execution when invoked through CodeAct or ReAct.
+    //
+    // Pre-D13 the stub returned success:true with fabricated stdout like
+    // "[step-2 stub] would execute: ..." — that allowed codeact.ts:131 to
+    // record `code_interpreter ok` in the trace, implying real execution.
+    // Now the trace will honestly record `code_interpreter failed` and the
+    // model will see that the tool is unavailable, not that it succeeded.
+    return {
+      name: 'code_interpreter',
+      content: 'code_interpreter is unavailable — no real Python sidecar is wired through the security sandbox. A future phase must wire this to security/sandbox.ts (currently JS-only via isolated-vm) or to a dedicated Python sidecar.',
+      success: false,
+      meta: { violation: 'unavailable', codePreview: code.slice(0, 200) },
+    };
   },
 });
 

@@ -184,7 +184,7 @@ export function AgentPanel() {
             <div className="flex items-center gap-2">
               <Brain className="w-3.5 h-3.5" style={{ color: '#3B82F6' }} />
               <span className="text-[11px]" style={{ color: 'var(--steel-silver)' }}>
-                AI Meeting: {meetingLoading ? 'In session' : meeting ? 'Completed' : 'Ready'}
+                Meeting Simulation: {meetingLoading ? 'In session' : meeting ? 'Completed' : 'Ready'}
               </span>
             </div>
           </div>
@@ -358,7 +358,7 @@ export function AgentPanel() {
             <span className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
               {meeting
                 ? `Meeting ${meeting.meetingId} · ${new Date(meeting.completedAt).toLocaleTimeString()}`
-                : 'Agents collaborate in the AI Meeting Room for major decisions'}
+                : 'Meeting simulation — deterministic proposals, no LLM calls. Useful for visualizing quorum, not real agent deliberation.'}
             </span>
             {meetingError && (
               <div className="flex items-center gap-1.5 mr-2 text-[10px]" style={{ color: '#EE1C1C' }}>
@@ -378,12 +378,12 @@ export function AgentPanel() {
               {meetingLoading ? (
                 <>
                   <Loader2 className="w-3 h-3 animate-spin" />
-                  Convening...
+                  Running simulation...
                 </>
               ) : meeting ? (
-                'Reconvene Meeting'
+                'Re-run Simulation'
               ) : (
-                'Open Meeting Room'
+                'Run Meeting Simulation'
               )}
             </button>
           </div>

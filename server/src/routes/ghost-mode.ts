@@ -167,3 +167,45 @@ ghostModeRouter.get('/pending', requireAuth, (_req, res) => {
     note: 'Per-user pending list not implemented — UI should rely on ghost:plan WS events. This endpoint returns global state only.',
   });
 });
+
+// ── D10 #3 closeout — Ghost Mode level endpoints ─────────────────────────
+//
+// Pre-closeout the StatusBar Ghost Mode dropdown dispatched only a local
+// reducer action — the server stayed at 'approval-required' (hardcoded at
+// boot from index.ts:82) regardless of what the user picked. The client
+// GhostMode type also used short names ('observation'/'approval'/'auto'/
+// 'autonomous') that didn't match the server's GhostModeLevel enum
+// ('observation-only'/'approval-required'/'auto-amend'/'autonomous').
+//
+// These two new endpoints close that gap:
+//   GET  /api/ghost-mode/level — returns the server's current GhostModeLevel
+//   POST /api/ghost-mode/level — calls ghostMode.setLevel(level) to actually
+//                                 transition the server's FSM
+//
+// The client GhostMode type was updated to match the server's enum 1:1.
+
+const VALID_GHOST_MODE_LEVELS = ['observation-only', 'approval-required', 'auto-amend', 'autonomous'] as const;
+type ValidGhostModeLevel = typeof VALID_GHOST_MODE_LEVELS[number];
+
+function isGhostModeLevel(value: unknown): value is ValidGhostModeLevel {
+  return typeof value === 'string' && (VALID_GHOST_MODE_LEVELS as readonly string[]).includes(value);
+}
+
+ghostModeRouter.get('/level', requireAuth, (_req, res) => {
+  res.json({ level: ghostMode.currentLevel });
+});
+
+ghostModeRouter.post('/level', requireAuth, (req, res) => {
+  const requested = req.body?.level;
+  if (!isGhostModeLevel(requested)) {
+    res.status(400).json({
+      error: 'Invalid level — must be one of: observation-only, approval-required, auto-amend, autonomous',
+      received: typeof requested === 'string' ? requested : typeof requested,
+    });
+    return;
+  }
+  const previousLevel = ghostMode.currentLevel;
+  ghostMode.setLevel(requested);
+  console.log(`[ghost-mode] level changed by user ${req.user?.id}: ${previousLevel} → ${requested}`);
+  res.json({ level: ghostMode.currentLevel, previousLevel });
+});

@@ -83,7 +83,15 @@ export interface TerminalLine {
   timestamp: string;
 }
 
-export type GhostMode = 'observation' | 'approval' | 'auto' | 'autonomous';
+// D10 #3 closeout — GhostMode client type now ALIGNS with the server's
+// GhostModeLevel type (server/src/types.ts:266). Pre-closeout the client
+// used short names ('observation', 'approval', 'auto', 'autonomous') while
+// the server used full names ('observation-only', 'approval-required',
+// 'auto-amend', 'autonomous') — so the StatusBar dropdown's local reducer
+// dispatch could never have matched a server enum even if a /level endpoint
+// had existed. Now they match 1:1, and the new POST /api/ghost-mode/level
+// endpoint accepts these exact strings.
+export type GhostMode = 'observation-only' | 'approval-required' | 'auto-amend' | 'autonomous';
 
 export type ThemeName =
   | 'zero-two'
