@@ -1419,3 +1419,83 @@ Stage Summary:
 - Total Phase 1 scope: ~9 files, ~6 call-site migrations, ~2 new engine files, ~1 new registry file. (vs Direction C: 25+ files, 27 call sites.)
 
 Ready for user confirmation to open Phase 1 build under Direction A.
+
+---
+Task ID: upr-phase1-step1-pickengine-fix
+Agent: main (super-z)
+Task: UPR Phase 1 Step 1 — extend pickEngine() to actually consider Anthropic + Groq (the 5-line fix that makes 2 of the 5 registered engines reachable). Test: confirm both engines are actually selectable/callable, not just present in the switch. Live confirmation + commit + push.
+
+Work Log:
+
+=== Implementation (1 file, +38/-3) ===
+File: server/src/orchestration/model-router.ts
+- initOllama(): preferred-engine cascade now considers Anthropic after OpenRouter, and Groq after Anthropic. Pre-Step-1, with Ollama down + OPENROUTER_API_KEY unset, preferredEngine fell through to 'stub' even if ANTHROPIC_API_KEY was set. Now it falls to 'anthropic' or 'groq' depending on which keys are configured.
+- pickEngine(): preferred-engine match + fallback chain now both consider 'anthropic' and 'groq' in addition to 'ollama' and 'openrouter'. So even if preferredEngine is 'stub' (e.g. boot probe not yet completed), the fallback chain reaches a real LLM if any cloud key is configured.
+- Symmetric fallback in the catch block of initOllama (probe threw).
+- New policy: Ollama → OpenRouter → Anthropic → Groq → stub
+- Old policy: Ollama → OpenRouter → stub (Anthropic + Groq silently unreachable)
+
+=== Tests (7 new tests in tests/unit/upr-phase1-step1-pickengine.test.ts) ===
+Method: vi.spyOn(global, 'fetch') installed BEFORE dynamic import of model-router.ts. The mock returns connection-refused for Ollama probes (forcing the preferred-engine cascade to fall through), and returns mocked SSE responses for api.anthropic.com and api.groq.com. This proves the routing actually reaches the right engine class AND that class's stream() actually executes — not just that the engine is in the Map.
+
+Tests prove engines are SELECTABLE + CALLABLE:
+  TEST A — pickEngine selects Anthropic (not stub) when only ANTHROPIC_API_KEY is set
+  TEST B — Groq is reachable and callable via req.engine override
+  TEST C — modelRouter.getPreferredEngine() returns "anthropic" (not "stub")
+  TEST D — getSelectedEngineId discloses Anthropic (not stub) for evidence
+  TEST E — modelRouter.stream(req) reaches Anthropic and produces real chunks
+  TEST F — pickEngine never returns stub when a cloud engine is configured
+  TEST G — stub engine still registered and reachable via req.engine (regression)
+
+Test logs confirm the fix is real:
+  [router] Ollama not available (connect ECONNREFUSED 127.0.0.1:11434), no OpenRouter key — using Anthropic as preferred engine
+  [router] engine=anthropic domain=ARCHITECT mode=single-shot agent=test-agent
+  [anthropic] streaming model=claude-sonnet-4-20250514 agent=test-agent mode=single-shot messages=1
+
+=== Local regression ===
+- upr-phase1-step1-pickengine.test.ts: 7/7 PASS
+- api-hub-engines.test.ts: all pass (existing engine tests still green)
+- Directive-required regression (16 files, 127 tests): 126/127 PASS
+  - The 1 failure was workflow-runner Test 2 (Write-capable step warning) —
+    timed out at 60s due to slow npm audit --dry-run call (sandbox-network
+    issue, not a Step 1 regression — model-router.ts was the only file touched).
+    Test 2 passes in isolation with a 41s runtime.
+- TypeScript: clean
+- ESLint: clean
+- grep-audit: clean
+
+=== CI status (commit a8a5c35) ===
+- App job: [success] all 11 steps green
+- Server job: [failure] — but the 7 failures are ALL pre-existing npm-registry
+  flakiness in security-agent.test.ts (6 tests) + workflow-runner.test.ts (1 test).
+  None are Step 1 regressions.
+- upr-phase1-step1-pickengine.test.ts: 7/7 PASS in CI (visible in log)
+- All other 68 server test files pass in CI (68/70 = 97%)
+
+=== Proof that the 7 CI failures are pre-existing flakiness, not Step 1 ===
+Cross-referenced CI history:
+  - 8b64ca9 (green, 9/3 12:00): same 8 tests passed (69/69 files green)
+  - 914f23e (worklog-only commit, 9/4 08:35): same 8 tests failed
+  - a8a5c35 (Step 1 commit, 9/4 09:36 first run + 09:53 rerun): same 7 tests
+    failed (devops-agent.verifyBuild passed on the rerun)
+- 914f23e changed ONLY worklog.md — no production code. If those 7 tests
+  failed on a worklog-only commit, they cannot be Step 1 regressions.
+- Root cause: the security-agent + devops-agent + workflow-runner test
+  fixtures run `npm install` and `npm audit --dry-run` in their beforeAll.
+  GitHub Actions runners have intermittent npm-registry slowness — when the
+  registry is slow, the 30s test-level timeout fires before npm install
+  completes, leaving empty node_modules, and the security scan returns 0
+  findings.
+
+=== Commit + push ===
+Commit: a8a5c35 — feat(router): UPR Phase 1 Step 1 — make Anthropic + Groq reachable through pickEngine()
+Pushed to origin/main.
+External collaborator also pushed d7a9dba (fix(orchestration): expose full tool contracts to agent strategies) — separate concern, doesn't touch model-router.ts.
+
+Stage Summary:
+- Step 1 fix is real and tested. 7 new tests prove the engines are actually selectable + callable, not just present.
+- CI shows 7 failures but they are pre-existing npm-registry flakiness — confirmed by the same failures appearing on the worklog-only commit 914f23e.
+- Step 1's own test file passes 7/7 in CI.
+- All other 68 server test files pass.
+- TypeScript + ESLint + grep-audit all clean.
+- Step 1 is genuinely complete. Ready for Step 2a (port BACKOFF_DELAYS_MS retry helper into shared _retry.ts).
