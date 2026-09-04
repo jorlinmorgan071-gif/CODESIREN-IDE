@@ -26,6 +26,17 @@ export interface Tool {
   execute(args: Record<string, unknown>): Promise<ToolResult>;
 }
 
+/**
+ * Render the callable tool contract for an agent prompt. Keep this formatter
+ * centralized so every execution strategy exposes the same truthful metadata.
+ * Tool descriptions are authored alongside their implementations and include
+ * argument guidance; no strategy should reduce them to names only.
+ */
+export function formatToolCatalog(tools: readonly Tool[]): string {
+  if (tools.length === 0) return '(none)';
+  return tools.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n');
+}
+
 class ToolRegistry {
   private tools = new Map<string, Tool>();
 

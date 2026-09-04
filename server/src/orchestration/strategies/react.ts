@@ -15,7 +15,7 @@
 import type { AgentChunk, AgentTask, RouterMessage } from '../../types.js';
 import type { InferenceEngine } from '../model-router.js';
 import { LoopGuard } from '../loop-guard.js';
-import { toolRegistry } from '../../agents/_shared/tool-registry.js';
+import { formatToolCatalog, toolRegistry } from '../../agents/_shared/tool-registry.js';
 import { addStep, incrementTurn, addToolResult, setOutcome } from '../../observability/traces.js';
 
 export interface ReactOpts {
@@ -39,21 +39,8 @@ export async function* runReact(
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
   const guard = new LoopGuard();
 
-  const tools = toolRegistry.list();
-  const toolList = tools.map((t) => t.name).join(', ');
-  const systemPrompt = `${opts.systemPrompt}
+  const systemPrompt = buildReactSystemPrompt(opts);
 
-You are running in ReAct mode. Available tools: ${toolList || '(none)'}.
-
-For each step, output:
-Thought: <your reasoning>
-Action: <tool_name>
-Action Input: <JSON arguments>
-
-After receiving an observation, continue reasoning.
-When you have the final answer, output:
-Thought: I now know the answer.
-Final Answer: <your answer>${opts.recalledMemory ?? ''}`;
 
   const history: RouterMessage[] = [
     { role: 'system', content: systemPrompt },
@@ -184,6 +171,27 @@ Final Answer: <your answer>${opts.recalledMemory ?? ''}`;
 }
 
 // ── Parsers (ported from donor's native_react.rs) ────────────────────────
+
+export function buildReactSystemPrompt(
+  opts: Pick<ReactOpts, 'systemPrompt' | 'recalledMemory'>,
+  tools = toolRegistry.list(),
+): string {
+  const toolList = formatToolCatalog(tools);
+  return `${opts.systemPrompt}
+
+You are running in ReAct mode. Available tools and their contracts:
+${toolList}
+
+For each step, output:
+Thought: <your reasoning>
+Action: <tool_name>
+Action Input: <JSON arguments>
+
+After receiving an observation, continue reasoning.
+When you have the final answer, output:
+Thought: I now know the answer.
+Final Answer: <your answer>${opts.recalledMemory ?? ''}`;
+}
 
 export function parseAction(text: string): [string, string] | null {
   const actionRe = /^Action:\s*(.+)$/m;

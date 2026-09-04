@@ -9,7 +9,7 @@
 import type { AgentChunk, AgentTask, RouterMessage } from '../../types.js';
 import type { InferenceEngine } from '../model-router.js';
 import { LoopGuard } from '../loop-guard.js';
-import { toolRegistry } from '../../agents/_shared/tool-registry.js';
+import { formatToolCatalog, toolRegistry } from '../../agents/_shared/tool-registry.js';
 import { addStep, incrementTurn, addToolResult, setOutcome } from '../../observability/traces.js';
 
 export interface CodeActOpts {
@@ -34,28 +34,8 @@ export async function* runCodeAct(
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
   const guard = new LoopGuard();
 
-  const tools = toolRegistry.list();
-  const toolList = tools.map((t) => t.name).join(', ');
-  const systemPrompt = `${opts.systemPrompt}
+    const systemPrompt = buildCodeActSystemPrompt(opts);
 
-You are running in CodeAct mode. You have access to tools: ${toolList || '(none)'}.
-
-## How to call a tool
-
-Action: <tool_name>
-Action Input: <json_arguments>
-
-You will receive the result, then continue.
-
-## How to run code
-
-You CAN write Python code in \`\`\`python blocks and it will be executed.
-Use this for computation, data processing, or when no specific tool fits.
-
-## Rules
-
-- If no tool or code is needed, respond directly with your answer.
-- Do NOT include <think> tags.${opts.recalledMemory ?? ''}`;
 
   const history: RouterMessage[] = [
     { role: 'system', content: systemPrompt },
@@ -203,6 +183,32 @@ Use this for computation, data processing, or when no specific tool fits.
 }
 
 // ── Parsers (ported from donor's native_openhands.rs) ────────────────────
+
+export function buildCodeActSystemPrompt(
+  opts: Pick<CodeActOpts, 'systemPrompt' | 'recalledMemory'>,
+  tools = toolRegistry.list(),
+): string {
+  const toolList = formatToolCatalog(tools);
+  return `${opts.systemPrompt}
+
+You are running in CodeAct mode. Available tools and their contracts:
+${toolList}
+
+## How to call a tool
+Action: <tool_name>
+Action Input: <json_arguments>
+
+You will receive the result, then continue.
+
+## How to run code
+You CAN write Python code in \`\`\`python blocks and it will be executed.
+Use this for computation, data processing, or when no specific tool fits.
+
+## Rules
+
+- If no tool or code is needed, respond directly with your answer.
+- Do NOT include <think> tags.${opts.recalledMemory ?? ''}`;
+}
 
 export function parseAction(text: string): [string, string] | null {
   const actionRe = /^Action:\s*(.+)$/gim;
