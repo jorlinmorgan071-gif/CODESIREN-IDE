@@ -273,18 +273,36 @@ class ModelRouter {
       } else if (config.OPENROUTER_API_KEY) {
         this.preferredEngine = 'openrouter';
         console.log(`[router] Ollama not available (${check.error}), using OpenRouter as preferred engine`);
+      } else if (config.ANTHROPIC_API_KEY) {
+        // UPR Phase 1 Step 1 — Anthropic was registered (constructor line 251)
+        // but unreachable through pickEngine() because the preferred-engine
+        // cascade only considered 'ollama' and 'openrouter'. Now reachable.
+        this.preferredEngine = 'anthropic';
+        console.log(`[router] Ollama not available (${check.error}), no OpenRouter key — using Anthropic as preferred engine`);
+      } else if (config.GROQ_API_KEY) {
+        // UPR Phase 1 Step 1 — same fix for Groq. Groq is free-tier-friendly
+        // so it's a sensible preferred engine when nothing else is available.
+        this.preferredEngine = 'groq';
+        console.log(`[router] Ollama not available (${check.error}), no OpenRouter/Anthropic keys — using Groq as preferred engine`);
       } else {
         this.preferredEngine = 'stub';
-        console.log(`[router] Ollama not available (${check.error}), no OpenRouter key — using stub engine`);
+        console.log(`[router] Ollama not available (${check.error}), no cloud keys — using stub engine`);
       }
     } catch (err: any) {
       console.log(`[router] Ollama check failed: ${err.message}`);
-      this.preferredEngine = config.OPENROUTER_API_KEY ? 'openrouter' : 'stub';
+      // Mirror the same fallback chain here for symmetry.
+      this.preferredEngine = config.OPENROUTER_API_KEY ? 'openrouter'
+        : (config.ANTHROPIC_API_KEY ? 'anthropic'
+          : (config.GROQ_API_KEY ? 'groq' : 'stub'));
     }
   }
 
   pickEngine(req: ModelRouterRequest): InferenceEngine {
-    // Policy: Ollama → OpenRouter → stub
+    // UPR Phase 1 Step 1 — Policy: Ollama → OpenRouter → Anthropic → Groq → stub
+    // Pre-Step-1: only Ollama + OpenRouter were reachable; Anthropic + Groq
+    // were registered (when API keys were set) but never selected. Now all
+    // four cloud/local engines are reachable through normal routing.
+    //
     // If Ollama hasn't been checked yet (cold start), try it first.
     // If it fails mid-stream, the OllamaEngine itself handles auto-start + error.
 
@@ -301,6 +319,13 @@ class ModelRouter {
     if (this.preferredEngine === 'openrouter' && this.engines.has('openrouter')) {
       return this.engines.get('openrouter')!;
     }
+    // UPR Phase 1 Step 1 — Anthropic + Groq now also reachable as preferred
+    if (this.preferredEngine === 'anthropic' && this.engines.has('anthropic')) {
+      return this.engines.get('anthropic')!;
+    }
+    if (this.preferredEngine === 'groq' && this.engines.has('groq')) {
+      return this.engines.get('groq')!;
+    }
 
     // Fallback: try Ollama first (it might have come online since startup)
     if (!this.ollamaChecked && this.engines.has('ollama')) {
@@ -310,6 +335,16 @@ class ModelRouter {
     // Then OpenRouter
     if (this.engines.has('openrouter')) {
       return this.engines.get('openrouter')!;
+    }
+
+    // UPR Phase 1 Step 1 — Anthropic + Groq now in the fallback chain too,
+    // so a per-call request that misses the preferred engine still gets a
+    // real LLM if any cloud key is configured.
+    if (this.engines.has('anthropic')) {
+      return this.engines.get('anthropic')!;
+    }
+    if (this.engines.has('groq')) {
+      return this.engines.get('groq')!;
     }
 
     // Last resort: stub
