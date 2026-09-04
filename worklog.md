@@ -1302,3 +1302,120 @@ Stage Summary:
 - Fixed by bumping the clean-fixture body-parser to the actually-patched 2.3.0 and updating one assertion's severity label from 'low' to 'moderate'.
 - CI on commit 8b64ca9 is now green. All 889 server tests + all app tests + typecheck + lint + build + grep-audit all pass.
 - 43fa30d (the older UUID-named commit from Aug 22) wasn't in the recent CI runs list — predates the CI workflow or wasn't built. Not a regression to fix.
+
+---
+Task ID: ledger-math-correction
+Agent: main (super-z)
+Task: User flagged that the "Combined D1-D17 ledger (17 investigations): 24 CLOSED + 8 PARTIAL + 0 OPEN" line is mathematically wrong — 24+8=32, not 17. Two granularities (D1's 16 sub-layers + D2-D17's 16 single items) were merged under one count.
+
+Work Log:
+- Located 3 occurrences of the misleading line in worklog.md (lines 1175, 1231, 1236).
+- The math itself is correct (24+8=32 tracked items, 0 OPEN) but the LABEL "17 investigations" is wrong — it conflates the top-level investigation count (17) with the tracked-item count (32).
+- Correct framing: D1 has 16 sub-layers (10 CLOSED + 6 PARTIAL), and D2-D17 are 16 single-item investigations (14 CLOSED + 2 PARTIAL). Combined: 32 tracked items across 17 top-level investigations.
+
+Correction (does not edit prior worklog entries — they are append-only historical record):
+
+  Combined D1-D17 ledger:
+    32 tracked items across 17 top-level investigations
+      (D1 expanded into its 16 sub-layers + D2-D17 as 16 single items)
+    24 CLOSED + 8 PARTIAL + 0 OPEN
+
+This matches the actual content:
+  D1's 16 layers: 10 CLOSED + 6 PARTIAL = 16
+  D2-D17's 16 items: 14 CLOSED + 2 PARTIAL = 16
+  Total: 24 CLOSED + 8 PARTIAL = 32 tracked items, 0 OPEN
+
+Stage Summary:
+- Ledger math was always correct (24+8=32, 0 OPEN) — only the LABEL "17 investigations" was wrong.
+- Correct label: "32 tracked items across 17 top-level investigations (D1 expanded into its 16 layers)".
+- No findings change. No verdicts change. The 8 PARTIAL items (6 from D1 + 2 from D2-D17) remain the same well-scoped stopgaps the UPR plan is designed to close.
+
+---
+Task ID: upr-phase1-caller-routing-map
+Agent: main (super-z)
+Task: User flagged two gaps before declaring Phase 1 open: (1) ledger math correction (32 tracked items across 17 top-level investigations, not "17 investigations" — D1 expanded into its 16 layers + D2-D17 as 16 single items), (2) the pre-build caller-mapping that tells us whether unification means extending OrchestratorEngine's retry/fallback into ModelRouter (Direction A) or the reverse (Direction B) or new unified router (Direction C).
+
+Work Log:
+
+=== Ledger math correction ===
+- 3 occurrences of the misleading "Combined D1-D17 ledger (17 investigations): 24 CLOSED + 8 PARTIAL + 0 OPEN" line found in worklog (lines 1175, 1231, 1236).
+- Math is correct (24+8=32, 0 OPEN). Only the LABEL "17 investigations" is wrong — conflates top-level count (17) with tracked-item count (32).
+- Correct framing appended to worklog: "32 tracked items across 17 top-level investigations (D1 expanded into its 16 layers + D2-D17 as 16 single items). 24 CLOSED + 8 PARTIAL + 0 OPEN."
+- No findings change. No verdicts change.
+
+=== Caller-routing-map (subagent agent-aac07bc0) ===
+
+Method: 1 subagent read every LLM-call site in the codebase, classified each by routing system, then produced the unification decision matrix.
+
+**Grand total: 27 call sites across 3 routing systems.**
+- ModelRouter: 16 sites (13 chat-stream + 1 embed + 2 metadata)
+- OrchestratorEngine: 6 sites (2 chat + 4 metadata)
+- z-ai SDK direct: 5 sites (1 vision + ASR + TTS + 2 function invocations)
+
+Plus 1 legacy dead surface (streamTier1Chat + tier1Model — Phase 1 should delete).
+
+Per-caller table (full version in subagent report) captures: file:line, purpose, routing system, engine-pick mechanism, streaming yes/no, retry yes/no, fallback yes/no, timeout value, evidence recording yes/no.
+
+=== Unification decision matrix ===
+
+| Criterion | Direction A (extend ModelRouter) | Direction B (promote OrchestratorEngine) | Direction C (new unified router) |
+|---|---|---|---|
+| Caller count affected | 6 sites | 18 sites | 27 sites (gradual via facades) |
+| Interface shape change | ModelRouter grows .chat() method; 2 relay-loop callers switch | OrchestratorEngine must accept ModelRouterRequest + yield ModelRouterChunk — 13 callers' for-await loops reshape | Clean-slate interface; both old routers become facades |
+| Migration complexity | Medium | High | High upfront → low end state |
+| Risk to working features | 3 hard-timeout HTTP endpoints conflict with 14s retry budget — mitigated by AbortSignal-aware retry | All Direction A risks × 13 callers; plus capabilityUnavailable flag becomes always-false; embed cache + padTo768 must be re-implemented | Lowest per-step risk (facade pattern), highest aggregate risk (must replicate every quirk 1:1) |
+| Preserves retry/fallback? | Yes — ported into engine classes | Yes — OrchestratorEngine keeps it | Yes — unified as router property |
+| Preserves per-engine variety? | Yes — 7 chat/embedding engines | Yes — 7 engines | Yes + extends (vision/ASR/TTS/functions first-class) |
+| Phase 1 build fit | Best — ModelRouter already has registerEngine/getPreferredEngine/recheckEngines/hasEngine/embed cache. ProviderRegistry is thin layer on top. | Worst — OrchestratorEngine has no registry, hardcoded switch, no extension point | Best architecturally, worst for Phase 1 scope (conflates "build registry" with "migrate every caller") |
+
+=== Recommendation: Direction A ===
+
+Grounded in caller-routing-map evidence:
+
+1. **The 2 gaps Phase 1 must close (§0 findings #1 and #10) are both ModelRouter-shaped.** Finding #1: Anthropic + Groq registered-but-unreachable through pickEngine. Finding #10: ModelRouter engines don't retry while OrchestratorEngine engines do. Both gaps live inside ModelRouter. Direction A closes both with edits confined to model-router.ts + engines/*.ts + 2 relay-loop caller sites.
+
+2. **The 13 ModelRouter chat-stream callers carry zero migration cost under Direction A.** Their AsyncGenerator<ModelRouterChunk> interface is preserved verbatim. Retry logic moves inside engine classes, invisible to callers.
+
+3. **OrchestratorEngine is the wrong shape to promote (Direction B indefensible).** buildEngine() is hardcoded switch with no extension point. No registerEngine, no embed, no per-agent override, no embedding cache, no recheckEngines. Promoting it requires rebuilding ModelRouter's machinery inside it. The 2-vs-13 caller-count asymmetry alone rules out Direction B.
+
+4. **Direction C is the right end state but wrong Phase 1 step.** Phase 1 deliverables (ProviderRegistry + Test & load models + settings-panel card) are registry-shaped, not router-shaped. They can be built on top of ModelRouter today without redesigning 27 call interfaces. Direction C's 27-site migration belongs in a later phase.
+
+5. **The 3 hard-timeout HTTP endpoints (/complete 3s, /explain 10s, /refactor 15s) are bounded risk under Direction A.** Conflict with 14s retry budget is mitigated by making engine retry respect caller's AbortSignal and cap retry at remaining time. Same fix, smaller blast radius than B or C.
+
+6. **The 5 z-ai SDK direct callers should stay separate in Phase 1.** They are vision/ASR/TTS/function-invocation, not chat completion. Phase 1 ProviderRegistry is for chat/embedding providers. Folding z-ai's non-chat APIs in is Phase 2+.
+
+=== Phase 1 under Direction A — files touched ===
+
+| File | Change |
+|---|---|
+| orchestration/model-router.ts | Extend pickEngine() to consider Anthropic + Groq (closes §0 #1). Add chat(req): Promise<string> method. Optionally add withRetry helper respecting AbortSignal. |
+| engines/ollama.ts, openrouter.ts (inside model-router.ts), anthropic.ts, groq.ts | Add 3× exponential backoff (2s, 4s, 8s) on 429/5xx/network errors, mirroring engine.ts:88-134. Respect caller's AbortSignal. |
+| engines/gemini-flash.ts, nvidia-nemotron.ts (new files) | Port the 2 OrchestratorEngine classes as InferenceEngine implementations. |
+| orchestrator/engine.ts | Either delete (preferred) or reduce to thin facade delegating to modelRouter.chat(). |
+| orchestrator/relay-loop.ts:95, :378, :106 | Switch engine.chat() → modelRouter.chat(). 3 site changes. |
+| routes/orchestrator.ts:420, :426, :438 | /settings engine validation/listing → reads from new ProviderRegistry. 3 site changes. |
+| routes/models.ts:116-152 | /api/models/engines → reads from ProviderRegistry. Drops phantom openai, adds missing groq, hits each provider's real models-list endpoint (closes §0 #5, #7). 1 endpoint rewrite. |
+| provider-registry.ts (new file) | Phase 1 deliverable: stores real model metadata (context window, output tokens, cost tier, free/paid, vision/tool-use capabilities, embedding dimensions). Closes §0 #6. |
+
+Total: ~9 files touched, ~6 call sites migrated, ~2 new engine files, ~1 new registry file. (Direction C would touch 25+ files, 27 call sites.)
+
+=== Phase 1 explicit non-goals (deferred to Phase 2+) ===
+- Migrate 5 z-ai SDK direct callers (vision, ASR, TTS, web_search, page_reader) into unified router
+- Delete streamTier1Chat + TIER1_MODELS + settings.tier1Model (dead in production)
+- Add per-engine timeout enforcement at router layer
+- Generalize per-agent model overrides from Ollama-only to all engines (§0 #4)
+- Replace stale hardcoded model IDs in pickModelForDomain (§0 #8)
+
+=== Recommended Phase 1 build order ===
+1. Extend pickEngine() in model-router.ts to actually consider anthropic + groq (closes §0 #1) — 5-line change, no caller-side impact, immediately makes 2 of 5 registered engines reachable.
+2. Port BACKOFF_DELAYS_MS retry helper from engine.ts:41-51 into shared orchestration/engines/_retry.ts, wire into 4 cloud engines (openrouter, anthropic, groq, ollama-for-5xx).
+3. Only after those land, build ProviderRegistry data model + "Test & load models" button + settings-panel card — they sit on top of a ModelRouter that already has the right engine-reachability and retry shape.
+
+Stage Summary:
+- Ledger math corrected: 32 tracked items across 17 top-level investigations (D1 expanded into its 16 layers + D2-D17 as 16 single items). 24 CLOSED + 8 PARTIAL + 0 OPEN.
+- Caller-routing-map complete: 27 call sites across 3 routing systems, classified by purpose/streaming/retry/fallback/timeout/evidence.
+- Unification recommendation: Direction A (extend ModelRouter, port OrchestratorEngine's retry/fallback into it, keep z-ai SDK direct separate for Phase 2+).
+- Phase 1 build order: (1) fix pickEngine reachability for Anthropic+Groq, (2) port retry helper, (3) build ProviderRegistry on top.
+- Total Phase 1 scope: ~9 files, ~6 call-site migrations, ~2 new engine files, ~1 new registry file. (vs Direction C: 25+ files, 27 call sites.)
+
+Ready for user confirmation to open Phase 1 build under Direction A.
