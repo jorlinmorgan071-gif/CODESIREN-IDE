@@ -510,6 +510,10 @@ orchestratorRouter.post('/complete', requireAuth, async (req, res) => {
       { role: 'system', content: COMPLETION_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
+    // UPR Phase 1 Step 2b — pass the AbortSignal so withRetry caps total
+    // retry time at the remaining budget. Without this, a 503 would retry
+    // for 2s+4s+8s=14s, silently extending past the 3s budget by 11s.
+    signal: abort.signal,
   } as any;
   const evidenceRun = startDirectEditorEvidence({
     action: 'completion',
@@ -611,6 +615,8 @@ orchestratorRouter.post('/explain', requireAuth, async (req, res) => {
       { role: 'system', content: EXPLAIN_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
+    // UPR Phase 1 Step 2b — pass the AbortSignal so withRetry caps at 10s budget.
+    signal: abort.signal,
   } as any;
   const evidenceRun = startDirectEditorEvidence({
     action: 'explain',
@@ -725,6 +731,8 @@ orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
+    // UPR Phase 1 Step 2b — pass the AbortSignal so withRetry caps at 15s budget.
+    signal: abort.signal,
   } as any;
   const evidenceRun = startDirectEditorEvidence({
     action: mode as DirectEditorAction,

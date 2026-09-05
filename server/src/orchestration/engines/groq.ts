@@ -65,7 +65,7 @@ export class GroqEngine implements InferenceEngine {
         }
         return { ok: true as const, value: r };
       },
-      { engineLabel: 'groq' },
+      { engineLabel: 'groq', signal: req.signal },
     );
 
     if (!retryResult.ok) {

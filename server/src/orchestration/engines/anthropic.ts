@@ -90,7 +90,7 @@ export class AnthropicEngine implements InferenceEngine {
         }
         return { ok: true as const, value: r };
       },
-      { engineLabel: 'anthropic' },
+      { engineLabel: 'anthropic', signal: req.signal },
     );
 
     if (!retryResult.ok) {

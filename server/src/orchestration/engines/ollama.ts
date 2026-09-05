@@ -253,7 +253,7 @@ export class OllamaEngine implements InferenceEngine {
         }
         return { ok: true as const, value: r };
       },
-      { engineLabel: 'ollama' },
+      { engineLabel: 'ollama', signal: req.signal },
     );
 
     if (!retryResult.ok) {

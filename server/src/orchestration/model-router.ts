@@ -183,7 +183,7 @@ class OpenRouterEngine implements InferenceEngine {
         }
         return { ok: true as const, value: r };
       },
-      { engineLabel: 'openrouter' },
+      { engineLabel: 'openrouter', signal: req.signal },
     );
 
     if (!retryResult.ok) {

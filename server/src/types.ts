@@ -351,6 +351,22 @@ export interface ModelRouterRequest {
   temperature?: number;
   maxTokens?: number;
   executionMode: ExecutionMode;
+  /**
+   * UPR Phase 1 Step 2b — optional AbortSignal for timeout enforcement.
+   *
+   * When supplied, engines pass this signal to withRetry(). The retry helper
+   * checks it before each backoff sleep AND before each attempt — if the
+   * signal aborts, retry stops immediately and returns the current failure.
+   *
+   * This prevents retry from silently extending past the caller's timeout
+   * budget (e.g. the 3s /complete budget). Without this signal, a 503 on
+   * /complete would retry for 2s+4s+8s=14s, blowing past the 3s cap by 11s.
+   *
+   * Callers that supply this signal (the lightweight HTTP endpoints:
+   * /complete, /explain, /refactor) must also clearTimeout() on their end
+   * AND check the signal in their for-await loop (existing behavior).
+   */
+  signal?: AbortSignal;
 }
 
 export interface RouterMessage {
