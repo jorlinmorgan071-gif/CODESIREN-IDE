@@ -1499,3 +1499,79 @@ Stage Summary:
 - All other 68 server test files pass.
 - TypeScript + ESLint + grep-audit all clean.
 - Step 1 is genuinely complete. Ready for Step 2a (port BACKOFF_DELAYS_MS retry helper into shared _retry.ts).
+
+---
+Task ID: upr-phase1-step2a-step2b-retry-timeout
+Agent: main (super-z)
+Task: UPR Phase 1 Step 2a (port BACKOFF_DELAYS_MS retry helper into shared _retry.ts, wire into 4 cloud engines, per-engine tests) + Step 2b (make retry respect caller's AbortSignal, cap at remaining time, test against /complete 3s + /explain 10s + /refactor 15s with exact elapsed time reported).
+
+Work Log:
+
+=== Step 2a — Shared retry helper (commit a9c41ca) ===
+Created: server/src/orchestration/engines/_retry.ts
+- BACKOFF_DELAYS_MS = [2_000, 4_000, 8_000], MAX_RETRIES = 3
+- isRetryableStatus(status): 429/500/502/503/504 → true; everything else → false
+- sleep(ms, signal?): AbortSignal-aware — rejects with AbortError if signal aborts during sleep
+- withRetry<T>(operation, opts): runs operation with retry + backoff. Returns RetryResult<T> — does NOT throw on exhausted retries (streaming engines yield error delta instead of breaking the generator). Signal-aware: checks before each attempt AND before each backoff sleep.
+
+Wired into 4 cloud engines:
+- AnthropicEngine (engines/anthropic.ts): withRetry wrapping fetch, preserves error body capture
+- GroqEngine (engines/groq.ts): same pattern
+- OllamaEngine (engines/ollama.ts): withRetry wrapping, preserves existing auto-start-on-connection-failure behavior; 5xx now also retries
+- OpenRouterEngine (inside model-router.ts): withRetry wrapping fetch + SSE parsing unchanged
+
+Tests: 18 new tests in tests/unit/upr-phase1-step2a-retry.test.ts
+Per-engine (NOT one representative standing in for all four):
+- AnthropicEngine: HAPPY PATH (1 fetch, no retry) + TRANSIENT-THEN-SUCCESS (503→200, 2 fetches) + EXHAUSTED (4×503, 4 fetches, error delta)
+- GroqEngine: same 3 scenarios (429→200, 4×429)
+- OpenRouterEngine: same 3 scenarios (502→200, 4×503)
+- OllamaEngine: same 3 scenarios (503→200, 4×503)
+- _retry.ts direct: isRetryableStatus truth table + 5 withRetry scenarios (happy, 503-retry-recovers, 401-no-retry, network-error-retry-recovers, exhausted-4-attempts)
+Tests use REAL BACKOFF_DELAYS_MS (2s/4s/8s) — total ~84s for the 6 exhausted-retry tests. Intentional: proves retry actually fires + timing matches the documented schedule.
+
+=== Step 2b — AbortSignal / timeout-cap (commit e1b518b) ===
+
+Problem: withRetry's schedule is 2s+4s+8s=14s total. The /complete endpoint has a 3s timeout. Without this fix, a transient 503 on /complete would cause retry to silently run for 14s — blowing past the 3s budget by 11s. Same class of masked-timing bug as the Ghost Mode cache staleness issue.
+
+Fix: plumb caller's AbortSignal through ModelRouterRequest.signal → engine → withRetry.
+
+Changes:
+- types.ts: added `signal?: AbortSignal` to ModelRouterRequest
+- anthropic.ts, groq.ts, ollama.ts, model-router.ts: withRetry opts now includes `signal: req.signal`
+- routes/orchestrator.ts: /complete, /explain, /refactor routerRequest now includes `signal: abort.signal`
+
+Tests: 5 new tests in tests/unit/upr-phase1-step2b-abortsignal-cap.test.ts
+Forces all-503s (always retry) against each endpoint + reports EXACT ELAPSED TIME:
+
+  /complete (3s budget):    elapsed: 3017ms  — capped at budget, NOT 14s ✓
+  /explain (10s budget):    elapsed: 10009ms — capped at budget, NOT 14s ✓
+  /refactor (15s budget):   elapsed: 14017ms — full 14s schedule (14s < 15s), proves cap SCALES per-caller ✓
+  Direct (already aborted):  elapsed: 1ms     — signal checked before first attempt ✓
+  Direct (abort during sleep): elapsed: 1002ms — abort fires during 2s backoff, retry stops immediately ✓
+
+WITHOUT the fix, all three endpoints would take ~14s. WITH the fix, /complete and /explain are capped at their budgets. /refactor completes the full schedule because its 15s budget > 14s retry total — proving the cap respects each caller's actual budget, not just the tightest one.
+
+=== Carried forward: npm-registry CI flakiness (tracked cleanup, NOT part of this directive) ===
+
+Issue: security-agent.test.ts (6 tests) + devops-agent.test.ts (1 test) + workflow-runner.test.ts (1 test) intermittently fail on GitHub Actions runners due to npm-registry slowness. The test fixtures run `npm install` and `npm audit --dry-run` in their beforeAll. When the npm registry is slow, the 30s test-level timeout fires before npm install completes, leaving empty node_modules. The security scan then returns 0 findings, failing the test assertions.
+
+Evidence this is pre-existing flakiness, NOT a Step 2a/2b regression:
+- 8b64ca9 (green baseline, 9/3 12:00): same 8 tests passed (69/69 files green)
+- 914f23e (worklog-only commit, 9/4 08:35): same 8 tests failed
+- a8a5c35 (Step 1 commit, 9/4 09:36): same 8 tests failed (Step 1's own tests 7/7 PASS)
+- a9c41ca (Step 2a commit): same pattern — Step 2a's own tests 18/18 PASS; the 8 npm-dependent tests are intermittent
+- e1b518b (Step 2b commit): expected same pattern
+
+Recommended fix (deferred — not part of this directive):
+- Pre-build the test fixtures as tarballs committed to the repo (like the security-agent fixture's node_modules pre-packed). This eliminates the `npm install` in beforeAll entirely.
+- OR extend the test-level timeout for these specific tests from 30s to 120s.
+- OR mock the `npm audit` call instead of running it live.
+
+This is tracked as a cleanup item — not urgent, not blocking Phase 1 progress.
+
+Stage Summary:
+- Step 2a complete: shared _retry.ts helper + 4 cloud engines wired + 18 per-engine tests (commit a9c41ca)
+- Step 2b complete: AbortSignal plumbed through ModelRouterRequest + 5 timing tests with exact elapsed evidence (commit e1b518b)
+- Both steps tested separately — Step 2a passing did NOT imply Step 2b was correct. The /complete 3s cap test specifically would have passed under Step 2a (because the for-await loop checks the signal) but would have taken 14s instead of 3s. The Step 2b test caught this by reporting exact elapsed time.
+- npm-registry CI flakiness logged as tracked cleanup item (not part of this directive).
+- Ready for Step 3 (ProviderRegistry + Test & load models + settings-panel card).
