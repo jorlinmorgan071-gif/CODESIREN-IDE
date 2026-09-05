@@ -14,6 +14,7 @@
 import type { EngineId, ModelRouterRequest, ModelRouterChunk, RouterMessage } from '../../types.js';
 import type { InferenceEngine } from '../model-router.js';
 import { config } from '../../config.js';
+import { withRetry } from './_retry.js';
 
 const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -67,26 +68,44 @@ export class AnthropicEngine implements InferenceEngine {
 
     console.log(`[anthropic] streaming model=${model} agent=${req.agentId} mode=${req.executionMode} messages=${anthropicMessages.length}`);
 
-    let res: Response;
-    try {
-      res = await fetch(ANTHROPIC_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': config.ANTHROPIC_API_KEY!,
-          'anthropic-version': ANTHROPIC_VERSION,
-        },
-        body: JSON.stringify(body),
-      });
-    } catch (err: any) {
-      yield { delta: `[anthropic] connection failed: ${err.message}`, done: false };
+    // UPR Phase 1 Step 2a — retry transient failures (429/5xx/network errors)
+    // via the shared withRetry helper. The signal is currently undefined —
+    // Step 2b will plumb the caller's AbortSignal through ModelRouterRequest.
+    let lastErrText = '(no response body)';
+    const retryResult = await withRetry(
+      async () => {
+        const r = await fetch(ANTHROPIC_BASE, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': config.ANTHROPIC_API_KEY!,
+            'anthropic-version': ANTHROPIC_VERSION,
+          },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          // Capture the error text for the final failure report
+          lastErrText = await r.text().catch(() => '(no response body)');
+          return { ok: false as const, status: r.status };
+        }
+        return { ok: true as const, value: r };
+      },
+      { engineLabel: 'anthropic' },
+    );
+
+    if (!retryResult.ok) {
+      if (retryResult.networkError) {
+        yield { delta: `[anthropic] connection failed: ${retryResult.networkError}`, done: false };
+      } else {
+        yield { delta: `[anthropic] error ${retryResult.status}: ${lastErrText.slice(0, 200)}`, done: false };
+      }
       yield { delta: '', done: true };
       return;
     }
 
-    if (!res.ok || !res.body) {
-      const errText = await res.text().catch(() => '(no response body)');
-      yield { delta: `[anthropic] error ${res.status}: ${errText.slice(0, 200)}`, done: false };
+    const res = retryResult.value;
+    if (!res.body) {
+      yield { delta: '[anthropic] error: no response body', done: false };
       yield { delta: '', done: true };
       return;
     }

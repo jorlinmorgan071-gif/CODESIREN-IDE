@@ -13,6 +13,7 @@ import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import { config } from '../../config.js';
 import type { EngineId, ModelRouterRequest, ModelRouterChunk, RouterMessage } from '../../types.js';
 import type { InferenceEngine } from '../model-router.js';
+import { withRetry } from './_retry.js';
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? 'http://localhost:11434';
 const OLLAMA_TIMEOUT = 5000; // 5s connection timeout
@@ -209,42 +210,67 @@ export class OllamaEngine implements InferenceEngine {
 
     console.log(`[ollama] streaming model=${model} agent=${req.agentId} mode=${req.executionMode} messages=${messages.length}`);
 
-    let response: Response;
-    try {
-      response = await fetch(`${OLLAMA_HOST}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-    } catch (err: any) {
-      // Connection failed — try auto-start
-      console.log(`[ollama] connection failed (${err.message}), attempting auto-start...`);
-      const startResult = await startOllamaServe();
-      if (!startResult.started) {
-        yield { delta: `[ollama] unavailable: ${startResult.error}`, done: false };
-        yield { delta: '', done: true };
-        return;
-      }
-      // Retry the request
-      try {
-        response = await fetch(`${OLLAMA_HOST}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-      } catch (err2: any) {
-        yield { delta: `[ollama] still unavailable after auto-start: ${err2.message}`, done: false };
-        yield { delta: '', done: true };
-        return;
-      }
-    }
+    // UPR Phase 1 Step 2a — wrap fetch with withRetry for 5xx retry.
+    // The existing auto-start-on-connection-failure behavior is preserved
+    // (the operation below catches connection errors and auto-starts Ollama
+    // before retrying the fetch).
+    let lastErrText = '';
+    const retryResult = await withRetry(
+      async () => {
+        let r: Response;
+        try {
+          r = await fetch(`${OLLAMA_HOST}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+        } catch (err: any) {
+          // Connection failed — try auto-start (existing behavior preserved)
+          console.log(`[ollama] connection failed (${err.message}), attempting auto-start...`);
+          const startResult = await startOllamaServe();
+          if (!startResult.started) {
+            // Auto-start failed — this is a non-retryable connection failure
+            // (not a transient HTTP error). Return as a 503-equivalent so
+            // withRetry treats it as retryable but bounded.
+            lastErrText = `unavailable: ${startResult.error}`;
+            return { ok: false as const, status: 503 };
+          }
+          try {
+            r = await fetch(`${OLLAMA_HOST}/api/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+          } catch (err2: any) {
+            lastErrText = `still unavailable after auto-start: ${err2.message}`;
+            return { ok: false as const, status: 503 };
+          }
+        }
 
-    if (!response.ok) {
-      const errText = await response.text();
-      yield { delta: `[ollama] error ${response.status}: ${errText.slice(0, 200)}`, done: false };
+        if (!r.ok) {
+          lastErrText = await r.text().catch(() => '(no response body)');
+          return { ok: false as const, status: r.status };
+        }
+        return { ok: true as const, value: r };
+      },
+      { engineLabel: 'ollama' },
+    );
+
+    if (!retryResult.ok) {
+      // Distinguish between connection-failure (auto-start didn't help) and
+      // genuine HTTP errors. For connection failures, the message is the
+      // auto-start error string; for HTTP errors, it's the response body.
+      const isConnectionFailure = lastErrText.startsWith('unavailable') || lastErrText.startsWith('still unavailable');
+      if (isConnectionFailure) {
+        yield { delta: `[ollama] ${lastErrText}`, done: false };
+      } else {
+        yield { delta: `[ollama] error ${retryResult.status}: ${lastErrText.slice(0, 200)}`, done: false };
+      }
       yield { delta: '', done: true };
       return;
     }
+
+    const response = retryResult.value;
 
     // Parse the NDJSON stream — Ollama sends one JSON object per line
     const reader = response.body!.getReader();

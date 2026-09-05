@@ -11,6 +11,7 @@
 import type { EngineId, ModelRouterRequest, ModelRouterChunk } from '../../types.js';
 import type { InferenceEngine } from '../model-router.js';
 import { config } from '../../config.js';
+import { withRetry } from './_retry.js';
 
 const GROQ_BASE = 'https://api.groq.com/openai/v1/chat/completions';
 
@@ -45,25 +46,41 @@ export class GroqEngine implements InferenceEngine {
 
     console.log(`[groq] streaming model=${model} agent=${req.agentId} mode=${req.executionMode} messages=${req.messages.length}`);
 
-    let res: Response;
-    try {
-      res = await fetch(GROQ_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.GROQ_API_KEY!}`,
-        },
-        body: JSON.stringify(body),
-      });
-    } catch (err: any) {
-      yield { delta: `[groq] connection failed: ${err.message}`, done: false };
+    // UPR Phase 1 Step 2a — retry transient failures (429/5xx/network errors)
+    // via the shared withRetry helper.
+    let lastErrText = '(no response body)';
+    const retryResult = await withRetry(
+      async () => {
+        const r = await fetch(GROQ_BASE, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.GROQ_API_KEY!}`,
+          },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          lastErrText = await r.text().catch(() => '(no response body)');
+          return { ok: false as const, status: r.status };
+        }
+        return { ok: true as const, value: r };
+      },
+      { engineLabel: 'groq' },
+    );
+
+    if (!retryResult.ok) {
+      if (retryResult.networkError) {
+        yield { delta: `[groq] connection failed: ${retryResult.networkError}`, done: false };
+      } else {
+        yield { delta: `[groq] error ${retryResult.status}: ${lastErrText.slice(0, 200)}`, done: false };
+      }
       yield { delta: '', done: true };
       return;
     }
 
-    if (!res.ok || !res.body) {
-      const errText = await res.text().catch(() => '(no response body)');
-      yield { delta: `[groq] error ${res.status}: ${errText.slice(0, 200)}`, done: false };
+    const res = retryResult.value;
+    if (!res.body) {
+      yield { delta: '[groq] error: no response body', done: false };
       yield { delta: '', done: true };
       return;
     }

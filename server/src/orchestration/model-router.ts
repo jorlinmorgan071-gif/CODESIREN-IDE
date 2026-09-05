@@ -13,6 +13,7 @@ import type { EngineId, ModelRouterRequest, ModelRouterChunk, RouterMessage } fr
 import { OllamaEngine, checkOllamaAvailable } from './engines/ollama.js';
 import { AnthropicEngine } from './engines/anthropic.js';
 import { GroqEngine } from './engines/groq.js';
+import { withRetry } from './engines/_retry.js';
 
 export interface InferenceEngine {
   id: EngineId;
@@ -155,22 +156,48 @@ class OpenRouterEngine implements InferenceEngine {
       max_tokens: req.maxTokens ?? 1024,
       stream: true,
     };
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.OPENROUTER_API_KEY}`,
-        'HTTP-Referer': 'https://code-siren.local',
-        'X-Title': 'Code Siren',
+
+    // UPR Phase 1 Step 2a — retry transient failures (429/5xx/network errors)
+    // via the shared withRetry helper. Pre-Step-2a this engine just yielded
+    // an error delta and terminated on any non-OK response.
+    let lastErrText = '(no response body)';
+    const retryResult = await withRetry(
+      async () => {
+        const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.OPENROUTER_API_KEY}`,
+            'HTTP-Referer': 'https://code-siren.local',
+            'X-Title': 'Code Siren',
+          },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          lastErrText = await r.text().catch(() => '(no response body)');
+          return { ok: false as const, status: r.status };
+        }
+        if (!r.body) {
+          // No body — treat as a non-retryable failure
+          return { ok: false as const, status: 500 };
+        }
+        return { ok: true as const, value: r };
       },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok || !res.body) {
-      yield { delta: `[router] OpenRouter error ${res.status}: ${await res.text()}`, done: false };
+      { engineLabel: 'openrouter' },
+    );
+
+    if (!retryResult.ok) {
+      if (retryResult.networkError) {
+        yield { delta: `[router] OpenRouter connection failed: ${retryResult.networkError}`, done: false };
+      } else {
+        yield { delta: `[router] OpenRouter error ${retryResult.status}: ${lastErrText.slice(0, 200)}`, done: false };
+      }
       yield { delta: '', done: true };
       return;
     }
-    const reader = res.body.getReader();
+
+    const res = retryResult.value;
+    const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     while (true) {
