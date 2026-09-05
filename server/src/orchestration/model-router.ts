@@ -7,6 +7,7 @@
 // Per directive Section 1: the donor project's local-runtime techniques become HOW
 // the `offline → Ollama` branch is *built* — not a second router living next to it.
 
+import { createHash } from 'node:crypto';
 import { config } from '../config.js';
 import type { EngineId, ModelRouterRequest, ModelRouterChunk, RouterMessage } from '../types.js';
 import { OllamaEngine, checkOllamaAvailable } from './engines/ollama.js';
@@ -207,7 +208,7 @@ function pickModelForDomain(domain: string): string {
     case 'SECURITY':
     case 'REVIEW':
     case 'PERFORMANCE':
-      return 'anthropic/claude-3.5-sonnet';
+      return 'anthropic/claude-sonnet-5';
     case 'FRONTEND':
     case 'BACKEND':
     case 'QA':
@@ -216,7 +217,7 @@ function pickModelForDomain(domain: string): string {
     case 'DEPLOYMENT':
       return 'openai/gpt-4o';
     default:
-      return 'anthropic/claude-3.5-sonnet';
+      return 'anthropic/claude-sonnet-5';
   }
 }
 
@@ -489,8 +490,7 @@ class ModelRouter {
    * for practical text inputs.
    */
   private hashText(text: string): string {
-    const crypto = require('node:crypto');
-    return crypto.createHash('sha256').update(text).digest('hex');
+    return createHash('sha256').update(text).digest('hex');
   }
 
   /** Phase A Section 8: clear the embed cache (for tests). */
