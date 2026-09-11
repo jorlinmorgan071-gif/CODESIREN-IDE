@@ -14,6 +14,8 @@ import type {
   VoiceProviderOption,
   KokoroVoiceOption,
   ElevenLabsVoiceOption,
+  ProviderEntry,
+  ProviderTestResult,
 } from '@/types';
 import { getToken, clearAuth } from './auth';
 import type { ChangeImpactAnalysis } from './change-impact';
@@ -357,6 +359,29 @@ export const api = {
   // boot-time hardcoded default).
   async getGhostModeLevel(): Promise<{ level: string }> {
     return request('/ghost-mode/level');
+  },
+
+  // ── UPR Phase 1 Step 3 — ProviderRegistry ──────────────────────────────
+  // The "Test & load models" action hits the real provider /models endpoint.
+  // On success, models[] is populated with real current data. On failure,
+  // lastError is set to a specific, visible error message.
+
+  async listProviders(): Promise<{ providers: ProviderEntry[] }> {
+    return request('/providers');
+  },
+
+  async testProvider(providerId: string, opts?: { apiKey?: string; apiUrl?: string }): Promise<ProviderTestResult> {
+    return request(`/providers/${providerId}/test`, {
+      method: 'POST',
+      body: JSON.stringify(opts ?? {}),
+    });
+  },
+
+  async updateProvider(providerId: string, patch: { apiUrl?: string; apiKey?: string }): Promise<{ provider: ProviderEntry }> {
+    return request(`/providers/${providerId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
   },
 
   // ── Phase E Build 2: Voice provider settings ───────────────────────────

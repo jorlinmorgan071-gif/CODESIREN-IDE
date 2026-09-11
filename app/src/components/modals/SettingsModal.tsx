@@ -2,8 +2,9 @@ import type { LucideIcon } from "lucide-react";
 import { useState, useEffect } from 'react';
 import { useApp } from '@/store/AppContext';
 import { motion, AnimatePresence } from 'motion/react';
-import type { ThemeName, VoiceSettings, VoiceProviderOption, KokoroVoiceOption, ElevenLabsVoiceOption } from '@/types';
+import type { ThemeName, VoiceSettings, VoiceProviderOption, KokoroVoiceOption, ElevenLabsVoiceOption, ProviderEntry } from '@/types';
 import { BubbleSettingsPanel } from './BubbleSettingsPanel';
+import { ProviderCard } from '@/components/settings/ProviderCard';
 import { themes } from '@/store/themes';
 import { api } from '@/lib/api';
 import {
@@ -88,6 +89,8 @@ export function SettingsModal() {
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [startingOllama, setStartingOllama] = useState(false);
   const [engines, setEngines] = useState<Array<{ id: string; name: string; available: boolean; models?: string[]; activeModel?: string }>>([]);
+  // UPR Phase 1 Step 3 — ProviderRegistry state
+  const [providers, setProviders] = useState<ProviderEntry[]>([]);
 
   const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -118,6 +121,16 @@ export function SettingsModal() {
       const data = await res.json();
       setEngines(data.engines ?? []);
     } catch { /* ignore */ }
+  };
+
+  // UPR Phase 1 Step 3 — fetch providers from the ProviderRegistry
+  const fetchProviders = async () => {
+    try {
+      const data = await api.listProviders();
+      setProviders(data.providers ?? []);
+    } catch (err) {
+      console.warn('[settings] provider list failed:', err instanceof Error ? err.message : err);
+    }
   };
 
   const startOllama = async () => {
@@ -158,7 +171,7 @@ export function SettingsModal() {
 
   useEffect(() => {
     if (state.settingsVisible && activeTab === 'models') {
-      const t = setTimeout(() => { fetchOllamaModels(); fetchEngines(); }, 0);
+      const t = setTimeout(() => { fetchOllamaModels(); fetchEngines(); fetchProviders(); }, 0);
       return () => clearTimeout(t);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -554,6 +567,31 @@ export function SettingsModal() {
                   )}
 
                   {/* ── Agent Relay + Orchestrator (directive Section 3) ───── */}
+                  {/* UPR Phase 1 Step 3 — ProviderRegistry cards (data-driven) */}
+                  <div>
+                    <h3 className="text-[12px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--steel-silver)' }}>
+                      Provider Registry (Test &amp; load models)
+                    </h3>
+                    <p className="text-[10px] mb-3" style={{ color: 'var(--muted-silver)' }}>
+                      Hit each provider's real /models endpoint to load current models + capability metadata.
+                    </p>
+                    <div className="space-y-3">
+                      {providers.map((provider) => (
+                        <ProviderCard
+                          key={provider.id}
+                          provider={provider}
+                          onUpdated={fetchProviders}
+                        />
+                      ))}
+                      {providers.length === 0 && (
+                        <div className="text-[11px] px-3 py-2" style={{ color: 'var(--muted-silver)' }}>
+                          Loading providers...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Agent Relay + Orchestrator */}
                   <div
                     className="p-4 rounded-lg"
                     style={{ backgroundColor: 'var(--surface-dark)', border: '1px solid var(--border-subtle)' }}

@@ -22,6 +22,7 @@ import { voiceRouter } from './routes/voice.js';
 import { sentinelRouter } from './routes/sentinel.js';
 import { presenceRouter } from './routes/presence.js';
 import { modelsRouter } from './routes/models.js';
+import { providersRouter } from './routes/providers.js';
 import { projectFilesRouter } from './routes/project-files.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { systemHealthRouter } from './routes/system-health.js';
@@ -145,6 +146,7 @@ async function main() {
   app.use('/api/sentinel', sentinelRouter);
   app.use('/api/presence', presenceRouter);
   app.use('/api/models', modelsRouter);
+  app.use('/api/providers', providersRouter);
   app.use('/api/project-files', projectFilesRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/system', systemHealthRouter);

@@ -351,3 +351,39 @@ export interface OrchestratorPlanSummary {
   createdAt: number;
   updatedAt: number;
 }
+
+// ── UPR Phase 1 Step 3 — ProviderRegistry types ──────────────────────────
+export interface ProviderModel {
+  id: string;
+  name: string;
+  contextWindow: number;
+  maxOutputTokens: number;
+  costTier: 'free' | 'freemium' | 'paid';
+  freeOrPaid: 'free' | 'paid';
+  supportsVision: boolean;
+  supportsToolUse: boolean;
+  pricingNote: string;
+}
+
+export interface ProviderEntry {
+  id: string;
+  category: 'llm';
+  displayName: string;
+  defaultApiUrl: string;
+  apiUrl: string;
+  apiKeyMasked: string;
+  apiKeyIsSet: boolean;
+  connectionTested: boolean;
+  models: ProviderModel[];
+  lastError: string | null;
+  lastLoadedAt: number | null;
+  modelCount: number;
+}
+
+export interface ProviderTestResult {
+  success: boolean;
+  provider: ProviderEntry;
+  modelsLoaded: number;
+  error: string | null;
+  durationMs: number;
+}
