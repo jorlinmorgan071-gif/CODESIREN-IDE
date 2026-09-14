@@ -335,7 +335,8 @@ class ModelRouter {
     // If it fails mid-stream, the OllamaEngine itself handles auto-start + error.
 
     // Check if the request has a specific engine preference (e.g. from the model picker)
-    const requestedEngine = (req as any).engine as EngineId | undefined;
+    // Fix #3: previously read via (req as any).engine — now properly typed on ModelRouterRequest
+    const requestedEngine = req.engine;
     if (requestedEngine && this.engines.has(requestedEngine)) {
       return this.engines.get(requestedEngine)!;
     }

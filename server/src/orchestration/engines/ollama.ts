@@ -11,7 +11,7 @@
 
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import { config } from '../../config.js';
-import type { EngineId, ModelRouterRequest, ModelRouterChunk, RouterMessage } from '../../types.js';
+import type { EngineId, ModelRouterRequest, ModelRouterChunk } from '../../types.js';
 import type { InferenceEngine } from '../model-router.js';
 import { withRetry } from './_retry.js';
 
@@ -61,6 +61,23 @@ export async function checkOllamaAvailable(): Promise<{ available: boolean; mode
  * Looks for the ollama binary in common locations.
  */
 export async function startOllamaServe(): Promise<{ started: boolean; error?: string }> {
+  // Fix #2 (MEDIUM): guard against orphan process on retry.
+  // If we already started ollama serve and the process is still alive,
+  // don't spawn another one (which would fail to bind port 11434 and
+  // orphan the first process reference).
+  if (ollamaServeProcess && !ollamaServeProcess.killed) {
+    // Check if it's actually responding — the process might be alive but hung
+    const check = await checkOllamaAvailable();
+    if (check.available) {
+      console.log('[ollama] serve already running — skipping spawn');
+      return { started: true };
+    }
+    // Process is alive but not responding — kill it and re-spawn
+    console.log('[ollama] previous serve process alive but not responding — killing and re-spawning');
+    try { ollamaServeProcess.kill('SIGTERM'); } catch { /* ignore */ }
+    ollamaServeProcess = null;
+  }
+
   // Find the ollama binary
   let ollamaBin = process.env.OLLAMA_BIN ?? 'ollama';
 
@@ -257,14 +274,23 @@ export class OllamaEngine implements InferenceEngine {
     );
 
     if (!retryResult.ok) {
-      // Distinguish between connection-failure (auto-start didn't help) and
-      // genuine HTTP errors. For connection failures, the message is the
-      // auto-start error string; for HTTP errors, it's the response body.
-      const isConnectionFailure = lastErrText.startsWith('unavailable') || lastErrText.startsWith('still unavailable');
-      if (isConnectionFailure) {
-        yield { delta: `[ollama] ${lastErrText}`, done: false };
+      // Fix #6: check networkError for symmetry with Anthropic/Groq.
+      // If withRetry caught a network-level error (not an HTTP status code),
+      // surface it directly. Currently unreachable because the Ollama operation
+      // wraps all fetch throws in its own try/catch, but this guards against
+      // future refactors that remove that inner try/catch.
+      if (retryResult.networkError) {
+        yield { delta: `[ollama] connection failed: ${retryResult.networkError}`, done: false };
       } else {
-        yield { delta: `[ollama] error ${retryResult.status}: ${lastErrText.slice(0, 200)}`, done: false };
+        // Distinguish between connection-failure (auto-start didn't help) and
+        // genuine HTTP errors. For connection failures, the message is the
+        // auto-start error string; for HTTP errors, it's the response body.
+        const isConnectionFailure = lastErrText.startsWith('unavailable') || lastErrText.startsWith('still unavailable');
+        if (isConnectionFailure) {
+          yield { delta: `[ollama] ${lastErrText}`, done: false };
+        } else {
+          yield { delta: `[ollama] error ${retryResult.status}: ${lastErrText.slice(0, 200)}`, done: false };
+        }
       }
       yield { delta: '', done: true };
       return;
@@ -272,8 +298,17 @@ export class OllamaEngine implements InferenceEngine {
 
     const response = retryResult.value;
 
+    // Fix #1 (HIGH): null-body guard — Ollama could return 200 with empty body
+    // (unlike Anthropic/Groq which already guard this). Without this guard,
+    // response.body!.getReader() would throw TypeError on null body.
+    if (!response.body) {
+      yield { delta: '[ollama] error: no response body', done: false };
+      yield { delta: '', done: true };
+      return;
+    }
+
     // Parse the NDJSON stream — Ollama sends one JSON object per line
-    const reader = response.body!.getReader();
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 

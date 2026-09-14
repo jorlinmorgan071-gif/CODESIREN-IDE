@@ -566,7 +566,6 @@ export function SettingsModal() {
                     </div>
                   )}
 
-                  {/* ── Agent Relay + Orchestrator (directive Section 3) ───── */}
                   {/* UPR Phase 1 Step 3 — ProviderRegistry cards (data-driven) */}
                   <div>
                     <h3 className="text-[12px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--steel-silver)' }}>

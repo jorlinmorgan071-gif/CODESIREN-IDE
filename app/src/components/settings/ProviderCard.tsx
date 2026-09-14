@@ -37,6 +37,11 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
     if (provider.models.length > 0 && !selectedModel) {
       setSelectedModel(provider.models[0].id);
     }
+    // Fix #10: reset selectedModel if it's no longer in the models list
+    // (e.g., after a re-test where the provider removed a model)
+    if (selectedModel && provider.models.length > 0 && !provider.models.find((m) => m.id === selectedModel)) {
+      setSelectedModel(provider.models[0].id);
+    }
   }, [provider.models, selectedModel]);
 
   const handleTest = async () => {

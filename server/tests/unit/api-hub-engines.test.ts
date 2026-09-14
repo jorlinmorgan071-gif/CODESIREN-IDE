@@ -282,7 +282,6 @@ describe('registerEngine() public API', () => {
     // Select it via req.engine
     const req: ModelRouterRequest = {
       ...makeRequest(),
-      // @ts-expect-error — engine is not in the official ModelRouterRequest type
       engine: 'groq',
     };
 

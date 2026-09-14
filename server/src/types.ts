@@ -367,6 +367,14 @@ export interface ModelRouterRequest {
    * AND check the signal in their for-await loop (existing behavior).
    */
   signal?: AbortSignal;
+
+  /**
+   * Optional engine override — when set, pickEngine() uses this engine
+   * instead of the preferred-engine cascade. Used by tests + the model
+   * picker. Pre-Phase-1 this was read via `(req as any).engine` which
+   * bypassed the type system. Now it's properly typed.
+   */
+  engine?: EngineId;
 }
 
 export interface RouterMessage {

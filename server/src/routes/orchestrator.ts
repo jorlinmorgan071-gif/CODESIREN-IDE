@@ -28,6 +28,7 @@ import { getPlan, listPlansByProject, listMilestoneLogs, updatePlan } from '../o
 import { runChatViaAgentManager } from '../orchestrator/tier1-chat.js';
 import { selectNormalChatCapability } from '../orchestrator/normal-chat-capabilities.js';
 import { modelRouter } from '../orchestration/model-router.js';
+import type { ModelRouterRequest } from '../types.js';
 import { startDirectEditorEvidence, type DirectEditorAction } from '../orchestrator/direct-editor-evidence.js';
 import { ProjectAccessError, SessionAccessError, ensureOwnedSession, resolveTenantScope } from '../tenancy/scope.js';
 import { WorkspaceAccessError, resolveWorkspace, workspaceRelativePath } from '../workspace/service.js';
@@ -514,7 +515,7 @@ orchestratorRouter.post('/complete', requireAuth, async (req, res) => {
     // retry time at the remaining budget. Without this, a 503 would retry
     // for 2s+4s+8s=14s, silently extending past the 3s budget by 11s.
     signal: abort.signal,
-  } as any;
+  } as ModelRouterRequest;
   const evidenceRun = startDirectEditorEvidence({
     action: 'completion',
     scope,
@@ -617,7 +618,7 @@ orchestratorRouter.post('/explain', requireAuth, async (req, res) => {
     ],
     // UPR Phase 1 Step 2b — pass the AbortSignal so withRetry caps at 10s budget.
     signal: abort.signal,
-  } as any;
+  } as ModelRouterRequest;
   const evidenceRun = startDirectEditorEvidence({
     action: 'explain',
     scope,
@@ -733,7 +734,7 @@ orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
     ],
     // UPR Phase 1 Step 2b — pass the AbortSignal so withRetry caps at 15s budget.
     signal: abort.signal,
-  } as any;
+  } as ModelRouterRequest;
   const evidenceRun = startDirectEditorEvidence({
     action: mode as DirectEditorAction,
     scope,
