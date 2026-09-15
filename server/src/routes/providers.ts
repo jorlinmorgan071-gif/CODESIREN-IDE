@@ -12,8 +12,8 @@
 
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
-import { listProviders, getProvider, updateProviderConfig, testAndLoadModels, selectVoice, resetProvider } from '../provider-registry/registry.js';
-import type { ProviderRegistryEntry } from '../provider-registry/types.js';
+import { listProviders, getProvider, updateProviderConfig, testAndLoadModels, selectVoice, resetProvider, onboardCustomProvider, classifyProvider } from '../provider-registry/registry.js';
+import type { ProviderRegistryEntry, ProviderCategory } from '../provider-registry/types.js';
 
 export const providersRouter = Router();
 
@@ -154,4 +154,42 @@ providersRouter.post('/:id/select-voice', requireAuth, async (req, res) => {
 
   const updated = getProvider(providerId)!;
   res.json({ success: true, provider: serializeProvider(updated) });
+});
+
+// POST /api/providers/onboard — onboard a custom provider
+// Body: { displayName, apiUrl, apiKey?, whatDoesItDo }
+// The whatDoesItDo field is classified into a category via classifyProvider().
+// For TTS providers, apiUrl may be empty (skipped per spec).
+providersRouter.post('/onboard', requireAuth, (req, res) => {
+  const { displayName, apiUrl, apiKey, whatDoesItDo } = req.body ?? {};
+
+  if (typeof displayName !== 'string' || !displayName.trim()) {
+    res.status(400).json({ error: 'Missing displayName' });
+    return;
+  }
+  if (!['generate-text', 'generate-speech', 'execute-tools', 'generate-images'].includes(whatDoesItDo)) {
+    res.status(400).json({ error: 'Invalid whatDoesItDo — must be one of: generate-text, generate-speech, execute-tools, generate-images' });
+    return;
+  }
+
+  // Classify the provider into a category
+  const category = classifyProvider({ whatDoesItDo });
+
+  // TTS providers may skip the URL (per spec)
+  const finalApiUrl = typeof apiUrl === 'string' ? apiUrl : '';
+
+  // Onboard the custom provider
+  const entry = onboardCustomProvider({
+    displayName: displayName.trim(),
+    category,
+    apiUrl: finalApiUrl,
+    apiKey: typeof apiKey === 'string' ? apiKey : '',
+  });
+
+  res.status(201).json({
+    success: true,
+    provider: serializeProvider(entry),
+    category,
+    message: `Custom provider "${displayName}" onboarded as ${category}. It now appears in the provider list and can be tested/loaded like any preset provider.`,
+  });
 });

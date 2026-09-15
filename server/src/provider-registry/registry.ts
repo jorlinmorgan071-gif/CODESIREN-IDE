@@ -15,7 +15,7 @@
 // visible error message — NOT a silent empty dropdown.
 
 import { config } from '../config.js';
-import type { ProviderRegistryEntry, ProviderModel, ProviderVoice, ProviderTool, ProviderImageModel, TestAndLoadResult, CostTier } from './types.js';
+import type { ProviderRegistryEntry, ProviderModel, ProviderVoice, ProviderTool, ProviderImageModel, TestAndLoadResult, CostTier, ProviderCategory } from './types.js';
 
 // ── Provider defaults ────────────────────────────────────────────────────
 // These are the seed values. The user can override apiUrl + apiKey via the
@@ -377,6 +377,69 @@ export function listProviders(): ProviderRegistryEntry[] {
 
 export function getProvider(id: string): ProviderRegistryEntry | undefined {
   return entries.get(id);
+}
+
+/**
+ * Phase 2 Step 2d — Onboard a custom provider into the registry.
+ *
+ * The caller supplies a URL (skip for TTS), optional API key, and a category
+ * (classified by the questionnaire). This function:
+ *   1. Generates a unique provider ID (custom-<category>-<timestamp>)
+ *   2. Creates a ProviderRegistryEntry with the supplied data
+ *   3. Inserts it into the registry — indistinguishable from a preset provider
+ *
+ * After onboarding, the custom provider behaves identically to a named one:
+ * it appears in listProviders(), can be tested/loaded, and its models/voices/
+ * tools/imageModels can be loaded via testAndLoadModels().
+ */
+export function onboardCustomProvider(opts: {
+  displayName: string;
+  category: ProviderCategory;
+  apiUrl: string;
+  apiKey?: string;
+}): ProviderRegistryEntry {
+  const id = `custom-${opts.category}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const entry: ProviderRegistryEntry = {
+    id,
+    category: opts.category,
+    displayName: opts.displayName,
+    defaultApiUrl: opts.apiUrl,
+    apiUrl: opts.apiUrl,
+    apiKey: opts.apiKey ?? '',
+    connectionTested: false,
+    models: [],
+    voices: [],
+    tools: [],
+    imageModels: [],
+    lastError: null,
+    lastLoadedAt: null,
+  };
+  entries.set(id, entry);
+  console.log(`[provider-registry] custom provider onboarded: ${id} (${opts.category}) — ${opts.displayName}`);
+  return entry;
+}
+
+/**
+ * Phase 2 Step 2d — Classify a provider into a category based on a short
+ * questionnaire. The questionnaire asks what the provider does, and the
+ * classifier maps the answers to one of the four categories.
+ *
+ * This is deliberately simple — not an LLM classification, just a rule-based
+ * mapping from the user's answers. The questionnaire is:
+ *   1. "What does this provider do?" → answers: 'generate-text' | 'generate-speech' | 'execute-tools' | 'generate-images'
+ *   2. "Does it require an API URL?" → boolean (TTS providers may not need one)
+ *
+ * The classification is deterministic and testable.
+ */
+export function classifyProvider(answers: {
+  whatDoesItDo: 'generate-text' | 'generate-speech' | 'execute-tools' | 'generate-images';
+}): ProviderCategory {
+  switch (answers.whatDoesItDo) {
+    case 'generate-text':   return 'llm';
+    case 'generate-speech': return 'tts';
+    case 'execute-tools':   return 'tool';
+    case 'generate-images': return 'image-video';
+  }
 }
 
 export function updateProviderConfig(id: string, patch: { apiUrl?: string; apiKey?: string }): ProviderRegistryEntry | undefined {

@@ -426,3 +426,18 @@ export interface ProviderTestResult {
   error: string | null;
   durationMs: number;
 }
+
+// ── UPR Phase 2 Step 2d — Custom provider onboarding ────────────────────
+export interface OnboardProviderRequest {
+  displayName: string;
+  apiUrl?: string;
+  apiKey?: string;
+  whatDoesItDo: 'generate-text' | 'generate-speech' | 'execute-tools' | 'generate-images';
+}
+
+export interface OnboardProviderResult {
+  success: boolean;
+  provider: ProviderEntry;
+  category: ProviderCategory;
+  message: string;
+}

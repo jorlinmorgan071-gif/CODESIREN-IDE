@@ -16,6 +16,7 @@ import type {
   ElevenLabsVoiceOption,
   ProviderEntry,
   ProviderTestResult,
+  OnboardProviderResult,
 } from '@/types';
 import { getToken, clearAuth } from './auth';
 import type { ChangeImpactAnalysis } from './change-impact';
@@ -389,6 +390,19 @@ export const api = {
     return request(`/providers/${providerId}/select-voice`, {
       method: 'POST',
       body: JSON.stringify({ voiceId }),
+    });
+  },
+
+  // UPR Phase 2 Step 2d — onboard a custom provider
+  async onboardProvider(opts: {
+    displayName: string;
+    apiUrl?: string;
+    apiKey?: string;
+    whatDoesItDo: 'generate-text' | 'generate-speech' | 'execute-tools' | 'generate-images';
+  }): Promise<OnboardProviderResult> {
+    return request('/providers/onboard', {
+      method: 'POST',
+      body: JSON.stringify(opts),
     });
   },
 
