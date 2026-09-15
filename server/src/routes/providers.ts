@@ -42,11 +42,13 @@ function serializeProvider(entry: ProviderRegistryEntry) {
     connectionTested: entry.connectionTested,
     models: entry.models,
     voices: entry.voices,
+    tools: entry.tools,
     selectedVoiceId: entry.selectedVoiceId,
     lastError: entry.lastError,
     lastLoadedAt: entry.lastLoadedAt,
     modelCount: entry.models.length,
     voiceCount: entry.voices.length,
+    toolCount: entry.tools.length,
   };
 }
 

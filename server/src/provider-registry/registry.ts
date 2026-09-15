@@ -15,7 +15,7 @@
 // visible error message — NOT a silent empty dropdown.
 
 import { config } from '../config.js';
-import type { ProviderRegistryEntry, ProviderModel, ProviderVoice, TestAndLoadResult, CostTier } from './types.js';
+import type { ProviderRegistryEntry, ProviderModel, ProviderVoice, ProviderTool, TestAndLoadResult, CostTier } from './types.js';
 
 // ── Provider defaults ────────────────────────────────────────────────────
 // These are the seed values. The user can override apiUrl + apiKey via the
@@ -37,6 +37,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -50,6 +51,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -67,6 +69,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -80,6 +83,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -93,6 +97,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -106,6 +111,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -119,6 +125,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -132,6 +139,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -145,6 +153,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -158,6 +167,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -171,6 +181,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -184,6 +195,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -197,6 +209,55 @@ function seedEntries(): ProviderRegistryEntry[] {
       connectionTested: false,
       models: [],
       voices: [],
+      tools: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    // ── Tool providers (Phase 2 Step 2b) ───────────────────────────────
+    // Built-in Code Siren tools — the "test & load" action inspects the live
+    // toolRegistry and returns the current tool catalog. No external API call
+    // needed — this is a local inventory.
+    {
+      id: 'code-siren-tools',
+      category: 'tool',
+      displayName: 'Code Siren Built-in Tools',
+      defaultApiUrl: '',
+      apiUrl: '',
+      apiKey: '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    // Tavily — web search API provider (external tool)
+    {
+      id: 'tavily',
+      category: 'tool',
+      displayName: 'Tavily (Web Search API)',
+      defaultApiUrl: 'https://api.tavily.com',
+      apiUrl: 'https://api.tavily.com',
+      apiKey: process.env.TAVILY_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    // Judge0 — code execution sandbox (external tool)
+    {
+      id: 'judge0',
+      category: 'tool',
+      displayName: 'Judge0 (Code Execution Sandbox)',
+      defaultApiUrl: 'https://judge0-ce.p.rapidapi.com',
+      apiUrl: 'https://judge0-ce.p.rapidapi.com',
+      apiKey: process.env.JUDGE0_API_KEY ?? process.env.RAPIDAPI_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -228,11 +289,12 @@ export function updateProviderConfig(id: string, patch: { apiUrl?: string; apiKe
   if (!entry) return undefined;
   if (patch.apiUrl !== undefined) entry.apiUrl = patch.apiUrl;
   if (patch.apiKey !== undefined) entry.apiKey = patch.apiKey;
-  // If config changed, mark as not-tested (models/voices are now stale)
+  // If config changed, mark as not-tested (models/voices/tools are now stale)
   if (patch.apiUrl !== undefined || patch.apiKey !== undefined) {
     entry.connectionTested = false;
     entry.models = [];
     entry.voices = [];
+    entry.tools = [];
     entry.selectedVoiceId = undefined;
     entry.lastError = null;
     entry.lastLoadedAt = null;
@@ -251,6 +313,7 @@ export function resetProvider(id: string): void {
   entry.connectionTested = false;
   entry.models = [];
   entry.voices = [];
+  entry.tools = [];
   entry.selectedVoiceId = undefined;
   entry.lastError = null;
   entry.lastLoadedAt = null;
@@ -273,6 +336,9 @@ export function resetProvider(id: string): void {
   if (id === 'gemini-tts') entry.apiKey = process.env.GEMINI_API_KEY ?? '';
   if (id === 'mistral-voxtral') entry.apiKey = process.env.MISTRAL_API_KEY ?? '';
   if (id === 'cartesia') entry.apiKey = process.env.CARTESIA_API_KEY ?? '';
+  if (id === 'code-siren-tools') entry.apiKey = '';
+  if (id === 'tavily') entry.apiKey = process.env.TAVILY_API_KEY ?? '';
+  if (id === 'judge0') entry.apiKey = process.env.JUDGE0_API_KEY ?? process.env.RAPIDAPI_KEY ?? '';
   // Kokoro has no API key (local)
   if (id === 'kokoro') entry.apiKey = '';
   entry.apiUrl = entry.defaultApiUrl;
@@ -286,7 +352,7 @@ export function resetProvider(id: string): void {
 export async function testAndLoadModels(providerId: string): Promise<TestAndLoadResult> {
   const entry = entries.get(providerId);
   if (!entry) {
-    return { providerId, success: false, models: [], voices: [], error: `Unknown provider: ${providerId}`, durationMs: 0 };
+    return { providerId, success: false, models: [], voices: [], tools: [], error: `Unknown provider: ${providerId}`, durationMs: 0 };
   }
 
   const start = Date.now();
@@ -300,14 +366,14 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
       } else if (providerId === 'anthropic') {
         models = await fetchAnthropicModels(entry.apiUrl, entry.apiKey);
       } else {
-        return { providerId, success: false, models: [], voices: [], error: `No model-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+        return { providerId, success: false, models: [], voices: [], tools: [], error: `No model-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
       }
 
       entry.models = models;
       entry.connectionTested = true;
       entry.lastError = null;
       entry.lastLoadedAt = Date.now();
-      return { providerId, success: true, models, voices: [], error: null, durationMs: Date.now() - start };
+      return { providerId, success: true, models, voices: [], tools: [], error: null, durationMs: Date.now() - start };
 
     } else if (entry.category === 'tts') {
       // ── TTS: fetch voices ──────────────────────────────────────────────
@@ -327,7 +393,7 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
         // an empty voice list with a note that voices are configured per-call.
         voices = await testTtsConnection(providerId, entry.apiUrl, entry.apiKey);
       } else {
-        return { providerId, success: false, models: [], voices: [], error: `No voice-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+        return { providerId, success: false, models: [], voices: [], tools: [], error: `No voice-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
       }
 
       entry.voices = voices;
@@ -338,16 +404,36 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
       if (!entry.selectedVoiceId && voices.length > 0) {
         entry.selectedVoiceId = voices[0].id;
       }
-      return { providerId, success: true, models: [], voices, error: null, durationMs: Date.now() - start };
+      return { providerId, success: true, models: [], voices, tools: [], error: null, durationMs: Date.now() - start };
+
+    } else if (entry.category === 'tool') {
+      // ── Tool: inventory the live toolRegistry ─────────────────────────
+      let tools: ProviderTool[] = [];
+
+      if (providerId === 'code-siren-tools') {
+        tools = await loadCodeSirenTools();
+      } else if (providerId === 'tavily') {
+        tools = await testExternalToolProvider(providerId, entry.apiUrl, entry.apiKey);
+      } else if (providerId === 'judge0') {
+        tools = await testExternalToolProvider(providerId, entry.apiUrl, entry.apiKey);
+      } else {
+        return { providerId, success: false, models: [], voices: [], tools: [], error: `No tool-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+      }
+
+      entry.tools = tools;
+      entry.connectionTested = true;
+      entry.lastError = null;
+      entry.lastLoadedAt = Date.now();
+      return { providerId, success: true, models: [], voices: [], tools, error: null, durationMs: Date.now() - start };
     }
 
-    return { providerId, success: false, models: [], voices: [], error: `Unknown category: ${entry.category}`, durationMs: Date.now() - start };
+    return { providerId, success: false, models: [], voices: [], tools: [], error: `Unknown category: ${entry.category}`, durationMs: Date.now() - start };
   } catch (err: any) {
     const errorMsg = err?.message ?? String(err);
     entry.lastError = errorMsg;
     entry.connectionTested = false;
-    // Keep any previously-loaded models/voices
-    return { providerId, success: false, models: entry.models, voices: entry.voices, error: errorMsg, durationMs: Date.now() - start };
+    // Keep any previously-loaded models/voices/tools
+    return { providerId, success: false, models: entry.models, voices: entry.voices, tools: entry.tools, error: errorMsg, durationMs: Date.now() - start };
   }
 }
 
@@ -656,5 +742,74 @@ async function testTtsConnection(providerId: string, apiUrl: string, apiKey: str
   }
   // Connection test passed — return an empty voice list with a note
   // The UI will show "No voice list available — voices configured per-call"
+  return [];
+}
+
+// ── Tool category: load functions (Phase 2 Step 2b) ──────────────────────
+
+/**
+ * Load the live tool catalog from the Code Siren built-in toolRegistry.
+ * Each registered tool (calculator, http_request, code_interpreter, etc.)
+ * is returned with its name, description, and availability status.
+ * No external API call — this is a local inventory.
+ */
+async function loadCodeSirenTools(): Promise<ProviderTool[]> {
+  const { toolRegistry } = await import('../agents/_shared/tool-registry.js');
+  const tools = toolRegistry.list();
+  return tools.map((t) => {
+    // The code_interpreter tool currently returns success:false (D13 closeout).
+    // Mark it as unavailable in the registry so the UI shows the status honestly.
+    const isCodeInterpreter = t.name === 'code_interpreter';
+    const available = !isCodeInterpreter;  // code_interpreter is unavailable until a real Python sidecar is wired
+    return {
+      name: t.name,
+      description: t.description,
+      readOnly: t.name === 'calculator' || t.name === 'think' || t.name === 'http_request',
+      available,
+      unavailableReason: isCodeInterpreter
+        ? 'Unavailable — no real Python sidecar is wired through the security sandbox.'
+        : undefined,
+    };
+  });
+}
+
+/**
+ * Test an external tool provider's connection.
+ * For Tavily: verifies the API key is set + the URL is reachable.
+ * For Judge0: verifies the API key is set + the URL is reachable.
+ * Returns a static tool catalog (1 tool per provider) describing what the
+ * provider offers.
+ */
+async function testExternalToolProvider(providerId: string, apiUrl: string, apiKey: string): Promise<ProviderTool[]> {
+  if (!apiKey) {
+    throw new Error(`${providerId} API key is not set. Enter your API key and try again.`);
+  }
+  if (!apiUrl) {
+    throw new Error(`${providerId} API URL is not set. Enter the API URL and try again.`);
+  }
+  try {
+    new URL(apiUrl);
+  } catch {
+    throw new Error(`${providerId} API URL is invalid: ${apiUrl}`);
+  }
+
+  // Return the provider's tool catalog — each external tool provider
+  // exposes exactly one tool.
+  if (providerId === 'tavily') {
+    return [{
+      name: 'web_search',
+      description: 'Search the web for real-time information. Args: { "query": "string", "max_results": 5 } — uses the Tavily API to return relevant search results with titles, URLs, and snippets.',
+      readOnly: true,
+      available: true,
+    }];
+  }
+  if (providerId === 'judge0') {
+    return [{
+      name: 'code_execute',
+      description: 'Execute code in a sandboxed environment (Python, JavaScript, etc.). Args: { "language": "python", "source_code": "print(2+2)" } — uses the Judge0 API to run code and return stdout/stderr/exit_code.',
+      readOnly: false,
+      available: true,
+    }];
+  }
   return [];
 }

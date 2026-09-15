@@ -375,9 +375,19 @@ export interface ProviderVoice {
   description?: string;
 }
 
+export type ProviderCategory = 'llm' | 'tts' | 'tool';
+
+export interface ProviderTool {
+  name: string;
+  description: string;
+  readOnly: boolean;
+  available: boolean;
+  unavailableReason?: string;
+}
+
 export interface ProviderEntry {
   id: string;
-  category: 'llm' | 'tts';
+  category: ProviderCategory;
   displayName: string;
   defaultApiUrl: string;
   apiUrl: string;
@@ -386,11 +396,13 @@ export interface ProviderEntry {
   connectionTested: boolean;
   models: ProviderModel[];
   voices: ProviderVoice[];
+  tools: ProviderTool[];
   selectedVoiceId?: string;
   lastError: string | null;
   lastLoadedAt: number | null;
   modelCount: number;
   voiceCount: number;
+  toolCount: number;
 }
 
 export interface ProviderTestResult {

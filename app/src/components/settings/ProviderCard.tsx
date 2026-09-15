@@ -14,7 +14,7 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
-import type { ProviderEntry, ProviderModel, ProviderVoice } from '@/types';
+import type { ProviderEntry, ProviderModel, ProviderVoice, ProviderTool } from '@/types';
 import { Loader2, CheckCircle, XCircle, RefreshCw, Eye, EyeOff, Volume2 } from 'lucide-react';
 
 interface ProviderCardProps {
@@ -416,6 +416,54 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
       {provider.category === 'tts' && provider.voices.length === 0 && provider.connectionTested && (
         <div className="px-3 py-2 rounded text-[10px]" style={{ backgroundColor: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--muted-silver)' }}>
           Connected. No voice list available — voices configured per-call.
+        </div>
+      )}
+
+      {/* ── Tool: tool list + availability badges ─────────────────────── */}
+      {provider.category === 'tool' && provider.tools.length > 0 && (
+        <div className="mb-3">
+          <label className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--steel-silver)' }}>
+            Available Tools ({provider.tools.length})
+          </label>
+          <div className="mt-1 space-y-1.5">
+            {provider.tools.map((t: ProviderTool) => (
+              <div
+                key={t.name}
+                className="flex items-start gap-2 px-3 py-2 rounded text-[10px]"
+                style={{ backgroundColor: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-medium" style={{ color: 'var(--bright-silver)' }}>
+                      {t.name}
+                    </span>
+                    {t.readOnly ? (
+                      <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)', color: '#22C55E' }}>
+                        Read-only
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(245, 158, 11, 0.1)', color: '#F59E0B' }}>
+                        Mutates
+                      </span>
+                    )}
+                    {!t.available && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(238, 28, 28, 0.1)', color: 'var(--siren-red)' }}>
+                        Unavailable
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5" style={{ color: 'var(--muted-silver)' }}>
+                    {t.description}
+                  </div>
+                  {t.unavailableReason && (
+                    <div className="mt-0.5" style={{ color: 'var(--siren-red)' }}>
+                      {t.unavailableReason}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -260,8 +260,9 @@ describe('UPR Phase 1 Step 3 — ProviderRegistry', () => {
   // ── TEST 9: listProviders returns all providers with correct shape ────
   it('listProviders returns OpenRouter + Anthropic + TTS providers with correct seed data', () => {
     const providers = listProviders();
-    // Phase 1: 2 LLM providers. Phase 2 Step 2a: + 11 TTS providers = 13 total.
-    expect(providers.length).toBe(13);
+    // Phase 1: 2 LLM providers. Phase 2 Step 2a: + 11 TTS providers.
+    // Phase 2 Step 2b: + 3 Tool providers = 16 total.
+    expect(providers.length).toBe(16);
 
     const openrouter = providers.find((p) => p.id === 'openrouter')!;
     expect(openrouter.category).toBe('llm');

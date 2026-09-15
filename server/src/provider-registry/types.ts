@@ -1,11 +1,12 @@
 // server/src/provider-registry/types.ts
-// UPR Phase 1 Step 3 + Phase 2 Step 2a — ProviderRegistry data model.
+// UPR Phase 1 Step 3 + Phase 2 — ProviderRegistry data model.
 //
-// Phase 1: LLM category only (OpenRouter + Anthropic).
+// Phase 1: LLM category (OpenRouter + Anthropic).
 // Phase 2 Step 2a: TTS category (11 cloud providers + Kokoro local).
-// Phase 2 Steps 2b-2d: Tool/MCP, Image/Video, Custom onboarding.
+// Phase 2 Step 2b: Tool/MCP category (built-in tools + external tool APIs).
+// Phase 2 Steps 2c-2d: Image/Video, Custom onboarding.
 
-export type ProviderCategory = 'llm' | 'tts';  // Phase 2 adds 'tool' | 'image-video'
+export type ProviderCategory = 'llm' | 'tts' | 'tool';  // Phase 2c adds 'image-video'
 
 export type CostTier = 'free' | 'freemium' | 'paid';
 
@@ -51,12 +52,27 @@ export interface ProviderVoice {
   description?: string;
 }
 
+// ── Tool metadata (Phase 2 Step 2b) ──────────────────────────────────────
+
+export interface ProviderTool {
+  /** The tool name as Code Siren agents will invoke it (e.g. 'web_search', 'git_status'). */
+  name: string;
+  /** Human-readable description of what the tool does, including args. */
+  description: string;
+  /** Whether the tool is read-only (no side effects) or mutates state. */
+  readOnly: boolean;
+  /** Whether the tool is currently available (some tools may be conditionally unavailable). */
+  available: boolean;
+  /** Why the tool is unavailable (if available=false). */
+  unavailableReason?: string;
+}
+
 // ── Registry entry ────────────────────────────────────────────────────────
 
 export interface ProviderRegistryEntry {
   /** Unique provider ID (e.g. 'openrouter', 'anthropic', 'kokoro', 'elevenlabs'). */
   id: string;
-  /** Category — 'llm' or 'tts' (Phase 2 adds 'tool' | 'image-video'). */
+  /** Category — 'llm', 'tts', or 'tool' (Phase 2c adds 'image-video'). */
   category: ProviderCategory;
   /** Human-readable display name (e.g. 'OpenRouter (Cloud Gateway)', 'Kokoro (Local)'). */
   displayName: string;
@@ -72,11 +88,13 @@ export interface ProviderRegistryEntry {
   models: ProviderModel[];
   /** Voices loaded from the provider's real /voices endpoint or static catalog (TTS category). Empty until tested. */
   voices: ProviderVoice[];
+  /** Tools loaded from the built-in tool registry (Tool category). Empty until tested. */
+  tools: ProviderTool[];
   /** The currently-selected voice ID for this provider (TTS category). Undefined if none selected. */
   selectedVoiceId?: string;
   /** Last error from a test-and-load attempt — null if none. */
   lastError: string | null;
-  /** Timestamp (epoch ms) of the last successful model/voice load. */
+  /** Timestamp (epoch ms) of the last successful model/voice/tool load. */
   lastLoadedAt: number | null;
 }
 
@@ -87,10 +105,12 @@ export interface TestAndLoadResult {
   providerId: string;
   /** Whether the test succeeded. */
   success: boolean;
-  /** Models loaded (empty if failed or TTS category). */
+  /** Models loaded (empty if failed or non-LLM category). */
   models: ProviderModel[];
-  /** Voices loaded (empty if failed or LLM category). */
+  /** Voices loaded (empty if failed or non-TTS category). */
   voices: ProviderVoice[];
+  /** Tools loaded (empty if failed or non-Tool category). */
+  tools: ProviderTool[];
   /** Error message if failed — specific and visible, not silent. */
   error: string | null;
   /** How long the real API call took in ms. */

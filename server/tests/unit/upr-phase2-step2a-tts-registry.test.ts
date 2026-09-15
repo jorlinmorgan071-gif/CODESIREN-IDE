@@ -184,7 +184,7 @@ describe('UPR Phase 2 Step 2a — TTS ProviderRegistry', () => {
     // Mock the voice-settings module's applyVoiceProvider
     const voiceSettingsModule = await import('../../src/orchestrator/voice-settings.js');
     const applySpy = vi.spyOn(voiceSettingsModule, 'applyVoiceProvider').mockResolvedValue(undefined);
-    const setSettingsSpy = vi.spyOn(voiceSettingsModule, 'setVoiceSettings').mockImplementation(() => {});
+    const setSettingsSpy = vi.spyOn(voiceSettingsModule, 'setVoiceSettings').mockImplementation(() => ({ provider: 'kokoro', kokoroVoice: 'af_heart', kokoroLangCode: 'a' }) as any);
     const getSettingsSpy = vi.spyOn(voiceSettingsModule, 'getVoiceSettings').mockReturnValue({
       provider: 'kokoro',
       kokoroVoice: 'af_heart',
