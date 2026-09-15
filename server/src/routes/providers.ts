@@ -43,12 +43,14 @@ function serializeProvider(entry: ProviderRegistryEntry) {
     models: entry.models,
     voices: entry.voices,
     tools: entry.tools,
+    imageModels: entry.imageModels,
     selectedVoiceId: entry.selectedVoiceId,
     lastError: entry.lastError,
     lastLoadedAt: entry.lastLoadedAt,
     modelCount: entry.models.length,
     voiceCount: entry.voices.length,
     toolCount: entry.tools.length,
+    imageModelCount: entry.imageModels.length,
   };
 }
 

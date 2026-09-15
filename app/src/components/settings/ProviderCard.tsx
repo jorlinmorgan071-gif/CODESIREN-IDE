@@ -14,7 +14,7 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
-import type { ProviderEntry, ProviderModel, ProviderVoice, ProviderTool } from '@/types';
+import type { ProviderEntry, ProviderModel, ProviderVoice, ProviderTool, ProviderImageModel } from '@/types';
 import { Loader2, CheckCircle, XCircle, RefreshCw, Eye, EyeOff, Volume2 } from 'lucide-react';
 
 interface ProviderCardProps {
@@ -458,6 +458,58 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
                   {t.unavailableReason && (
                     <div className="mt-0.5" style={{ color: 'var(--siren-red)' }}>
                       {t.unavailableReason}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Image/Video: model list + capability badges ─────────────── */}
+      {provider.category === 'image-video' && provider.imageModels.length > 0 && (
+        <div className="mb-3">
+          <label className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--steel-silver)' }}>
+            Image/Video Models ({provider.imageModels.length})
+          </label>
+          <div className="mt-1 space-y-1.5">
+            {provider.imageModels.map((m: ProviderImageModel) => (
+              <div
+                key={m.id}
+                className="flex items-start gap-2 px-3 py-2 rounded text-[10px]"
+                style={{ backgroundColor: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-medium" style={{ color: 'var(--bright-silver)' }}>
+                      {m.name}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: m.outputType === 'video' ? 'rgba(168, 85, 247, 0.1)' : 'rgba(59, 130, 246, 0.1)', color: m.outputType === 'video' ? '#A855F7' : '#3B82F6' }}>
+                      {m.outputType}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: m.costTier === 'free' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(245, 158, 11, 0.1)', color: m.costTier === 'free' ? '#22C55E' : '#F59E0B' }}>
+                      {m.costTier}
+                    </span>
+                    {m.supportsImageToImage && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', color: '#3B82F6' }}>
+                        img2img
+                      </span>
+                    )}
+                    {m.supportsVideo && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(168, 85, 247, 0.1)', color: '#A855F7' }}>
+                        Video
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5" style={{ color: 'var(--muted-silver)' }}>
+                    {m.id}
+                    {m.resolutions.length > 0 && ` · ${m.resolutions.join(', ')}`}
+                    {m.aspectRatios.length > 0 && ` · ${m.aspectRatios.join(', ')}`}
+                  </div>
+                  {m.pricingNote && (
+                    <div className="mt-0.5" style={{ color: 'var(--muted-silver)' }}>
+                      {m.pricingNote}
                     </div>
                   )}
                 </div>

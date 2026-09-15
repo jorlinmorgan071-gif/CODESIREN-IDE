@@ -375,7 +375,19 @@ export interface ProviderVoice {
   description?: string;
 }
 
-export type ProviderCategory = 'llm' | 'tts' | 'tool';
+export type ProviderCategory = 'llm' | 'tts' | 'tool' | 'image-video';
+
+export interface ProviderImageModel {
+  id: string;
+  name: string;
+  outputType: 'image' | 'video';
+  resolutions: string[];
+  aspectRatios: string[];
+  supportsImageToImage: boolean;
+  supportsVideo: boolean;
+  costTier: 'free' | 'freemium' | 'paid';
+  pricingNote: string;
+}
 
 export interface ProviderTool {
   name: string;
@@ -397,12 +409,14 @@ export interface ProviderEntry {
   models: ProviderModel[];
   voices: ProviderVoice[];
   tools: ProviderTool[];
+  imageModels: ProviderImageModel[];
   selectedVoiceId?: string;
   lastError: string | null;
   lastLoadedAt: number | null;
   modelCount: number;
   voiceCount: number;
   toolCount: number;
+  imageModelCount: number;
 }
 
 export interface ProviderTestResult {

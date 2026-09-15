@@ -4,9 +4,10 @@
 // Phase 1: LLM category (OpenRouter + Anthropic).
 // Phase 2 Step 2a: TTS category (11 cloud providers + Kokoro local).
 // Phase 2 Step 2b: Tool/MCP category (built-in tools + external tool APIs).
-// Phase 2 Steps 2c-2d: Image/Video, Custom onboarding.
+// Phase 2 Step 2c: Image/Video generation category (5 cloud providers).
+// Phase 2 Step 2d: Custom provider onboarding.
 
-export type ProviderCategory = 'llm' | 'tts' | 'tool';  // Phase 2c adds 'image-video'
+export type ProviderCategory = 'llm' | 'tts' | 'tool' | 'image-video';
 
 export type CostTier = 'free' | 'freemium' | 'paid';
 
@@ -67,12 +68,35 @@ export interface ProviderTool {
   unavailableReason?: string;
 }
 
+// ── Image/Video generation metadata (Phase 2 Step 2c) ───────────────────
+
+export interface ProviderImageModel {
+  /** The model ID as the provider expects it (e.g. 'dall-e-3', 'imagen-3.0-generate-002'). */
+  id: string;
+  /** Human-readable display name (e.g. 'DALL·E 3', 'Imagen 3'). */
+  name: string;
+  /** What this model generates: 'image' or 'video'. */
+  outputType: 'image' | 'video';
+  /** Supported output resolutions (e.g. ['1024x1024', '1792x1024']). Empty if not documented. */
+  resolutions: string[];
+  /** Supported aspect ratios (e.g. ['1:1', '16:9', '9:16']). Empty if not documented. */
+  aspectRatios: string[];
+  /** Whether the model supports image-to-image (editing an existing image). */
+  supportsImageToImage: boolean;
+  /** Whether the model supports video generation (vs static image only). */
+  supportsVideo: boolean;
+  /** Cost tier. */
+  costTier: CostTier;
+  /** Pricing note (e.g. '$0.040 per image'). */
+  pricingNote: string;
+}
+
 // ── Registry entry ────────────────────────────────────────────────────────
 
 export interface ProviderRegistryEntry {
   /** Unique provider ID (e.g. 'openrouter', 'anthropic', 'kokoro', 'elevenlabs'). */
   id: string;
-  /** Category — 'llm', 'tts', or 'tool' (Phase 2c adds 'image-video'). */
+  /** Category — 'llm', 'tts', 'tool', or 'image-video'. */
   category: ProviderCategory;
   /** Human-readable display name (e.g. 'OpenRouter (Cloud Gateway)', 'Kokoro (Local)'). */
   displayName: string;
@@ -90,11 +114,13 @@ export interface ProviderRegistryEntry {
   voices: ProviderVoice[];
   /** Tools loaded from the built-in tool registry (Tool category). Empty until tested. */
   tools: ProviderTool[];
+  /** Image/video models available from this provider (Image/Video category). Empty until tested. */
+  imageModels: ProviderImageModel[];
   /** The currently-selected voice ID for this provider (TTS category). Undefined if none selected. */
   selectedVoiceId?: string;
   /** Last error from a test-and-load attempt — null if none. */
   lastError: string | null;
-  /** Timestamp (epoch ms) of the last successful model/voice/tool load. */
+  /** Timestamp (epoch ms) of the last successful model/voice/tool/image-model load. */
   lastLoadedAt: number | null;
 }
 
@@ -111,6 +137,8 @@ export interface TestAndLoadResult {
   voices: ProviderVoice[];
   /** Tools loaded (empty if failed or non-Tool category). */
   tools: ProviderTool[];
+  /** Image/video models loaded (empty if failed or non-Image/Video category). */
+  imageModels: ProviderImageModel[];
   /** Error message if failed — specific and visible, not silent. */
   error: string | null;
   /** How long the real API call took in ms. */

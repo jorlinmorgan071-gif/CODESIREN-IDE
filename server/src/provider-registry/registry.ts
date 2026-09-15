@@ -15,7 +15,7 @@
 // visible error message — NOT a silent empty dropdown.
 
 import { config } from '../config.js';
-import type { ProviderRegistryEntry, ProviderModel, ProviderVoice, ProviderTool, TestAndLoadResult, CostTier } from './types.js';
+import type { ProviderRegistryEntry, ProviderModel, ProviderVoice, ProviderTool, ProviderImageModel, TestAndLoadResult, CostTier } from './types.js';
 
 // ── Provider defaults ────────────────────────────────────────────────────
 // These are the seed values. The user can override apiUrl + apiKey via the
@@ -38,6 +38,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -52,6 +53,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -70,6 +72,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -84,6 +87,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -98,6 +102,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -112,6 +117,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -126,6 +132,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -140,6 +147,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -154,6 +162,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -168,6 +177,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -182,6 +192,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -196,6 +207,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -210,6 +222,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -228,6 +241,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -243,6 +257,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -258,6 +273,86 @@ function seedEntries(): ProviderRegistryEntry[] {
       models: [],
       voices: [],
       tools: [],
+      imageModels: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    // ── Image/Video generation providers (Phase 2 Step 2c) ─────────────
+    // 5 cloud providers. "Test & load" returns static capability catalogs
+    // (image generation APIs don't have a /models endpoint — the model list
+    // is documented, not queryable). No agent-calling logic yet (Phase 5).
+    {
+      id: 'openai-image',
+      category: 'image-video',
+      displayName: 'OpenAI DALL·E (Image Generation)',
+      defaultApiUrl: 'https://api.openai.com/v1',
+      apiUrl: 'https://api.openai.com/v1',
+      apiKey: process.env.OPENAI_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      imageModels: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'gemini-image',
+      category: 'image-video',
+      displayName: 'Google Gemini / Imagen (Image Generation)',
+      defaultApiUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: process.env.GEMINI_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      imageModels: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'minimax-image',
+      category: 'image-video',
+      displayName: 'MiniMax (Image/Video Generation)',
+      defaultApiUrl: 'https://api.minimax.chat/v1',
+      apiUrl: 'https://api.minimax.chat/v1',
+      apiKey: process.env.MINIMAX_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      imageModels: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'wavespeed',
+      category: 'image-video',
+      displayName: 'WaveSpeed (Image/Video Generation)',
+      defaultApiUrl: 'https://api.wavespeed.ai/api/v2',
+      apiUrl: 'https://api.wavespeed.ai/api/v2',
+      apiKey: process.env.WAVESPEED_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      imageModels: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'byteplus-seedream',
+      category: 'image-video',
+      displayName: 'BytePlus Seedream (Image Generation)',
+      defaultApiUrl: 'https://openspeech.bytedance.com/api/v1',
+      apiUrl: 'https://openspeech.bytedance.com/api/v1',
+      apiKey: process.env.BYTEPLUS_API_KEY ?? process.env.DOUBAO_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      imageModels: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -289,12 +384,13 @@ export function updateProviderConfig(id: string, patch: { apiUrl?: string; apiKe
   if (!entry) return undefined;
   if (patch.apiUrl !== undefined) entry.apiUrl = patch.apiUrl;
   if (patch.apiKey !== undefined) entry.apiKey = patch.apiKey;
-  // If config changed, mark as not-tested (models/voices/tools are now stale)
+  // If config changed, mark as not-tested (models/voices/tools/imageModels are now stale)
   if (patch.apiUrl !== undefined || patch.apiKey !== undefined) {
     entry.connectionTested = false;
     entry.models = [];
     entry.voices = [];
     entry.tools = [];
+    entry.imageModels = [];
     entry.selectedVoiceId = undefined;
     entry.lastError = null;
     entry.lastLoadedAt = null;
@@ -314,6 +410,7 @@ export function resetProvider(id: string): void {
   entry.models = [];
   entry.voices = [];
   entry.tools = [];
+  entry.imageModels = [];
   entry.selectedVoiceId = undefined;
   entry.lastError = null;
   entry.lastLoadedAt = null;
@@ -339,6 +436,12 @@ export function resetProvider(id: string): void {
   if (id === 'code-siren-tools') entry.apiKey = '';
   if (id === 'tavily') entry.apiKey = process.env.TAVILY_API_KEY ?? '';
   if (id === 'judge0') entry.apiKey = process.env.JUDGE0_API_KEY ?? process.env.RAPIDAPI_KEY ?? '';
+  // Image/Video providers
+  if (id === 'openai-image') entry.apiKey = process.env.OPENAI_API_KEY ?? '';
+  if (id === 'gemini-image') entry.apiKey = process.env.GEMINI_API_KEY ?? '';
+  if (id === 'minimax-image') entry.apiKey = process.env.MINIMAX_API_KEY ?? '';
+  if (id === 'wavespeed') entry.apiKey = process.env.WAVESPEED_API_KEY ?? '';
+  if (id === 'byteplus-seedream') entry.apiKey = process.env.BYTEPLUS_API_KEY ?? process.env.DOUBAO_API_KEY ?? '';
   // Kokoro has no API key (local)
   if (id === 'kokoro') entry.apiKey = '';
   entry.apiUrl = entry.defaultApiUrl;
@@ -352,7 +455,7 @@ export function resetProvider(id: string): void {
 export async function testAndLoadModels(providerId: string): Promise<TestAndLoadResult> {
   const entry = entries.get(providerId);
   if (!entry) {
-    return { providerId, success: false, models: [], voices: [], tools: [], error: `Unknown provider: ${providerId}`, durationMs: 0 };
+    return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `Unknown provider: ${providerId}`, durationMs: 0 };
   }
 
   const start = Date.now();
@@ -366,14 +469,14 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
       } else if (providerId === 'anthropic') {
         models = await fetchAnthropicModels(entry.apiUrl, entry.apiKey);
       } else {
-        return { providerId, success: false, models: [], voices: [], tools: [], error: `No model-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `No model-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
       }
 
       entry.models = models;
       entry.connectionTested = true;
       entry.lastError = null;
       entry.lastLoadedAt = Date.now();
-      return { providerId, success: true, models, voices: [], tools: [], error: null, durationMs: Date.now() - start };
+      return { providerId, success: true, models, voices: [], tools: [], imageModels: [], error: null, durationMs: Date.now() - start };
 
     } else if (entry.category === 'tts') {
       // ── TTS: fetch voices ──────────────────────────────────────────────
@@ -393,7 +496,7 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
         // an empty voice list with a note that voices are configured per-call.
         voices = await testTtsConnection(providerId, entry.apiUrl, entry.apiKey);
       } else {
-        return { providerId, success: false, models: [], voices: [], tools: [], error: `No voice-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `No voice-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
       }
 
       entry.voices = voices;
@@ -404,7 +507,7 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
       if (!entry.selectedVoiceId && voices.length > 0) {
         entry.selectedVoiceId = voices[0].id;
       }
-      return { providerId, success: true, models: [], voices, tools: [], error: null, durationMs: Date.now() - start };
+      return { providerId, success: true, models: [], voices, tools: [], imageModels: [], error: null, durationMs: Date.now() - start };
 
     } else if (entry.category === 'tool') {
       // ── Tool: inventory the live toolRegistry ─────────────────────────
@@ -417,23 +520,59 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
       } else if (providerId === 'judge0') {
         tools = await testExternalToolProvider(providerId, entry.apiUrl, entry.apiKey);
       } else {
-        return { providerId, success: false, models: [], voices: [], tools: [], error: `No tool-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `No tool-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
       }
 
       entry.tools = tools;
       entry.connectionTested = true;
       entry.lastError = null;
       entry.lastLoadedAt = Date.now();
-      return { providerId, success: true, models: [], voices: [], tools, error: null, durationMs: Date.now() - start };
+      return { providerId, success: true, models: [], voices: [], tools, imageModels: [], error: null, durationMs: Date.now() - start };
+
+    } else if (entry.category === 'image-video') {
+      // ── Image/Video: load static capability catalog ───────────────────
+      // Image generation APIs don't have a /models endpoint — the model list
+      // is documented, not queryable. "Test & load" verifies the API key is
+      // set + the URL is valid, then returns a static catalog of the
+      // provider's documented image/video models.
+      let imageModels: ProviderImageModel[] = [];
+
+      if (providerId === 'openai-image') {
+        imageModels = getOpenAIImageModelsStatic();
+      } else if (providerId === 'gemini-image') {
+        imageModels = getGeminiImageModelsStatic();
+      } else if (providerId === 'minimax-image') {
+        imageModels = getMiniMaxImageModelsStatic();
+      } else if (providerId === 'wavespeed') {
+        imageModels = getWaveSpeedImageModelsStatic();
+      } else if (providerId === 'byteplus-seedream') {
+        imageModels = getBytePlusImageModelsStatic();
+      } else {
+        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `No image-model catalog for provider: ${providerId}`, durationMs: Date.now() - start };
+      }
+
+      // For external providers, verify API key + URL before marking as connected
+      if (!entry.apiKey) {
+        throw new Error(`${providerId} API key is not set. Enter your API key and try again.`);
+      }
+      if (entry.apiUrl) {
+        try { new URL(entry.apiUrl); } catch { throw new Error(`${providerId} API URL is invalid: ${entry.apiUrl}`); }
+      }
+
+      entry.imageModels = imageModels;
+      entry.connectionTested = true;
+      entry.lastError = null;
+      entry.lastLoadedAt = Date.now();
+      return { providerId, success: true, models: [], voices: [], tools: [], imageModels, error: null, durationMs: Date.now() - start };
     }
 
-    return { providerId, success: false, models: [], voices: [], tools: [], error: `Unknown category: ${entry.category}`, durationMs: Date.now() - start };
+    return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `Unknown category: ${entry.category}`, durationMs: Date.now() - start };
   } catch (err: any) {
     const errorMsg = err?.message ?? String(err);
     entry.lastError = errorMsg;
     entry.connectionTested = false;
     // Keep any previously-loaded models/voices/tools
-    return { providerId, success: false, models: entry.models, voices: entry.voices, tools: entry.tools, error: errorMsg, durationMs: Date.now() - start };
+    return { providerId, success: false, models: entry.models, voices: entry.voices, tools: entry.tools, imageModels: entry.imageModels, error: errorMsg, durationMs: Date.now() - start };
   }
 }
 
@@ -812,4 +951,159 @@ async function testExternalToolProvider(providerId: string, apiUrl: string, apiK
     }];
   }
   return [];
+}
+
+// ── Image/Video static catalogs (Phase 2 Step 2c) ───────────────────────
+// Image generation APIs don't have a /models endpoint — the model list is
+// documented by each provider. These static catalogs reflect the current
+// (as of 2026-09) documented models. When a provider adds/removes models,
+// update these catalogs.
+//
+// "Test & load" for image-video providers verifies the API key + URL, then
+// returns the static catalog. No remote API call is made to list models.
+
+function getOpenAIImageModelsStatic(): ProviderImageModel[] {
+  return [
+    {
+      id: 'dall-e-3',
+      name: 'DALL·E 3',
+      outputType: 'image',
+      resolutions: ['1024x1024', '1792x1024', '1024x1792'],
+      aspectRatios: ['1:1', '16:9', '9:16'],
+      supportsImageToImage: false,
+      supportsVideo: false,
+      costTier: 'paid',
+      pricingNote: '$0.040 per standard image, $0.080 per HD image',
+    },
+    {
+      id: 'dall-e-2',
+      name: 'DALL·E 2',
+      outputType: 'image',
+      resolutions: ['256x256', '512x512', '1024x1024'],
+      aspectRatios: ['1:1'],
+      supportsImageToImage: true,
+      supportsVideo: false,
+      costTier: 'paid',
+      pricingNote: '$0.016–$0.020 per image',
+    },
+    {
+      id: 'gpt-image-1',
+      name: 'GPT Image 1',
+      outputType: 'image',
+      resolutions: ['1024x1024', '1536x1024', '1024x1536', 'auto'],
+      aspectRatios: ['1:1', '3:2', '2:3'],
+      supportsImageToImage: true,
+      supportsVideo: false,
+      costTier: 'paid',
+      pricingNote: '$0.011–$0.167 per image (quality-dependent)',
+    },
+  ];
+}
+
+function getGeminiImageModelsStatic(): ProviderImageModel[] {
+  return [
+    {
+      id: 'imagen-3.0-generate-002',
+      name: 'Imagen 3',
+      outputType: 'image',
+      resolutions: ['1024x1024'],
+      aspectRatios: ['1:1', '16:9', '9:16', '4:3', '3:4'],
+      supportsImageToImage: false,
+      supportsVideo: false,
+      costTier: 'paid',
+      pricingNote: '$0.039 per image (aspect-ratio dependent)',
+    },
+    {
+      id: 'imagen-3.0-fast-generate-001',
+      name: 'Imagen 3 Fast',
+      outputType: 'image',
+      resolutions: ['1024x1024'],
+      aspectRatios: ['1:1', '16:9', '9:16', '4:3', '3:4'],
+      supportsImageToImage: false,
+      supportsVideo: false,
+      costTier: 'paid',
+      pricingNote: '$0.020 per image',
+    },
+  ];
+}
+
+function getMiniMaxImageModelsStatic(): ProviderImageModel[] {
+  return [
+    {
+      id: 'image-01',
+      name: 'MiniMax Image Generation',
+      outputType: 'image',
+      resolutions: [],
+      aspectRatios: ['1:1', '16:9', '9:16', '4:3', '3:4'],
+      supportsImageToImage: false,
+      supportsVideo: false,
+      costTier: 'paid',
+      pricingNote: 'See MiniMax pricing page',
+    },
+    {
+      id: 'video-01',
+      name: 'MiniMax Video Generation',
+      outputType: 'video',
+      resolutions: [],
+      aspectRatios: ['16:9', '9:16'],
+      supportsImageToImage: false,
+      supportsVideo: true,
+      costTier: 'paid',
+      pricingNote: 'See MiniMax pricing page',
+    },
+  ];
+}
+
+function getWaveSpeedImageModelsStatic(): ProviderImageModel[] {
+  return [
+    {
+      id: 'flux-dev',
+      name: 'FLUX.1 [dev]',
+      outputType: 'image',
+      resolutions: ['1024x1024', '1360x768', '768x1360'],
+      aspectRatios: ['1:1', '16:9', '9:16'],
+      supportsImageToImage: true,
+      supportsVideo: false,
+      costTier: 'freemium',
+      pricingNote: 'Free tier available; paid tier ~$0.003/image',
+    },
+    {
+      id: 'flux-schnell',
+      name: 'FLUX.1 [schnell]',
+      outputType: 'image',
+      resolutions: ['1024x1024'],
+      aspectRatios: ['1:1'],
+      supportsImageToImage: false,
+      supportsVideo: false,
+      costTier: 'free',
+      pricingNote: 'Free',
+    },
+    {
+      id: 'wan-2.1',
+      name: 'Wan 2.1 (Video)',
+      outputType: 'video',
+      resolutions: [],
+      aspectRatios: ['16:9'],
+      supportsImageToImage: false,
+      supportsVideo: true,
+      costTier: 'paid',
+      pricingNote: 'See WaveSpeed pricing page',
+    },
+  ];
+}
+
+function getBytePlusImageModelsStatic(): ProviderImageModel[] {
+  return [
+    {
+      id: 'seedream-3.0',
+      name: 'Seedream 3.0',
+      outputType: 'image',
+      resolutions: ['1024x1024', '2048x2048'],
+      aspectRatios: ['1:1', '16:9', '9:16', '4:3', '3:4'],
+      supportsImageToImage: true,
+      supportsVideo: false,
+      costTier: 'paid',
+      pricingNote: 'See BytePlus pricing page',
+    },
+  ];
 }
