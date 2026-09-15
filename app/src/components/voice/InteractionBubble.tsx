@@ -38,9 +38,11 @@ import { LocalVrmaPlayer, shouldUseProceduralMotion } from '@/lib/vrma-player';
 import { useLocalVrmaRegistry } from '@/store/LocalVrmaRegistryContext';
 import {
   detectAvatarCapabilities,
+  extractAvatarModelId,
   isAnimationStateCompatible,
   resolveExpressionAliases,
   resolveSemanticExpressionValues,
+  type SemanticExpression,
 } from '@/lib/avatar-compatibility';
 import { applyAvatarPresentationPose, getAvatarGazeTarget } from '@/lib/avatar-compatibility-runtime';
 import { useAvatarCompatibility } from '@/hooks/useAvatarCompatibility';
@@ -48,6 +50,14 @@ import { useAvatarDiagnosticsSnapshot, type AvatarDiagnosticsRuntimeState, type 
 import { AvatarDiagnosticsSheetHost } from '@/components/avatar/AvatarDiagnosticsSheetHost';
 import { AvatarRuntimeErrorBoundary } from '@/components/avatar/AvatarRuntimeErrorBoundary';
 import { canAttachLipSyncNode, LatestOperationGate } from '@/lib/runtime-coordination';
+import {
+  createAutoCycleState,
+  ensureBuiltInForState,
+  resetForNewModel,
+  tickAutoCycle,
+  tryIssueGreeting,
+  type AutoCycleState,
+} from '@/lib/avatar-auto-cycle';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -152,6 +162,7 @@ function VRMBubbleContent({
   const motionRef = useRef(createAvatarMotionSnapshot(0));
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
   const diagnosticsRuntimeRef = useRef<AvatarDiagnosticsRuntimeState>({ currentMotionState: 'idle', activeAnimation: null, proceduralFallback: true });
+  const autoCycleRef = useRef<AutoCycleState | null>(null);
   const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
@@ -188,12 +199,30 @@ function VRMBubbleContent({
     vrmaPlayerRef.current = vrm ? new LocalVrmaPlayer(vrm) : null;
     if (vrm) {
       motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'model-loaded', nowMs: Date.now() });
+      // Initialise the auto-cycle scheduler for this avatar.
+      const modelId = extractAvatarModelId(avatarUrl);
+      autoCycleRef.current = autoCycleRef.current
+        ? resetForNewModel(autoCycleRef.current, modelId, Date.now())
+        : createAutoCycleState(modelId, Date.now());
+      const player = vrmaPlayerRef.current;
+      if (player && autoCycleRef.current) {
+        ensureBuiltInForState(autoCycleRef.current, player, 'idle');
+        ensureBuiltInForState(autoCycleRef.current, player, 'enter');
+        ensureBuiltInForState(autoCycleRef.current, player, 'gesture');
+        ensureBuiltInForState(autoCycleRef.current, player, 'rest');
+        ensureBuiltInForState(autoCycleRef.current, player, 'bored');
+        ensureBuiltInForState(autoCycleRef.current, player, 'listening');
+        ensureBuiltInForState(autoCycleRef.current, player, 'thinking');
+        ensureBuiltInForState(autoCycleRef.current, player, 'celebrate');
+        ensureBuiltInForState(autoCycleRef.current, player, 'wake');
+        tryIssueGreeting(autoCycleRef.current, player);
+      }
     }
     return () => {
       vrmaPlayerRef.current?.dispose();
       vrmaPlayerRef.current = null;
     };
-  }, [vrm]);
+  }, [vrm, avatarUrl]);
 
   useEffect(() => {
     const player = vrmaPlayerRef.current;
@@ -281,10 +310,45 @@ function VRMBubbleContent({
       proceduralFallback,
     };
 
+    // Tick the auto-cycle scheduler for idle variety + anime micro-expressions.
+    const autoCycle = autoCycleRef.current;
+    let headYawDelta = 0;
+    let headPitchDelta = 0;
+    let headRollDelta = 0;
+    let blinkRateScale = 1;
+    let expressionBlend: Readonly<Partial<Record<SemanticExpression, number>>> = {};
+    if (autoCycle && player) {
+      const cycleResult = tickAutoCycle({
+        player,
+        state: autoCycle,
+        currentMotionState: requestedState,
+        acceptBuiltInForState: requestedState !== 'speaking',
+        profile: compatibility.profile,
+        capabilities,
+        nowMs,
+        deltaSeconds: delta,
+      });
+      headYawDelta = cycleResult.headYawDelta;
+      headPitchDelta = cycleResult.headPitchDelta;
+      headRollDelta = cycleResult.headRollDelta;
+      blinkRateScale = cycleResult.blinkRateScale;
+      if (cycleResult.expressionSample) {
+        expressionBlend = cycleResult.expressionSample.blend;
+      }
+    }
+
     player?.update(delta);
     vrm.update(delta);
 
-    applyAvatarPresentationPose(groupRef.current, pose, compatibility.profile);
+    const compositedPose = {
+      verticalOffset: pose.verticalOffset,
+      pitchOffset: pose.pitchOffset + headPitchDelta,
+      yawOffset: pose.yawOffset + headYawDelta,
+    };
+    applyAvatarPresentationPose(groupRef.current, compositedPose, compatibility.profile);
+    if (headRollDelta !== 0) {
+      groupRef.current.rotation.z += headRollDelta;
+    }
 
     // Eye tracking
     const [gazeX, gazeY, gazeZ] = getAvatarGazeTarget(state.mouse.x, state.mouse.y, compatibility.profile);
@@ -292,7 +356,8 @@ function VRMBubbleContent({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (vrm.lookAt && compatibility.profile.gaze.mode !== 'disabled') (vrm.lookAt as any).target = lookAtTarget.current;
 
-    // Blink
+    // Blink (personality-scaled)
+    const blinkIntervalMultiplier = 1 / Math.max(0.1, blinkRateScale);
     blinkTimerRef.current -= delta * 1000;
     if (blinkPhaseRef.current === 'open' && blinkTimerRef.current <= 0) {
       blinkPhaseRef.current = 'closing'; blinkTimerRef.current = 80;
@@ -301,16 +366,22 @@ function VRMBubbleContent({
       if (blinkValueRef.current >= 1) { blinkPhaseRef.current = 'opening'; blinkTimerRef.current = 200; }
     } else if (blinkPhaseRef.current === 'opening') {
       blinkValueRef.current = Math.max(0, blinkValueRef.current - delta * 5);
-      if (blinkValueRef.current <= 0) { blinkPhaseRef.current = 'open'; blinkTimerRef.current = 3000 + Math.random() * 3000; }
+      if (blinkValueRef.current <= 0) {
+        blinkPhaseRef.current = 'open';
+        blinkTimerRef.current = (3000 + Math.random() * 3000) * blinkIntervalMultiplier;
+      }
     }
 
     // Expressions + lip sync
     const expr = vrm.expressionManager;
     if (expr) {
-      targetBlendValues.current = resolveSemanticExpressionValues(
-        AVATAR_MOTION_EXPRESSION_TARGETS[motionSnapshot.state],
-        expressionAliases,
-      );
+      targetBlendValues.current = {
+        ...resolveSemanticExpressionValues(
+          AVATAR_MOTION_EXPRESSION_TARGETS[motionSnapshot.state],
+          expressionAliases,
+        ),
+        ...resolveSemanticExpressionValues(expressionBlend, expressionAliases),
+      };
       const blinkExpression = expressionAliases[compatibility.profile.expressions.blink];
       if (blinkExpression) targetBlendValues.current[blinkExpression] = blinkValueRef.current;
 

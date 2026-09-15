@@ -46,6 +46,7 @@ import { LocalVrmaPlayer, shouldUseProceduralMotion } from '@/lib/vrma-player';
 import { useLocalVrmaRegistry } from '@/store/LocalVrmaRegistryContext';
 import {
   detectAvatarCapabilities,
+  extractAvatarModelId,
   isAnimationStateCompatible,
   resolveExpressionAliases,
   resolveSemanticExpressionValues,
@@ -57,6 +58,14 @@ import { useAvatarDiagnosticsSnapshot, type AvatarDiagnosticsRuntimeState, type 
 import { AvatarDiagnosticsSheetHost } from '@/components/avatar/AvatarDiagnosticsSheetHost';
 import { AvatarRuntimeErrorBoundary } from '@/components/avatar/AvatarRuntimeErrorBoundary';
 import { canAttachLipSyncNode, LatestOperationGate } from '@/lib/runtime-coordination';
+import {
+  createAutoCycleState,
+  ensureBuiltInForState,
+  resetForNewModel,
+  tickAutoCycle,
+  tryIssueGreeting,
+  type AutoCycleState,
+} from '@/lib/avatar-auto-cycle';
 
 // Phase B: Lazy-load the upload dialog (heavy: Three.js + VRM analysis)
 const AvatarUploadDialogLazy = lazy(() =>
@@ -114,6 +123,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
   const motionRef = useRef(createAvatarMotionSnapshot(0));
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
   const diagnosticsRuntimeRef = useRef<AvatarDiagnosticsRuntimeState>({ currentMotionState: 'idle', activeAnimation: null, proceduralFallback: true });
+  const autoCycleRef = useRef<AutoCycleState | null>(null);
   const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
@@ -150,6 +160,28 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
     vrmaPlayerRef.current = vrm ? new LocalVrmaPlayer(vrm) : null;
     if (vrm) {
       motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'model-loaded', nowMs: Date.now() });
+      // Initialise the auto-cycle scheduler for this avatar. The personality
+      // is selected from the avatar's model id (extracted from the URL).
+      const modelId = extractAvatarModelId(avatarUrl);
+      const nowMs = Date.now();
+      autoCycleRef.current = autoCycleRef.current
+        ? resetForNewModel(autoCycleRef.current, modelId, nowMs)
+        : createAutoCycleState(modelId, nowMs);
+      // Pre-install built-in clips for every motion state slot so the
+      // auto-cycle scheduler can swap them without load hitches.
+      const player = vrmaPlayerRef.current;
+      if (player && autoCycleRef.current) {
+        ensureBuiltInForState(autoCycleRef.current, player, 'idle');
+        ensureBuiltInForState(autoCycleRef.current, player, 'enter');
+        ensureBuiltInForState(autoCycleRef.current, player, 'gesture');
+        ensureBuiltInForState(autoCycleRef.current, player, 'rest');
+        ensureBuiltInForState(autoCycleRef.current, player, 'bored');
+        ensureBuiltInForState(autoCycleRef.current, player, 'listening');
+        ensureBuiltInForState(autoCycleRef.current, player, 'thinking');
+        ensureBuiltInForState(autoCycleRef.current, player, 'celebrate');
+        ensureBuiltInForState(autoCycleRef.current, player, 'wake');
+        tryIssueGreeting(autoCycleRef.current, player);
+      }
     }
     if (vrm?.expressionManager) {
       const expressions = vrm.expressionManager.expressions;
@@ -160,7 +192,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
       vrmaPlayerRef.current?.dispose();
       vrmaPlayerRef.current = null;
     };
-  }, [vrm]);
+  }, [vrm, avatarUrl]);
 
   useEffect(() => {
     const player = vrmaPlayerRef.current;
@@ -287,12 +319,49 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
       proceduralFallback,
     };
 
+    // Tick the auto-cycle scheduler — swaps idle clips on a personality
+    // cadence, fires anime micro-expressions, and produces head-rotation
+    // deltas that layer on top of the procedural pose.
+    const autoCycle = autoCycleRef.current;
+    let headYawDelta = 0;
+    let headPitchDelta = 0;
+    let headRollDelta = 0;
+    let blinkRateScale = 1;
+    let expressionBlend: Readonly<Partial<Record<SemanticExpression, number>>> = {};
+    if (autoCycle && player) {
+      const cycleResult = tickAutoCycle({
+        player,
+        state: autoCycle,
+        currentMotionState: requestedState,
+        acceptBuiltInForState: requestedState !== 'speaking',
+        profile: compatibility.profile,
+        capabilities,
+        nowMs,
+        deltaSeconds: delta,
+      });
+      headYawDelta = cycleResult.headYawDelta;
+      headPitchDelta = cycleResult.headPitchDelta;
+      headRollDelta = cycleResult.headRollDelta;
+      blinkRateScale = cycleResult.blinkRateScale;
+      if (cycleResult.expressionSample) {
+        expressionBlend = cycleResult.expressionSample.blend;
+      }
+    }
+
     // Use the same R3F delta for animation mixing and VRM spring-bone updates.
     player?.update(delta);
     vrm.update(delta);
 
-    // ── Controller-owned body pose ──
-    applyAvatarPresentationPose(groupRef.current, pose, compatibility.profile);
+    // ── Controller-owned body pose + auto-cycle head deltas ──
+    const compositedPose = {
+      verticalOffset: pose.verticalOffset,
+      pitchOffset: pose.pitchOffset + headPitchDelta,
+      yawOffset: pose.yawOffset + headYawDelta,
+    };
+    applyAvatarPresentationPose(groupRef.current, compositedPose, compatibility.profile);
+    if (headRollDelta !== 0) {
+      groupRef.current.rotation.z += headRollDelta;
+    }
 
     // ── Eye tracking: cursor → look-at target ──
     const [gazeX, gazeY, gazeZ] = getAvatarGazeTarget(state.mouse.x, state.mouse.y, compatibility.profile);
@@ -302,7 +371,8 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
       (vrm.lookAt as any).target = lookAtTarget.current;
     }
 
-    // ── Blink cycle ──
+    // ── Blink cycle (scaled by personality blink-rate) ──
+    const blinkIntervalMultiplier = 1 / Math.max(0.1, blinkRateScale);
     blinkTimerRef.current -= delta * 1000;
     if (blinkPhaseRef.current === 'open' && blinkTimerRef.current <= 0) {
       blinkPhaseRef.current = 'closing';
@@ -317,7 +387,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
       blinkValueRef.current = Math.max(0, blinkValueRef.current - delta * 5);
       if (blinkValueRef.current <= 0) {
         blinkPhaseRef.current = 'open';
-        blinkTimerRef.current = 3000 + Math.random() * 3000;
+        blinkTimerRef.current = (3000 + Math.random() * 3000) * blinkIntervalMultiplier;
       }
     }
 
@@ -328,6 +398,7 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
       targetBlendValues.current = {
         ...resolveSemanticExpressionValues(AVATAR_MOTION_EXPRESSION_TARGETS[motion.state], expressionAliases),
         ...resolveSemanticExpressionValues(EMOTION_BLENDSHAPES[currentEmotion], expressionAliases),
+        ...resolveSemanticExpressionValues(expressionBlend, expressionAliases),
       };
 
       // Add blink

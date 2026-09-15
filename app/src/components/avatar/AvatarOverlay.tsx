@@ -32,6 +32,7 @@ import { LocalVrmaPlayer, shouldUseProceduralMotion } from '@/lib/vrma-player';
 import { useLocalVrmaRegistry } from '@/store/LocalVrmaRegistryContext';
 import {
   detectAvatarCapabilities,
+  extractAvatarModelId,
   isAnimationStateCompatible,
   resolveExpressionAliases,
   resolveSemanticExpressionValues,
@@ -43,6 +44,14 @@ import { useAvatarDiagnosticsSnapshot, type AvatarDiagnosticsRuntimeState, type 
 import { AvatarDiagnosticsSheetHost } from './AvatarDiagnosticsSheetHost';
 import { AvatarRuntimeErrorBoundary } from './AvatarRuntimeErrorBoundary';
 import { canAttachLipSyncNode } from '@/lib/runtime-coordination';
+import {
+  createAutoCycleState,
+  ensureBuiltInForState,
+  resetForNewModel,
+  tickAutoCycle,
+  tryIssueGreeting,
+  type AutoCycleState,
+} from '@/lib/avatar-auto-cycle';
 
 type EmotionId = 'happy' | 'sad' | 'angry' | 'think' | 'surprised' | 'neutral';
 
@@ -93,6 +102,7 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
   const motionRef = useRef(createAvatarMotionSnapshot(0));
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
   const diagnosticsRuntimeRef = useRef<AvatarDiagnosticsRuntimeState>({ currentMotionState: 'idle', activeAnimation: null, proceduralFallback: true });
+  const autoCycleRef = useRef<AutoCycleState | null>(null);
   const compatibility = useAvatarCompatibility(avatarUrl);
 
   // Shared VRM loading + disposal + orientation + shadow setup
@@ -129,12 +139,35 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
     vrmaPlayerRef.current = vrm ? new LocalVrmaPlayer(vrm) : null;
     if (vrm) {
       motionRef.current = reduceAvatarMotion(motionRef.current, { type: 'model-loaded', nowMs: Date.now() });
+      // Initialise the auto-cycle scheduler for this avatar. The personality
+      // is selected from the avatar's model id (extracted from the URL).
+      const modelId = extractAvatarModelId(avatarUrl);
+      const nowMs = Date.now();
+      autoCycleRef.current = autoCycleRef.current
+        ? resetForNewModel(autoCycleRef.current, modelId, nowMs)
+        : createAutoCycleState(modelId, nowMs);
+      // Pre-install the avatar's preferred enter / idle clip so it's ready
+      // to fade in the moment the motion-state machine requests it.
+      const player = vrmaPlayerRef.current;
+      if (player && autoCycleRef.current) {
+        ensureBuiltInForState(autoCycleRef.current, player, 'idle');
+        ensureBuiltInForState(autoCycleRef.current, player, 'enter');
+        ensureBuiltInForState(autoCycleRef.current, player, 'gesture');
+        ensureBuiltInForState(autoCycleRef.current, player, 'rest');
+        ensureBuiltInForState(autoCycleRef.current, player, 'bored');
+        ensureBuiltInForState(autoCycleRef.current, player, 'listening');
+        ensureBuiltInForState(autoCycleRef.current, player, 'thinking');
+        ensureBuiltInForState(autoCycleRef.current, player, 'celebrate');
+        ensureBuiltInForState(autoCycleRef.current, player, 'wake');
+        // Optionally fire a one-shot greeting wave.
+        tryIssueGreeting(autoCycleRef.current, player);
+      }
     }
     return () => {
       vrmaPlayerRef.current?.dispose();
       vrmaPlayerRef.current = null;
     };
-  }, [vrm]);
+  }, [vrm, avatarUrl]);
 
   useEffect(() => {
     const player = vrmaPlayerRef.current;
@@ -221,16 +254,61 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
       proceduralFallback,
     };
 
+    // Tick the auto-cycle scheduler — it will swap idle clips, fire anime
+    // micro-expressions, and produce head-rotation deltas we apply on
+    // top of the base procedural pose.
+    const autoCycle = autoCycleRef.current;
+    let headYawDelta = 0;
+    let headPitchDelta = 0;
+    let headRollDelta = 0;
+    let blinkRateScale = 1;
+    let expressionBlend: Readonly<Partial<Record<SemanticExpression, number>>> = {};
+    if (autoCycle && player) {
+      const cycleResult = tickAutoCycle({
+        player,
+        state: autoCycle,
+        currentMotionState: requestedState,
+        acceptBuiltInForState: requestedState !== 'speaking',
+        profile: compatibility.profile,
+        capabilities,
+        nowMs,
+        deltaSeconds: delta,
+      });
+      headYawDelta = cycleResult.headYawDelta;
+      headPitchDelta = cycleResult.headPitchDelta;
+      headRollDelta = cycleResult.headRollDelta;
+      blinkRateScale = cycleResult.blinkRateScale;
+      if (cycleResult.expressionSample) {
+        expressionBlend = cycleResult.expressionSample.blend;
+      }
+    }
+
     player?.update(delta);
     vrm.update(delta);
 
-    applyAvatarPresentationPose(groupRef.current, pose, compatibility.profile);
+    // Apply the base procedural pose + the auto-cycle head-rotation deltas.
+    // We extend the pose rather than replacing it so the personality's
+    // sway cadence still comes through.
+    const compositedPose = {
+      verticalOffset: pose.verticalOffset,
+      pitchOffset: pose.pitchOffset + headPitchDelta,
+      yawOffset: pose.yawOffset + headYawDelta,
+    };
+    applyAvatarPresentationPose(groupRef.current, compositedPose, compatibility.profile);
+    // Roll delta is applied directly to the group's Z rotation (the base
+    // pose doesn't include roll, so we add it here without overwriting).
+    if (headRollDelta !== 0) {
+      groupRef.current.rotation.z += headRollDelta;
+    }
 
     const [gazeX, gazeY, gazeZ] = getAvatarGazeTarget(state.mouse.x, state.mouse.y, compatibility.profile);
     lookAtTarget.current.position.set(gazeX, gazeY, gazeZ);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (vrm.lookAt && compatibility.profile.gaze.mode !== 'disabled') (vrm.lookAt as any).target = lookAtTarget.current;
 
+    // Blink timer is scaled by the personality's blink-rate scale so
+    // curious characters blink more often than stoic ones.
+    const blinkIntervalMultiplier = 1 / Math.max(0.1, blinkRateScale);
     blinkTimerRef.current -= delta * 1000;
     if (blinkPhaseRef.current === 'open' && blinkTimerRef.current <= 0) {
       blinkPhaseRef.current = 'closing'; blinkTimerRef.current = 80;
@@ -239,7 +317,11 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
       if (blinkValueRef.current >= 1) { blinkPhaseRef.current = 'opening'; blinkTimerRef.current = 200; }
     } else if (blinkPhaseRef.current === 'opening') {
       blinkValueRef.current = Math.max(0, blinkValueRef.current - delta * 5);
-      if (blinkValueRef.current <= 0) { blinkPhaseRef.current = 'open'; blinkTimerRef.current = 3000 + Math.random() * 3000; }
+      if (blinkValueRef.current <= 0) {
+        blinkPhaseRef.current = 'open';
+        // Reset the next-blink interval using the personality's scale.
+        blinkTimerRef.current = (3000 + Math.random() * 3000) * blinkIntervalMultiplier;
+      }
     }
 
     const expr = vrm.expressionManager;
@@ -247,6 +329,7 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
       targetBlendValues.current = {
         ...resolveSemanticExpressionValues(AVATAR_MOTION_EXPRESSION_TARGETS[motionSnapshot.state], expressionAliases),
         ...resolveSemanticExpressionValues(EMOTION_BLENDSHAPES[currentEmotion], expressionAliases),
+        ...resolveSemanticExpressionValues(expressionBlend, expressionAliases),
       };
       const blinkExpression = expressionAliases[compatibility.profile.expressions.blink];
       if (blinkExpression) targetBlendValues.current[blinkExpression] = blinkValueRef.current;

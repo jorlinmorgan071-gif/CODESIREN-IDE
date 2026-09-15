@@ -10,6 +10,7 @@ import Home from './pages/Home';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const BrainView = lazy(() => import('./pages/BrainView'));
 const FaceView = lazy(() => import('./pages/FaceView'));
+const AvatarShowcase = lazy(() => import('./pages/AvatarShowcase'));
 
 function Fallback() {
   return (
@@ -51,6 +52,14 @@ export default function App() {
                 element={
                   <Suspense fallback={<Fallback />}>
                     <FaceView />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/avatar-showcase"
+                element={
+                  <Suspense fallback={<Fallback />}>
+                    <AvatarShowcase />
                   </Suspense>
                 }
               />

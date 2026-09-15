@@ -28,12 +28,23 @@ export function applyAvatarCompatibilityProfile(vrm: VRM, scene: THREE.Object3D,
       const enabled = profile.rendering.meshShadows !== 'disabled';
       child.castShadow = enabled;
       child.receiveShadow = enabled;
+      // Disable frustum culling on every mesh. Some VRM 0.x exporters
+      // (notably Miku) ship with bounding boxes that don't enclose the
+      // full mesh, which causes Three.js to cull the mesh when the
+      // camera moves — looking like the avatar "loses body parts".
+      // Disabling culling is a cheap, safe fix: VRM scenes are small.
+      child.frustumCulled = false;
     }
   });
 }
 
 export function applyAvatarPresentationPose(group: THREE.Group, pose: AvatarMotionPose, profile: AvatarCompatibilityProfile): void {
-  group.position.set(pose.verticalOffset, 0, 0);
+  // Vertical offset must be on the Y axis (up/down), not X (sideways).
+  // The pre-existing implementation used X, which on the Hatsune Miku
+  // avatar visibly shifted her sideways during 'enter' / 'bored' /
+  // 'rest' states and made her appear partially off-screen, mimicking
+  // "missing body parts".
+  group.position.set(0, pose.verticalOffset, 0);
   group.rotation.set(
     pose.pitchOffset + profile.transform.rotationOffset[0],
     pose.yawOffset + profile.transform.rotationOffset[1],
