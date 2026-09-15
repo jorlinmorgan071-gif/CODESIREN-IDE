@@ -261,8 +261,25 @@ export class AvatarCompatibilityProfileRegistry {
 export const avatarCompatibilityProfiles = new AvatarCompatibilityProfileRegistry();
 
 export function extractAvatarModelId(avatarUrl: string): string | null {
+  // Built-in avatars: /models/avatars/<id>/model.vrm
   const builtInMatch = avatarUrl.match(/\/models\/avatars\/([^/]+)\/model\.vrm(?:$|[?#])/);
-  return builtInMatch?.[1] ?? null;
+  if (builtInMatch && builtInMatch[1] !== 'custom') return builtInMatch[1];
+
+  // Custom avatars: /models/avatars/custom/<custom-id>/model.vrm
+  // We return the full `custom-<timestamp>-<hex>` id so downstream
+  // callers can recognise it as a custom avatar (it starts with `custom-`).
+  const customMatch = avatarUrl.match(/\/models\/avatars\/custom\/([^/]+)\/model\.vrm(?:$|[?#])/);
+  if (customMatch) return customMatch[1];
+
+  return null;
+}
+
+/**
+ * Returns true if the given avatar id (as returned by {@link extractAvatarModelId})
+ * refers to a user-uploaded custom avatar rather than a built-in one.
+ */
+export function isCustomAvatarModelId(modelId: string | null | undefined): boolean {
+  return Boolean(modelId && modelId.startsWith('custom-'));
 }
 
 export function resolveAvatarCompatibility(avatarUrl: string, registry = avatarCompatibilityProfiles): ResolvedAvatarCompatibility {

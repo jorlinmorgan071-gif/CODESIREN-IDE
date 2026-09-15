@@ -47,8 +47,7 @@ import {
   type AnimeExpressionId,
   type AnimeExpressionSample,
 } from './anime-expressions';
-import type { AvatarCompatibilityProfile } from './avatar-compatibility';
-import type { AvatarCapabilities } from './avatar-compatibility';
+import type { AvatarCompatibilityProfile, AvatarCapabilities } from './avatar-compatibility';
 
 export interface AutoCycleState {
   avatarId: string | null;
@@ -72,6 +71,9 @@ export interface AutoCycleState {
   lastInteractionMs: number;
   // Whether a greet wave has been issued for the current VRM.
   greeted: boolean;
+  // Tracks whether capabilities have been re-evaluated for this avatar
+  // (custom avatars get their personality re-resolved once caps are known).
+  personalityFinalised: boolean;
 }
 
 export function createAutoCycleState(avatarId: string | null, nowMs: number): AutoCycleState {
@@ -90,6 +92,7 @@ export function createAutoCycleState(avatarId: string | null, nowMs: number): Au
     nextLookAroundMs: nowMs + sampleExponentialSeconds(personality.lookAroundMeanSeconds) * 1000,
     lastInteractionMs: nowMs,
     greeted: false,
+    personalityFinalised: false,
   };
 }
 
@@ -101,6 +104,33 @@ export function resetForNewModel(state: AutoCycleState, avatarId: string | null,
   // same micro-expression back-to-back.
   fresh.lastExpressionId = state.lastExpressionId;
   return fresh;
+}
+
+/**
+ * Once a custom avatar's capabilities have been detected, re-resolve its
+ * personality against the trait-based inference. Built-in avatars skip
+ * this step because their personality is shipped in code.
+ *
+ * Safe to call multiple times — only the first call with non-null
+ * capabilities actually does the re-resolution.
+ */
+export function finalisePersonalityWithCapabilities(
+  state: AutoCycleState,
+  avatarId: string | null,
+  capabilities: AvatarCapabilities,
+): void {
+  if (state.personalityFinalised) return;
+  if (!avatarId) return;
+  // Only re-resolve for custom avatars (built-ins always have an exact match).
+  if (!avatarId.startsWith('custom-')) {
+    state.personalityFinalised = true;
+    return;
+  }
+  // Re-resolve with capabilities. If the user has set an override, that
+  // override is respected; otherwise we infer from the caps.
+  const resolved = getAvatarPersonality(avatarId, { capabilities });
+  state.personality = resolved;
+  state.personalityFinalised = true;
 }
 
 // Notify the scheduler of user activity (mouse move, click, voice-started,

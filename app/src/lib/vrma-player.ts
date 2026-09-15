@@ -155,6 +155,13 @@ export class LocalVrmaPlayer {
    * Built-in clips don't require a .vrma file — they are pre-baked
    * THREE.AnimationClip objects produced by built-in-animations.ts.
    *
+   * The clip's tracks are named after VRM humanoid bone names
+   * (e.g. `hips.quaternion`, `leftUpperArm.quaternion`). The VRM scene's
+   * actual bone nodes have different names (the glTF node names from the
+   * original exporter, e.g. `J_Bip_C_Hips`). Before installing, we rewrite
+   * each track's name to point at the actual node name resolved via
+   * `vrm.humanoid.getNormalizedBoneNode(<boneName>)`.
+   *
    * If `activate` is true, the clip is immediately crossfaded in (the
    * previously active action, if any, is faded out in parallel).
    */
@@ -166,6 +173,12 @@ export class LocalVrmaPlayer {
   ): void {
     const crossfadeSeconds = options.crossfadeSeconds ?? CROSSFADE_SECONDS;
     const activate = options.activate ?? false;
+
+    // Rewrite track names from VRM humanoid bone names (e.g. 'hips')
+    // to the actual scene node names (e.g. 'J_Bip_C_Hips').
+    // We do this once per (clip, vrm) pair and cache the result by
+    // stamping the clip's name with a marker so we don't rewrite twice.
+    const rewrittenClip = this.rewriteClipTrackNames(clip, clipId);
 
     // If a different clip is already installed under this state, retire it
     // to the fading-out set so the crossfade overlaps.
@@ -180,13 +193,7 @@ export class LocalVrmaPlayer {
       }
     }
 
-    // Tag the clip with the built-in marker so we can recognise it later.
-    // THREE.AnimationClip.name is mutable and safe to overwrite.
-    if (!clip.name.startsWith(BUILT_IN_CLIP_TAG)) {
-      clip.name = `${BUILT_IN_CLIP_TAG}:${clipId}`;
-    }
-
-    const action = this.mixer.clipAction(clip);
+    const action = this.mixer.clipAction(rewrittenClip);
     action.setLoop(THREE.LoopRepeat, Infinity);
     action.clampWhenFinished = false;
     this.actions.set(state, action);
@@ -195,13 +202,126 @@ export class LocalVrmaPlayer {
     this.builtInClipIds.set(state, clipId);
     this.loadedClipMetadata.set(state, {
       targetState: state,
-      durationSeconds: clip.duration,
+      durationSeconds: rewrittenClip.duration,
     });
 
     if (activate || this.activeState === state) {
       action.reset().fadeIn(crossfadeSeconds).play();
       this.activeState = state;
     }
+  }
+
+  /**
+   * Rewrite a built-in clip's track names from VRM humanoid bone names
+   * (e.g. `hips`, `leftUpperArm`, `head`) to the actual node names in the
+   * VRM scene (e.g. `J_Bip_C_Hips`, `J_Bip_L_UpperArm`).
+   *
+   * This mirrors what `createVRMAnimationClip` from @pixiv/three-vrm-animation
+   * does for .vrma files: it looks up each bone via
+   * `humanoid.getNormalizedBoneNode(name)` and uses the resulting node's
+   * `.name` property as the new track name prefix.
+   *
+   * Returns the same clip instance if no rewriting is needed (e.g. all
+   * tracks already resolve, or the VRM has no humanoid rig). Otherwise
+   * returns a new clip with rewritten track names. The original clip is
+   * left untouched so it can be safely cached and reused for other VRMs.
+   *
+   * For VRM 0.x models, the X-axis of rotation tracks is negated to
+   * account for the coordinate-system difference between VRM 0.x (Y-up,
+   * Z-forward, left-handed) and VRM 1.0 (Y-up, Z-backward, right-handed).
+   */
+  private rewriteClipTrackNames(clip: THREE.AnimationClip, clipId: string): THREE.AnimationClip {
+    const humanoid = this.vrm.humanoid;
+    if (!humanoid) return clip;
+
+    // Detect VRM 0.x vs 1.0 from meta version. VRM 0.x needs X-axis negation.
+    const meta = this.vrm.meta as { metaVersion?: string } | undefined;
+    const metaVersion: '0' | '1' = meta?.metaVersion === '1' ? '1' : '0';
+
+    // Build a lookup map: bone name (e.g. 'hips') → scene node name.
+    // VRMHumanBoneName is a fixed union; we resolve only the bones our
+    // built-in clips actually use.
+    const BONES_USED = [
+      'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+      'leftShoulder', 'rightShoulder',
+      'leftUpperArm', 'rightUpperArm',
+      'leftLowerArm', 'rightLowerArm',
+      'leftHand', 'rightHand',
+      'leftUpperLeg', 'rightUpperLeg',
+      'leftLowerLeg', 'rightLowerLeg',
+      'leftFoot', 'rightFoot',
+      'leftToes', 'rightToes',
+    ] as const;
+
+    const boneNameToNodeName = new Map<string, string>();
+    for (const bone of BONES_USED) {
+      // Use the RAW bone node — the normalized bone node is a virtual
+      // object managed by three-vrm-core for pose math, and is NOT
+      // reachable from the mixer's root (vrm.scene). The mixer's
+      // PropertyBinding searches scene descendants, so we need the
+      // actual node that lives in vrm.scene.
+      const node = humanoid.getRawBoneNode(bone);
+      if (node?.name) {
+        boneNameToNodeName.set(bone, node.name);
+      }
+    }
+
+    // If we couldn't resolve any bones, return the original clip.
+    if (boneNameToNodeName.size === 0) return clip;
+
+    // Rewrite each track's name. Tracks that don't match a known bone
+    // (e.g. `hips.position` where hips isn't a bone) are left alone —
+    // they'll become no-ops at runtime, which is fine.
+    const newTracks = clip.tracks.map((track) => {
+      const dotIndex = track.name.lastIndexOf('.');
+      if (dotIndex <= 0) return track;
+      const boneName = track.name.substring(0, dotIndex);
+      const property = track.name.substring(dotIndex + 1); // 'quaternion' or 'position'
+      const nodeName = boneNameToNodeName.get(boneName);
+      if (!nodeName) return track;
+
+      // VRM 0.x: negate X component of rotation tracks (every 2nd value
+      // starting from index 0 in a quaternion [x, y, z, w, x, y, z, w, ...]).
+      // Also: VRM 0.x is left-handed, so positions need x and z negated.
+      if (metaVersion === '0' && property === 'quaternion') {
+        // Track values can be Float32Array or number[] — slice() returns
+        // the same type. We mutate the cloned copy in place.
+        const cloned = track.values.slice();
+        for (let i = 0; i < cloned.length; i += 4) {
+          cloned[i] = -cloned[i]; // negate x
+        }
+        const newTrack = track.clone();
+        newTrack.name = `${nodeName}.quaternion`;
+        newTrack.values = cloned;
+        return newTrack;
+      }
+
+      if (metaVersion === '0' && property === 'position') {
+        const cloned = track.values.slice();
+        // Negate X and Z (every 1st and 3rd of every 3 values)
+        for (let i = 0; i < cloned.length; i += 3) {
+          cloned[i] = -cloned[i];     // x
+          cloned[i + 2] = -cloned[i + 2]; // z
+        }
+        const newTrack = track.clone();
+        newTrack.name = `${nodeName}.position`;
+        newTrack.values = cloned;
+        return newTrack;
+      }
+
+      // VRM 1.0 — just rename the track, no value negation.
+      const newTrack = track.clone();
+      newTrack.name = `${nodeName}.${property}`;
+      return newTrack;
+    });
+
+    const newClip = new THREE.AnimationClip(
+      `${BUILT_IN_CLIP_TAG}:${clipId}`,
+      clip.duration,
+      newTracks,
+      clip.blendMode,
+    );
+    return newClip;
   }
 
   /**

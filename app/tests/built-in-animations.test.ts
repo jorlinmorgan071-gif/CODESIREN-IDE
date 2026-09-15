@@ -21,6 +21,7 @@ import {
 } from '../src/lib/built-in-animations';
 import {
   getAvatarPersonality,
+  inferTemperamentFromCapabilities,
   listAvatarPersonalities,
   pickRandom,
   sampleExponentialSeconds,
@@ -35,6 +36,7 @@ import {
 import {
   createAutoCycleState,
   ensureBuiltInForState,
+  finalisePersonalityWithCapabilities,
   tickAutoCycle,
   tryIssueGreeting,
   markUserActivity,
@@ -141,7 +143,9 @@ describe('avatar personality profiles', () => {
 
   it('falls back to the default personality for unknown avatar ids', () => {
     const unknown = getAvatarPersonality('some-random-id');
-    expect(unknown.avatarId).toBe('default');
+    expect(unknown.avatarId).toBe('some-random-id');
+    expect(unknown.temperament).toBe('balanced');
+    expect(unknown.source).toBe('inferred');
     expect(getAvatarPersonality(null).avatarId).toBe('default');
   });
 
@@ -158,6 +162,101 @@ describe('avatar personality profiles', () => {
       expect(v).toBeGreaterThan(0);
       expect(Number.isFinite(v)).toBe(true);
     }
+  });
+
+  it('infers a bubbly temperament for a fully-featured avatar (look-at + many expressions + spring bones)', () => {
+    const caps: AvatarCapabilities = {
+      vrmVersion: '1.0',
+      hasHumanoid: true,
+      expressionManagerAvailable: true,
+      expressionNames: ['happy', 'sad', 'angry', 'blink', 'surprised', 'relaxed', 'aa', 'ee', 'ih', 'oh', 'ou', 'neutral', 'lookLeft', 'lookRight'],
+      hasLookAt: true,
+      hasSpringBones: true,
+      springBoneCount: 8,
+      colliderCount: 2,
+      vrmaCompatible: true,
+      lipSyncCompatible: true,
+      warnings: [],
+    };
+    expect(inferTemperamentFromCapabilities(caps)).toBe('bubbly');
+  });
+
+  it('infers a stoic temperament for an avatar with no humanoid rig', () => {
+    const caps: AvatarCapabilities = {
+      vrmVersion: '0.x',
+      hasHumanoid: false,
+      expressionManagerAvailable: true,
+      expressionNames: ['happy', 'sad'],
+      hasLookAt: false,
+      hasSpringBones: false,
+      springBoneCount: 0,
+      colliderCount: 0,
+      vrmaCompatible: false,
+      lipSyncCompatible: false,
+      warnings: [],
+    };
+    expect(inferTemperamentFromCapabilities(caps)).toBe('stoic');
+  });
+
+  it('infers a balanced temperament for an avatar with look-at and medium expressions', () => {
+    const caps: AvatarCapabilities = {
+      vrmVersion: '1.0',
+      hasHumanoid: true,
+      expressionManagerAvailable: true,
+      expressionNames: ['happy', 'sad', 'angry', 'blink', 'aa', 'ee', 'ih'],
+      hasLookAt: true,
+      hasSpringBones: false,
+      springBoneCount: 0,
+      colliderCount: 0,
+      vrmaCompatible: true,
+      lipSyncCompatible: true,
+      warnings: [],
+    };
+    expect(inferTemperamentFromCapabilities(caps)).toBe('balanced');
+  });
+
+  it('infers a graceful temperament for an avatar with expressions but no look-at', () => {
+    const caps: AvatarCapabilities = {
+      vrmVersion: '1.0',
+      hasHumanoid: true,
+      expressionManagerAvailable: true,
+      expressionNames: ['happy', 'sad', 'angry', 'blink', 'aa', 'ee', 'ih', 'oh'],
+      hasLookAt: false,
+      hasSpringBones: false,
+      springBoneCount: 0,
+      colliderCount: 0,
+      vrmaCompatible: true,
+      lipSyncCompatible: true,
+      warnings: [],
+    };
+    expect(inferTemperamentFromCapabilities(caps)).toBe('graceful');
+  });
+
+  it('returns a custom-avatar personality with source="inferred" when capabilities are provided', () => {
+    const caps: AvatarCapabilities = {
+      vrmVersion: '1.0',
+      hasHumanoid: true,
+      expressionManagerAvailable: true,
+      expressionNames: ['happy', 'sad', 'angry', 'blink', 'surprised', 'relaxed', 'aa', 'ee', 'ih', 'oh', 'ou', 'neutral'],
+      hasLookAt: true,
+      hasSpringBones: true,
+      springBoneCount: 4,
+      colliderCount: 1,
+      vrmaCompatible: true,
+      lipSyncCompatible: true,
+      warnings: [],
+    };
+    const p = getAvatarPersonality('custom-1234-abc', { capabilities: caps });
+    expect(p.avatarId).toBe('custom-1234-abc');
+    expect(p.source).toBe('inferred');
+    expect(p.temperament).toBe('bubbly');
+  });
+
+  it('returns a balanced personality for a custom avatar before capabilities are detected', () => {
+    const p = getAvatarPersonality('custom-1234-abc');
+    expect(p.avatarId).toBe('custom-1234-abc');
+    expect(p.source).toBe('inferred');
+    expect(p.temperament).toBe('balanced');
   });
 });
 
@@ -248,11 +347,11 @@ const stubCapabilities = {
   vrmVersion: '0.x' as const,
   hasHumanoid: true,
   expressionManagerAvailable: true,
-  expressionNames: ['happy', 'blink', 'surprised', 'relaxed'],
+  expressionNames: ['happy', 'sad', 'angry', 'blink', 'surprised', 'relaxed', 'aa', 'ee', 'ih', 'oh', 'ou', 'neutral', 'lookLeft', 'lookRight'],
   hasLookAt: true,
   hasSpringBones: true,
-  springBoneCount: 1,
-  colliderCount: 0,
+  springBoneCount: 8,
+  colliderCount: 2,
   vrmaCompatible: true,
   lipSyncCompatible: true,
   warnings: [],
@@ -339,5 +438,40 @@ describe('auto-cycle scheduler', () => {
       deltaSeconds: 0.016,
     });
     expect(result.expressionSample).toBeNull();
+  });
+
+  it('finalisePersonalityWithCapabilities re-resolves personality for custom avatars based on traits', () => {
+    const state = createAutoCycleState('custom-1234-abc', 0);
+    // Before finalisation, custom avatars default to balanced.
+    expect(state.personality.temperament).toBe('balanced');
+    expect(state.personalityFinalised).toBe(false);
+
+    // Fully-featured caps → bubbly
+    finalisePersonalityWithCapabilities(state, 'custom-1234-abc', stubCapabilities);
+    expect(state.personality.temperament).toBe('bubbly');
+    expect(state.personalityFinalised).toBe(true);
+
+    // Calling again with different caps doesn't override — finalised is final.
+    const capsAfter = { ...stubCapabilities, expressionNames: ['happy'], hasLookAt: false, hasSpringBones: false, springBoneCount: 0 };
+    finalisePersonalityWithCapabilities(state, 'custom-1234-abc', capsAfter);
+    expect(state.personality.temperament).toBe('bubbly');
+  });
+
+  it('finalisePersonalityWithCapabilities skips built-in avatars', () => {
+    const state = createAutoCycleState('hatsune-miku', 0);
+    expect(state.personality.temperament).toBe('bubbly');
+    // Pass caps that would have inferred "stoic" if applied.
+    const stoicCaps: AvatarCapabilities = {
+      ...stubCapabilities,
+      hasHumanoid: false,
+      expressionNames: ['happy'],
+      hasLookAt: false,
+      hasSpringBones: false,
+      springBoneCount: 0,
+    };
+    finalisePersonalityWithCapabilities(state, 'hatsune-miku', stoicCaps);
+    // Built-in personality is preserved.
+    expect(state.personality.temperament).toBe('bubbly');
+    expect(state.personalityFinalised).toBe(true);
   });
 });

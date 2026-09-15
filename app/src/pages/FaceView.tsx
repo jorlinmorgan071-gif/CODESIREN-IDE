@@ -61,6 +61,7 @@ import { canAttachLipSyncNode, LatestOperationGate } from '@/lib/runtime-coordin
 import {
   createAutoCycleState,
   ensureBuiltInForState,
+  finalisePersonalityWithCapabilities,
   resetForNewModel,
   tickAutoCycle,
   tryIssueGreeting,
@@ -209,6 +210,15 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
     });
     return () => { cancelled = true; };
   }, [animationRegistry, capabilities, compatibility.profile, vrm, onAnimationError]);
+
+  // Once a custom avatar's capabilities have been detected, re-resolve its
+  // personality against the trait-based inference. Built-in avatars skip
+  // this (their personality is shipped in code). Runs once per model load.
+  useEffect(() => {
+    const cycle = autoCycleRef.current;
+    if (!cycle) return;
+    finalisePersonalityWithCapabilities(cycle, extractAvatarModelId(avatarUrl), capabilities);
+  }, [capabilities, avatarUrl]);
 
   useEffect(() => {
     motionRef.current = reduceAvatarMotion(motionRef.current, {
