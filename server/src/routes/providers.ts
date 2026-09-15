@@ -12,7 +12,7 @@
 
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
-import { listProviders, getProvider, updateProviderConfig, testAndLoadModels } from '../provider-registry/registry.js';
+import { listProviders, getProvider, updateProviderConfig, testAndLoadModels, selectVoice, resetProvider } from '../provider-registry/registry.js';
 import type { ProviderRegistryEntry } from '../provider-registry/types.js';
 
 export const providersRouter = Router();
@@ -41,9 +41,12 @@ function serializeProvider(entry: ProviderRegistryEntry) {
     apiKeyIsSet: !!entry.apiKey,
     connectionTested: entry.connectionTested,
     models: entry.models,
+    voices: entry.voices,
+    selectedVoiceId: entry.selectedVoiceId,
     lastError: entry.lastError,
     lastLoadedAt: entry.lastLoadedAt,
     modelCount: entry.models.length,
+    voiceCount: entry.voices.length,
   };
 }
 
@@ -114,4 +117,37 @@ providersRouter.patch('/:id', requireAuth, (req, res) => {
 
   const updated = updateProviderConfig(providerId, patch);
   res.json({ provider: serializeProvider(updated!) });
+});
+
+// POST /api/providers/:id/select-voice — select a voice system-wide (TTS category only)
+// This is the "system-wide selected voice" action. It:
+//   1. Updates the registry entry's selectedVoiceId
+//   2. Calls applyVoiceProvider() to swap the active TTSProvider at runtime
+// The next speak() call uses the newly-selected voice.
+providersRouter.post('/:id/select-voice', requireAuth, async (req, res) => {
+  const providerId = req.params.id;
+  const voiceId = req.body?.voiceId;
+  if (typeof voiceId !== 'string' || !voiceId) {
+    res.status(400).json({ error: 'Missing voiceId in body' });
+    return;
+  }
+
+  const entry = getProvider(providerId);
+  if (!entry) {
+    res.status(404).json({ error: `Unknown provider: ${providerId}` });
+    return;
+  }
+  if (entry.category !== 'tts') {
+    res.status(400).json({ error: `Provider ${providerId} is not a TTS provider (category: ${entry.category})` });
+    return;
+  }
+
+  const result = await selectVoice(providerId, voiceId);
+  if (!result.success) {
+    res.status(500).json({ error: result.error });
+    return;
+  }
+
+  const updated = getProvider(providerId)!;
+  res.json({ success: true, provider: serializeProvider(updated) });
 });

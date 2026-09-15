@@ -257,10 +257,11 @@ describe('UPR Phase 1 Step 3 — ProviderRegistry', () => {
     expect(result.error!).toContain('ECONNREFUSED');
   });
 
-  // ── TEST 9: listProviders returns all 2 providers with correct shape ─
-  it('listProviders returns OpenRouter + Anthropic with correct seed data', () => {
+  // ── TEST 9: listProviders returns all providers with correct shape ────
+  it('listProviders returns OpenRouter + Anthropic + TTS providers with correct seed data', () => {
     const providers = listProviders();
-    expect(providers.length).toBe(2);
+    // Phase 1: 2 LLM providers. Phase 2 Step 2a: + 11 TTS providers = 13 total.
+    expect(providers.length).toBe(13);
 
     const openrouter = providers.find((p) => p.id === 'openrouter')!;
     expect(openrouter.category).toBe('llm');

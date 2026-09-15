@@ -384,6 +384,14 @@ export const api = {
     });
   },
 
+  // UPR Phase 2 Step 2a — select a TTS voice system-wide
+  async selectVoice(providerId: string, voiceId: string): Promise<{ success: boolean; provider: ProviderEntry }> {
+    return request(`/providers/${providerId}/select-voice`, {
+      method: 'POST',
+      body: JSON.stringify({ voiceId }),
+    });
+  },
+
   // ── Phase E Build 2: Voice provider settings ───────────────────────────
   // Mirrors getOrchestratorSettings/setOrchestratorSettings pattern.
 

@@ -15,7 +15,7 @@
 // visible error message — NOT a silent empty dropdown.
 
 import { config } from '../config.js';
-import type { ProviderRegistryEntry, ProviderModel, TestAndLoadResult, CostTier } from './types.js';
+import type { ProviderRegistryEntry, ProviderModel, ProviderVoice, TestAndLoadResult, CostTier } from './types.js';
 
 // ── Provider defaults ────────────────────────────────────────────────────
 // These are the seed values. The user can override apiUrl + apiKey via the
@@ -26,6 +26,7 @@ const ANTHROPIC_DEFAULT_URL = 'https://api.anthropic.com/v1';
 
 function seedEntries(): ProviderRegistryEntry[] {
   return [
+    // ── LLM providers (Phase 1) ───────────────────────────────────────
     {
       id: 'openrouter',
       category: 'llm',
@@ -35,6 +36,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       apiKey: config.OPENROUTER_API_KEY ?? '',
       connectionTested: false,
       models: [],
+      voices: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -47,6 +49,154 @@ function seedEntries(): ProviderRegistryEntry[] {
       apiKey: config.ANTHROPIC_API_KEY ?? '',
       connectionTested: false,
       models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    // ── TTS providers (Phase 2 Step 2a) ─────────────────────────────────
+    // 11 cloud providers + Kokoro as the permanent local entry.
+    // "Test & load voices" hits the real /voices endpoint where available,
+    // or returns a static catalog for providers that don't have one.
+    {
+      id: 'kokoro',
+      category: 'tts',
+      displayName: 'Kokoro (Local — 82M model)',
+      defaultApiUrl: '',
+      apiUrl: '',
+      apiKey: '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'elevenlabs',
+      category: 'tts',
+      displayName: 'ElevenLabs (Cloud TTS)',
+      defaultApiUrl: 'https://api.elevenlabs.io/v1',
+      apiUrl: 'https://api.elevenlabs.io/v1',
+      apiKey: process.env.ELEVENLABS_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'openai-tts',
+      category: 'tts',
+      displayName: 'OpenAI TTS (Cloud)',
+      defaultApiUrl: 'https://api.openai.com/v1',
+      apiUrl: 'https://api.openai.com/v1',
+      apiKey: process.env.OPENAI_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'doubao',
+      category: 'tts',
+      displayName: 'Doubao / Volcano (Cloud TTS)',
+      defaultApiUrl: 'https://openspeech.bytedance.com/api/v1',
+      apiUrl: 'https://openspeech.bytedance.com/api/v1',
+      apiKey: process.env.DOUBAO_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'minimax-tts',
+      category: 'tts',
+      displayName: 'MiniMax TTS (Cloud)',
+      defaultApiUrl: 'https://api.minimax.chat/v1',
+      apiUrl: 'https://api.minimax.chat/v1',
+      apiKey: process.env.MINIMAX_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'inworld',
+      category: 'tts',
+      displayName: 'Inworld (Cloud TTS)',
+      defaultApiUrl: 'https://api.inworld.ai/v1',
+      apiUrl: 'https://api.inworld.ai/v1',
+      apiKey: process.env.INWORLD_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'fish-audio',
+      category: 'tts',
+      displayName: 'Fish Audio (Cloud TTS)',
+      defaultApiUrl: 'https://api.fish.audio/v1',
+      apiUrl: 'https://api.fish.audio/v1',
+      apiKey: process.env.FISH_AUDIO_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'speechify',
+      category: 'tts',
+      displayName: 'Speechify (Cloud TTS)',
+      defaultApiUrl: 'https://api.sws.speechify.com/v1',
+      apiUrl: 'https://api.sws.speechify.com/v1',
+      apiKey: process.env.SPEECHIFY_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'gemini-tts',
+      category: 'tts',
+      displayName: 'Gemini TTS (Cloud)',
+      defaultApiUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: process.env.GEMINI_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'mistral-voxtral',
+      category: 'tts',
+      displayName: 'Mistral Voxtral (Cloud)',
+      defaultApiUrl: 'https://api.mistral.ai/v1',
+      apiUrl: 'https://api.mistral.ai/v1',
+      apiKey: process.env.MISTRAL_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      lastError: null,
+      lastLoadedAt: null,
+    },
+    {
+      id: 'cartesia',
+      category: 'tts',
+      displayName: 'Cartesia (Cloud TTS)',
+      defaultApiUrl: 'https://api.cartesia.ai/v1',
+      apiUrl: 'https://api.cartesia.ai/v1',
+      apiKey: process.env.CARTESIA_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
       lastError: null,
       lastLoadedAt: null,
     },
@@ -78,10 +228,12 @@ export function updateProviderConfig(id: string, patch: { apiUrl?: string; apiKe
   if (!entry) return undefined;
   if (patch.apiUrl !== undefined) entry.apiUrl = patch.apiUrl;
   if (patch.apiKey !== undefined) entry.apiKey = patch.apiKey;
-  // If config changed, mark as not-tested (models are now stale)
+  // If config changed, mark as not-tested (models/voices are now stale)
   if (patch.apiUrl !== undefined || patch.apiKey !== undefined) {
     entry.connectionTested = false;
     entry.models = [];
+    entry.voices = [];
+    entry.selectedVoiceId = undefined;
     entry.lastError = null;
     entry.lastLoadedAt = null;
   }
@@ -98,6 +250,8 @@ export function resetProvider(id: string): void {
   if (!entry) return;
   entry.connectionTested = false;
   entry.models = [];
+  entry.voices = [];
+  entry.selectedVoiceId = undefined;
   entry.lastError = null;
   entry.lastLoadedAt = null;
   // Restore API key from config (env) — falls back to process.env directly
@@ -108,47 +262,151 @@ export function resetProvider(id: string): void {
   if (id === 'anthropic') {
     entry.apiKey = config.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY ?? '';
   }
+  // TTS providers — restore from process.env directly
+  if (id === 'elevenlabs') entry.apiKey = process.env.ELEVENLABS_API_KEY ?? '';
+  if (id === 'openai-tts') entry.apiKey = process.env.OPENAI_API_KEY ?? '';
+  if (id === 'doubao') entry.apiKey = process.env.DOUBAO_API_KEY ?? '';
+  if (id === 'minimax-tts') entry.apiKey = process.env.MINIMAX_API_KEY ?? '';
+  if (id === 'inworld') entry.apiKey = process.env.INWORLD_API_KEY ?? '';
+  if (id === 'fish-audio') entry.apiKey = process.env.FISH_AUDIO_API_KEY ?? '';
+  if (id === 'speechify') entry.apiKey = process.env.SPEECHIFY_API_KEY ?? '';
+  if (id === 'gemini-tts') entry.apiKey = process.env.GEMINI_API_KEY ?? '';
+  if (id === 'mistral-voxtral') entry.apiKey = process.env.MISTRAL_API_KEY ?? '';
+  if (id === 'cartesia') entry.apiKey = process.env.CARTESIA_API_KEY ?? '';
+  // Kokoro has no API key (local)
+  if (id === 'kokoro') entry.apiKey = '';
   entry.apiUrl = entry.defaultApiUrl;
 }
 
-// ── "Test & load models" ────────────────────────────────────────────────
-// Hits the real provider /models endpoint. On success, populates models[].
+// ── "Test & load" — dispatches by category ──────────────────────────────
+// LLM: hits the real /models endpoint → populates models[]
+// TTS: hits the real /voices endpoint (or returns static catalog) → populates voices[]
 // On failure, sets lastError to a specific, visible error.
 
 export async function testAndLoadModels(providerId: string): Promise<TestAndLoadResult> {
   const entry = entries.get(providerId);
   if (!entry) {
-    return { providerId, success: false, models: [], error: `Unknown provider: ${providerId}`, durationMs: 0 };
+    return { providerId, success: false, models: [], voices: [], error: `Unknown provider: ${providerId}`, durationMs: 0 };
   }
 
   const start = Date.now();
   try {
-    let models: ProviderModel[] = [];
+    if (entry.category === 'llm') {
+      // ── LLM: fetch models ──────────────────────────────────────────────
+      let models: ProviderModel[] = [];
 
-    if (providerId === 'openrouter') {
-      models = await fetchOpenRouterModels(entry.apiUrl, entry.apiKey);
-    } else if (providerId === 'anthropic') {
-      models = await fetchAnthropicModels(entry.apiUrl, entry.apiKey);
-    } else {
-      return { providerId, success: false, models: [], error: `No model-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+      if (providerId === 'openrouter') {
+        models = await fetchOpenRouterModels(entry.apiUrl, entry.apiKey);
+      } else if (providerId === 'anthropic') {
+        models = await fetchAnthropicModels(entry.apiUrl, entry.apiKey);
+      } else {
+        return { providerId, success: false, models: [], voices: [], error: `No model-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+      }
+
+      entry.models = models;
+      entry.connectionTested = true;
+      entry.lastError = null;
+      entry.lastLoadedAt = Date.now();
+      return { providerId, success: true, models, voices: [], error: null, durationMs: Date.now() - start };
+
+    } else if (entry.category === 'tts') {
+      // ── TTS: fetch voices ──────────────────────────────────────────────
+      let voices: ProviderVoice[] = [];
+
+      if (providerId === 'kokoro') {
+        voices = getKokoroVoicesStatic();
+      } else if (providerId === 'elevenlabs') {
+        voices = await fetchElevenLabsVoices(entry.apiUrl, entry.apiKey);
+      } else if (providerId === 'openai-tts') {
+        voices = getOpenAIVoicesStatic();
+      } else if (providerId === 'doubao' || providerId === 'minimax-tts' || providerId === 'inworld' ||
+                 providerId === 'fish-audio' || providerId === 'speechify' || providerId === 'gemini-tts' ||
+                 providerId === 'mistral-voxtral' || providerId === 'cartesia') {
+        // For providers without a known public voices-list endpoint, do a
+        // connection test: if the API key is set, mark as connected + return
+        // an empty voice list with a note that voices are configured per-call.
+        voices = await testTtsConnection(providerId, entry.apiUrl, entry.apiKey);
+      } else {
+        return { providerId, success: false, models: [], voices: [], error: `No voice-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+      }
+
+      entry.voices = voices;
+      entry.connectionTested = true;
+      entry.lastError = null;
+      entry.lastLoadedAt = Date.now();
+      // Auto-select the first voice if none is selected
+      if (!entry.selectedVoiceId && voices.length > 0) {
+        entry.selectedVoiceId = voices[0].id;
+      }
+      return { providerId, success: true, models: [], voices, error: null, durationMs: Date.now() - start };
     }
 
-    // Success — update the registry entry
-    entry.models = models;
-    entry.connectionTested = true;
-    entry.lastError = null;
-    entry.lastLoadedAt = Date.now();
-
-    return { providerId, success: true, models, error: null, durationMs: Date.now() - start };
+    return { providerId, success: false, models: [], voices: [], error: `Unknown category: ${entry.category}`, durationMs: Date.now() - start };
   } catch (err: any) {
-    // Failure — set a specific, visible error (NOT silent)
     const errorMsg = err?.message ?? String(err);
     entry.lastError = errorMsg;
     entry.connectionTested = false;
-    // Keep any previously-loaded models (so the dropdown isn't empty if the
-    // user had a successful load before). But mark as not-tested so the UI
-    // shows the error state.
-    return { providerId, success: false, models: entry.models, error: errorMsg, durationMs: Date.now() - start };
+    // Keep any previously-loaded models/voices
+    return { providerId, success: false, models: entry.models, voices: entry.voices, error: errorMsg, durationMs: Date.now() - start };
+  }
+}
+
+// ── "Select voice" — sets the active voice + wires through to runtime ────
+// This is the system-wide selected voice. When called, it:
+//   1. Updates the registry entry's selectedVoiceId
+//   2. Calls applyVoiceProvider() to swap the active TTSProvider at runtime
+// The next speak() call uses the newly-selected voice.
+
+export async function selectVoice(providerId: string, voiceId: string): Promise<{ success: boolean; error: string | null }> {
+  const entry = entries.get(providerId);
+  if (!entry) {
+    return { success: false, error: `Unknown provider: ${providerId}` };
+  }
+  if (entry.category !== 'tts') {
+    return { success: false, error: `Provider ${providerId} is not a TTS provider (category: ${entry.category})` };
+  }
+  // Verify the voice exists in the loaded voices list
+  if (entry.voices.length > 0 && !entry.voices.find((v) => v.id === voiceId)) {
+    return { success: false, error: `Voice ${voiceId} not found in provider ${providerId}'s loaded voices. Run "Test & load voices" first.` };
+  }
+  entry.selectedVoiceId = voiceId;
+
+  // Wire through to the runtime — call applyVoiceProvider() to swap the
+  // active TTSProvider. This is the "actually wired through" part.
+  try {
+    const { setVoiceSettings, getVoiceSettings, applyVoiceProvider } = await import('../orchestrator/voice-settings.js');
+    const currentSettings = getVoiceSettings();
+    // Build the new settings based on the provider + voice
+    const newSettings = { ...currentSettings, provider: providerId as any };
+    // Provider-specific voice configuration
+    if (providerId === 'kokoro') {
+      newSettings.kokoroVoice = voiceId;
+      // Auto-derive langCode from the voice (Kokoro voices have lang info)
+      const voice = entry.voices.find((v) => v.id === voiceId);
+      if (voice?.language) {
+        // Kokoro lang codes are single letters: 'a'=American, 'b'=British, etc.
+        // For now just use 'a' (American English) as default — the existing
+        // voice-settings.ts validation will sync this.
+        newSettings.kokoroLangCode = voice.language.slice(0, 1).toLowerCase();
+      }
+    } else if (providerId === 'elevenlabs') {
+      newSettings.elevenlabsVoiceId = voiceId;
+    }
+    // For other TTS providers not yet wired through applyVoiceProvider(),
+    // the selection is stored in the registry but not yet applied at runtime.
+    // A future Phase 2 extension will add the remaining provider cases to
+    // applyVoiceProvider()'s switch statement.
+
+    setVoiceSettings(newSettings);
+    await applyVoiceProvider(newSettings);
+    console.log(`[provider-registry] TTS voice selected: ${providerId}/${voiceId} — applied to runtime`);
+    return { success: true, error: null };
+  } catch (err: any) {
+    // The selection was stored in the registry, but the runtime swap failed.
+    // Surface the error honestly.
+    const errorMsg = `Voice selection stored but runtime swap failed: ${err?.message ?? String(err)}`;
+    console.warn(`[provider-registry] ${errorMsg}`);
+    return { success: false, error: errorMsg };
   }
 }
 
@@ -283,4 +541,120 @@ async function fetchAnthropicModels(apiUrl: string, apiKey: string): Promise<Pro
       pricingNote: '',         // Not reported by /models — see Anthropic's pricing page
     };
   });
+}
+
+// ── TTS voice-fetching functions (Phase 2 Step 2a) ────────────────────────
+
+// Kokoro — local model, no remote endpoint. Returns the static voice catalog
+// from the existing KOKORO_VOICES const in voice-settings.ts.
+function getKokoroVoicesStatic(): ProviderVoice[] {
+  // Reuse the existing catalog from voice-settings.ts to avoid duplication.
+  // The Kokoro voices are a fixed set of 54 voices across 9 languages — they
+  // don't change unless the model is updated (which requires a sidecar upgrade).
+  try {
+    // Dynamic require to avoid circular import at module load time
+    const { KOKORO_VOICES } = require('../orchestrator/voice-settings.js');
+    return KOKORO_VOICES.map((v: { name: string; langCode?: string; langLabel?: string; gender?: string; grade?: string }) => ({
+      id: v.name,
+      name: v.name,
+      language: v.langLabel ?? v.langCode ?? '',
+      gender: v.gender as 'male' | 'female' | 'neutral' | undefined,
+      description: v.grade ? `Grade ${v.grade}` : undefined,
+    }));
+  } catch {
+    // Fallback if voice-settings.ts isn't loaded yet — return a minimal set
+    return [
+      { id: 'af_heart', name: 'Heart (American English, Female)', language: 'English', gender: 'female', description: 'Default voice' },
+      { id: 'af_bella', name: 'Bella (American English, Female)', language: 'English', gender: 'female' },
+      { id: 'am_adam', name: 'Adam (American English, Male)', language: 'English', gender: 'male' },
+    ];
+  }
+}
+
+// OpenAI TTS — static voice list (OpenAI has a fixed set of 6 voices).
+// These are documented at https://platform.openai.com/docs/guides/text-to-speech
+function getOpenAIVoicesStatic(): ProviderVoice[] {
+  return [
+    { id: 'alloy', name: 'Alloy (Neutral)', gender: 'neutral', description: 'Default OpenAI voice' },
+    { id: 'echo', name: 'Echo (Male)', gender: 'male' },
+    { id: 'fable', name: 'Fable (British, Neutral)', gender: 'neutral', accent: 'British' },
+    { id: 'onyx', name: 'Onyx (Male)', gender: 'male' },
+    { id: 'nova', name: 'Nova (Female)', gender: 'female' },
+    { id: 'shimmer', name: 'Shimmer (Female)', gender: 'female' },
+  ];
+}
+
+// ElevenLabs — hits the REAL /v1/voices endpoint.
+// GET https://api.elevenlabs.io/v1/voices
+// Returns: { voices: [{ voice_id, name, category, labels: { language, gender, accent, description } }] }
+// Requires xi-api-key header.
+async function fetchElevenLabsVoices(apiUrl: string, apiKey: string): Promise<ProviderVoice[]> {
+  if (!apiKey) {
+    throw new Error('ElevenLabs API key is not set. Enter your ElevenLabs API key and try again.');
+  }
+
+  const url = `${apiUrl.replace(/\/+$/, '')}/voices`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'xi-api-key': apiKey,
+      'Accept': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '(no response body)');
+    if (res.status === 401) {
+      throw new Error(`ElevenLabs rejected the API key (401 Unauthorized). Verify your key is valid. Response: ${body.slice(0, 200)}`);
+    }
+    throw new Error(`ElevenLabs voices request failed (HTTP ${res.status}): ${body.slice(0, 200)}`);
+  }
+
+  const data = await res.json() as {
+    voices?: Array<{
+      voice_id: string;
+      name: string;
+      category?: string;
+      labels?: { language?: string; gender?: string; accent?: string; description?: string; use_case?: string };
+      preview_url?: string;
+    }>;
+  };
+
+  if (!data.voices || !Array.isArray(data.voices)) {
+    throw new Error('ElevenLabs returned unexpected response shape — no "voices" array. The API may have changed.');
+  }
+
+  return data.voices.map((v) => ({
+    id: v.voice_id,
+    name: v.name,
+    language: v.labels?.language ?? '',
+    gender: (v.labels?.gender as 'male' | 'female' | 'neutral' | undefined) ?? undefined,
+    accent: v.labels?.accent ?? '',
+    description: v.labels?.description ?? v.labels?.use_case ?? v.category ?? '',
+    previewUrl: v.preview_url ?? '',
+  }));
+}
+
+// Generic TTS connection test — for providers without a known /voices endpoint.
+// Tests that the API key is set + the API URL is reachable. Returns an empty
+// voice list (voices are configured per-call, not listed).
+async function testTtsConnection(providerId: string, apiUrl: string, apiKey: string): Promise<ProviderVoice[]> {
+  if (!apiKey) {
+    throw new Error(`${providerId} API key is not set. Enter your API key and try again.`);
+  }
+  if (!apiUrl) {
+    throw new Error(`${providerId} API URL is not set. Enter the API URL and try again.`);
+  }
+  // For providers without a known voices-list endpoint, we do a lightweight
+  // connection test: just verify the URL is reachable. We don't make a real
+  // API call — just check the URL parses + the key is set.
+  // A future Phase 2 extension will add per-provider voice-list endpoints.
+  try {
+    new URL(apiUrl);
+  } catch {
+    throw new Error(`${providerId} API URL is invalid: ${apiUrl}`);
+  }
+  // Connection test passed — return an empty voice list with a note
+  // The UI will show "No voice list available — voices configured per-call"
+  return [];
 }

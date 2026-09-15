@@ -352,7 +352,7 @@ export interface OrchestratorPlanSummary {
   updatedAt: number;
 }
 
-// ── UPR Phase 1 Step 3 — ProviderRegistry types ──────────────────────────
+// ── UPR Phase 1 Step 3 + Phase 2 Step 2a — ProviderRegistry types ──────────
 export interface ProviderModel {
   id: string;
   name: string;
@@ -365,9 +365,19 @@ export interface ProviderModel {
   pricingNote: string;
 }
 
+export interface ProviderVoice {
+  id: string;
+  name: string;
+  language?: string;
+  gender?: 'male' | 'female' | 'neutral';
+  accent?: string;
+  previewUrl?: string;
+  description?: string;
+}
+
 export interface ProviderEntry {
   id: string;
-  category: 'llm';
+  category: 'llm' | 'tts';
   displayName: string;
   defaultApiUrl: string;
   apiUrl: string;
@@ -375,9 +385,12 @@ export interface ProviderEntry {
   apiKeyIsSet: boolean;
   connectionTested: boolean;
   models: ProviderModel[];
+  voices: ProviderVoice[];
+  selectedVoiceId?: string;
   lastError: string | null;
   lastLoadedAt: number | null;
   modelCount: number;
+  voiceCount: number;
 }
 
 export interface ProviderTestResult {
