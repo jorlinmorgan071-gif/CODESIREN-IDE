@@ -420,6 +420,135 @@ export function onboardCustomProvider(opts: {
 }
 
 /**
+ * Phase 2 Step 2d — Test a custom provider's URL before onboarding.
+ *
+ * Hits the URL with a lightweight connectivity/auth check. This is NOT the
+ * full "Test & load models" action — it's a pre-onboarding probe to verify
+ * the URL is reachable and the key (if provided) authenticates.
+ *
+ * For LLM-type providers: tries GET <url>/models (OpenAI-compatible shape).
+ * For other types: just verifies the URL is reachable (HEAD or GET).
+ *
+ * Returns:
+ *   - success: true if the URL is reachable + auth works
+ *   - success: false if the URL is unreachable, auth fails, or the response
+ *     shape is unexpected — with a SPECIFIC error message
+ *   - detectedCategory: if the response shape strongly suggests a category
+ *     (e.g. /models returns an LLM model list), this is set so the
+ *     questionnaire can pre-fill the classification.
+ */
+export async function testCustomProviderUrl(opts: {
+  apiUrl: string;
+  apiKey?: string;
+}): Promise<{
+  success: boolean;
+  error: string | null;
+  detectedCategory: ProviderCategory | null;
+  detectedShape: string | null;
+  durationMs: number;
+}> {
+  const start = Date.now();
+  const { apiUrl, apiKey } = opts;
+
+  if (!apiUrl) {
+    return { success: false, error: 'API URL is required (TTS providers can skip this step).', detectedCategory: null, detectedShape: null, durationMs: 0 };
+  }
+
+  // Validate URL format
+  try {
+    new URL(apiUrl);
+  } catch {
+    return { success: false, error: `Invalid URL: ${apiUrl}. Make sure it starts with https://`, detectedCategory: null, detectedShape: null, durationMs: Date.now() - start };
+  }
+
+  // Try the OpenAI-compatible /models endpoint first (most LLM providers support this)
+  const modelsUrl = `${apiUrl.replace(/\/+$/, '')}/models`;
+  try {
+    const headers: Record<string, string> = {};
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    const res = await fetch(modelsUrl, { method: 'GET', headers, signal: AbortSignal.timeout(10_000) });
+
+    if (res.status === 401 || res.status === 403) {
+      return { success: false, error: `Authentication failed (HTTP ${res.status}). The API key is invalid or missing.`, detectedCategory: null, detectedShape: 'auth-failed', durationMs: Date.now() - start };
+    }
+
+    if (res.status === 404) {
+      // /models endpoint doesn't exist — try a bare GET to verify the host is reachable
+      try {
+        const rootRes = await fetch(apiUrl, { method: 'GET', signal: AbortSignal.timeout(10_000) });
+        if (rootRes.status < 500) {
+          // Host is reachable, just no /models endpoint
+          return {
+            success: true,
+            error: null,
+            detectedCategory: null,  // Can't auto-classify without /models
+            detectedShape: 'reachable-no-models-endpoint',
+            durationMs: Date.now() - start,
+          };
+        }
+      } catch {
+        // Root also failed — host is unreachable
+      }
+      return { success: false, error: `Could not reach ${modelsUrl} (404) and the root URL is also unreachable. Verify the URL is correct.`, detectedCategory: null, detectedShape: 'unreachable', durationMs: Date.now() - start };
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '(no response body)');
+      return { success: false, error: `URL returned HTTP ${res.status}: ${body.slice(0, 200)}`, detectedCategory: null, detectedShape: 'http-error', durationMs: Date.now() - start };
+    }
+
+    // Success — try to parse as JSON and detect the shape
+    const data = await res.json().catch(() => null) as any;
+    if (!data) {
+      return { success: true, error: null, detectedCategory: null, detectedShape: 'reachable-non-json', durationMs: Date.now() - start };
+    }
+
+    // Check if it looks like an LLM /models response (OpenAI-compatible: { data: [{ id, ... }] })
+    if (data.data && Array.isArray(data.data) && data.data.length > 0 && data.data[0].id) {
+      return {
+        success: true,
+        error: null,
+        detectedCategory: 'llm',
+        detectedShape: 'openai-compatible-models',
+        durationMs: Date.now() - start,
+      };
+    }
+
+    // Check if it looks like an ElevenLabs /voices response ({ voices: [{ voice_id, name }] })
+    if (data.voices && Array.isArray(data.voices) && data.voices.length > 0) {
+      return {
+        success: true,
+        error: null,
+        detectedCategory: 'tts',
+        detectedShape: 'elevenlabs-compatible-voices',
+        durationMs: Date.now() - start,
+      };
+    }
+
+    // Reachable + returned JSON, but unknown shape
+    return {
+      success: true,
+      error: null,
+      detectedCategory: null,
+      detectedShape: 'reachable-unknown-json',
+      durationMs: Date.now() - start,
+    };
+  } catch (err: any) {
+    const msg = err?.message ?? String(err);
+    if (msg.includes('aborted') || msg.includes('timeout') || msg.includes('Timeout')) {
+      return { success: false, error: `Connection timed out after 10s. The URL may be unreachable or behind a firewall.`, detectedCategory: null, detectedShape: 'timeout', durationMs: Date.now() - start };
+    }
+    if (msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED') || msg.includes('fetch failed')) {
+      return { success: false, error: `Could not reach that URL: ${msg}. Verify the URL is correct and the service is running.`, detectedCategory: null, detectedShape: 'network-error', durationMs: Date.now() - start };
+    }
+    return { success: false, error: `Connection failed: ${msg}`, detectedCategory: null, detectedShape: 'error', durationMs: Date.now() - start };
+  }
+}
+
+/**
  * Phase 2 Step 2d — Classify a provider into a category based on a short
  * questionnaire. The questionnaire asks what the provider does, and the
  * classifier maps the answers to one of the four categories.
@@ -430,16 +559,34 @@ export function onboardCustomProvider(opts: {
  *   2. "Does it require an API URL?" → boolean (TTS providers may not need one)
  *
  * The classification is deterministic and testable.
+ *
+ * Misclassification resilience: if the detectedCategory from the URL test
+ * contradicts the user's answer, we surface a warning but respect the user's
+ * explicit choice — the user knows their provider better than a heuristic.
  */
 export function classifyProvider(answers: {
   whatDoesItDo: 'generate-text' | 'generate-speech' | 'execute-tools' | 'generate-images';
-}): ProviderCategory {
-  switch (answers.whatDoesItDo) {
-    case 'generate-text':   return 'llm';
-    case 'generate-speech': return 'tts';
-    case 'execute-tools':   return 'tool';
-    case 'generate-images': return 'image-video';
+  detectedCategory?: ProviderCategory | null;  // from the URL test, if any
+}): { category: ProviderCategory; warning: string | null } {
+  const userCategory: ProviderCategory = (() => {
+    switch (answers.whatDoesItDo) {
+      case 'generate-text':   return 'llm';
+      case 'generate-speech': return 'tts';
+      case 'execute-tools':   return 'tool';
+      case 'generate-images': return 'image-video';
+    }
+  })();
+
+  // Misclassification resilience: if the URL test detected a different category,
+  // surface a warning but respect the user's explicit choice
+  if (answers.detectedCategory && answers.detectedCategory !== userCategory) {
+    return {
+      category: userCategory,
+      warning: `Warning: the URL test detected this looks like a ${answers.detectedCategory} provider, but you classified it as ${userCategory}. The provider will be registered as ${userCategory}. If "Test & load" fails later, try re-onboarding with the detected category (${answers.detectedCategory}).`,
+    };
   }
+
+  return { category: userCategory, warning: null };
 }
 
 export function updateProviderConfig(id: string, patch: { apiUrl?: string; apiKey?: string }): ProviderRegistryEntry | undefined {

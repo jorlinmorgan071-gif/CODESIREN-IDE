@@ -10,7 +10,7 @@
 // Method: direct registry calls — onboardCustomProvider + classifyProvider +
 // testAndLoadModels on the onboarded entry.
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 process.env.OPENAI_API_KEY = 'test-openai-key';
 process.env.ELEVENLABS_API_KEY = 'test-elevenlabs-key';
@@ -33,19 +33,27 @@ describe('UPR Phase 2 Step 2d — Custom provider onboarding', () => {
 
   // ── TEST 1: classifyProvider maps each answer to the correct category ──
   it('classifyProvider maps generate-text → llm', () => {
-    expect(classifyProvider({ whatDoesItDo: 'generate-text' })).toBe('llm');
+    const result = classifyProvider({ whatDoesItDo: 'generate-text' });
+    expect(result.category).toBe('llm');
+    expect(result.warning).toBeNull();
   });
 
   it('classifyProvider maps generate-speech → tts', () => {
-    expect(classifyProvider({ whatDoesItDo: 'generate-speech' })).toBe('tts');
+    const result = classifyProvider({ whatDoesItDo: 'generate-speech' });
+    expect(result.category).toBe('tts');
+    expect(result.warning).toBeNull();
   });
 
   it('classifyProvider maps execute-tools → tool', () => {
-    expect(classifyProvider({ whatDoesItDo: 'execute-tools' })).toBe('tool');
+    const result = classifyProvider({ whatDoesItDo: 'execute-tools' });
+    expect(result.category).toBe('tool');
+    expect(result.warning).toBeNull();
   });
 
   it('classifyProvider maps generate-images → image-video', () => {
-    expect(classifyProvider({ whatDoesItDo: 'generate-images' })).toBe('image-video');
+    const result = classifyProvider({ whatDoesItDo: 'generate-images' });
+    expect(result.category).toBe('image-video');
+    expect(result.warning).toBeNull();
   });
 
   // ── TEST 2: onboardCustomProvider creates a first-class registry entry ──
@@ -156,7 +164,7 @@ describe('UPR Phase 2 Step 2d — Custom provider onboarding', () => {
   // ── TEST 7: End-to-end — onboard + classify + verify category ─────────
   it('end-to-end: onboard a provider with generate-speech → classified as tts → appears in TTS list', () => {
     // Step 1: Classify
-    const category = classifyProvider({ whatDoesItDo: 'generate-speech' });
+    const { category } = classifyProvider({ whatDoesItDo: 'generate-speech' });
     expect(category).toBe('tts');
 
     // Step 2: Onboard
@@ -193,5 +201,135 @@ describe('UPR Phase 2 Step 2d — Custom provider onboarding', () => {
     expect(entry1.id).not.toBe(entry2.id);
     expect(getProvider(entry1.id)).toBeDefined();
     expect(getProvider(entry2.id)).toBeDefined();
+  });
+
+  // ── TEST 9: Misclassification resilience — warning on contradiction ────
+  it('classifyProvider surfaces a warning when detectedCategory contradicts user answer', () => {
+    // URL test detected LLM (openai-compatible /models response)
+    // but user says it generates images
+    const result = classifyProvider({
+      whatDoesItDo: 'generate-images',
+      detectedCategory: 'llm',
+    });
+    expect(result.category).toBe('image-video');  // User's choice is respected
+    expect(result.warning).not.toBeNull();
+    expect(result.warning!).toContain('detected');
+    expect(result.warning!).toContain('llm');
+    expect(result.warning!).toContain('image-video');
+  });
+
+  it('classifyProvider returns no warning when detectedCategory matches user answer', () => {
+    const result = classifyProvider({
+      whatDoesItDo: 'generate-text',
+      detectedCategory: 'llm',
+    });
+    expect(result.category).toBe('llm');
+    expect(result.warning).toBeNull();
+  });
+
+  // ── TEST 10: testCustomProviderUrl — bad/unreachable URL ──────────────
+  it('testCustomProviderUrl: empty URL → specific error', async () => {
+    const { testCustomProviderUrl } = await import('../../src/provider-registry/registry.js');
+    const result = await testCustomProviderUrl({ apiUrl: '' });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('required');
+    expect(result.detectedCategory).toBeNull();
+  });
+
+  it('testCustomProviderUrl: invalid URL format → specific error', async () => {
+    const { testCustomProviderUrl } = await import('../../src/provider-registry/registry.js');
+    const result = await testCustomProviderUrl({ apiUrl: 'not-a-url' });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Invalid URL');
+  });
+
+  it('testCustomProviderUrl: unreachable URL → specific "could not reach" error', async () => {
+    const { testCustomProviderUrl } = await import('../../src/provider-registry/registry.js');
+    const result = await testCustomProviderUrl({ apiUrl: 'https://nonexistent-host-12345.example.com' });
+    expect(result.success).toBe(false);
+    expect(result.error).not.toBeNull();
+    // Error should be specific — not a generic "failed"
+    expect(result.error!.length).toBeGreaterThan(20);
+    expect(result.detectedShape).not.toBeNull();
+  });
+
+  it('testCustomProviderUrl: auth failure (401) → specific "auth failed" error', async () => {
+    const { testCustomProviderUrl } = await import('../../src/provider-registry/registry.js');
+    // Mock fetch to return 401
+    const fetchSpy = vi.spyOn(global, 'fetch');
+    fetchSpy.mockResolvedValue(new Response('{"error":"unauthorized"}', { status: 401 }));
+
+    const result = await testCustomProviderUrl({ apiUrl: 'https://api.example.com/v1', apiKey: 'bad-key' });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Authentication failed');
+    expect(result.error).toContain('401');
+    expect(result.detectedShape).toBe('auth-failed');
+
+    vi.restoreAllMocks();
+  });
+
+  it('testCustomProviderUrl: OpenAI-compatible /models response → detectedCategory=llm', async () => {
+    const { testCustomProviderUrl } = await import('../../src/provider-registry/registry.js');
+    const fetchSpy = vi.spyOn(global, 'fetch');
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify({
+      data: [{ id: 'gpt-4', name: 'GPT-4' }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const result = await testCustomProviderUrl({ apiUrl: 'https://api.example.com/v1', apiKey: 'test-key' });
+    expect(result.success).toBe(true);
+    expect(result.detectedCategory).toBe('llm');
+    expect(result.detectedShape).toBe('openai-compatible-models');
+
+    vi.restoreAllMocks();
+  });
+
+  it('testCustomProviderUrl: ElevenLabs-compatible /voices response → detectedCategory=tts', async () => {
+    const { testCustomProviderUrl } = await import('../../src/provider-registry/registry.js');
+    const fetchSpy = vi.spyOn(global, 'fetch');
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify({
+      voices: [{ voice_id: 'abc', name: 'Test Voice' }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const result = await testCustomProviderUrl({ apiUrl: 'https://api.example.com/v1', apiKey: 'test-key' });
+    expect(result.success).toBe(true);
+    expect(result.detectedCategory).toBe('tts');
+    expect(result.detectedShape).toBe('elevenlabs-compatible-voices');
+
+    vi.restoreAllMocks();
+  });
+
+  // ── TEST 11: End-to-end — onboard a real non-preset provider ───────────
+  it('end-to-end: onboard a custom LLM provider → it appears in listProviders with same shape as presets', () => {
+    const beforeCount = listProviders().length;
+
+    // Onboard a custom OpenAI-compatible LLM provider (not in the preset list)
+    const entry = onboardCustomProvider({
+      displayName: 'Custom OpenAI-Compatible LLM',
+      category: 'llm',
+      apiUrl: 'https://custom-llm.example.com/v1',
+      apiKey: 'custom-llm-key',
+    });
+
+    // Verify it appears in listProviders()
+    const afterCount = listProviders().length;
+    expect(afterCount).toBe(beforeCount + 1);
+
+    // Verify it appears in the LLM provider list (not special-cased)
+    const llmProviders = listProviders().filter((p) => p.category === 'llm');
+    const found = llmProviders.find((p) => p.id === entry.id);
+    expect(found).toBeDefined();
+    expect(found!.displayName).toBe('Custom OpenAI-Compatible LLM');
+    expect(found!.category).toBe('llm');
+
+    // Verify it's NOT special-cased — it has the same fields as a preset
+    const preset = listProviders().find((p) => p.id === 'openrouter')!;
+    const customKeys = Object.keys(entry).sort();
+    const presetKeys = Object.keys(preset).sort();
+    expect(customKeys).toEqual(presetKeys);
+
+    // Verify it can be fetched by ID (same as presets)
+    const fetched = getProvider(entry.id);
+    expect(fetched).toBeDefined();
+    expect(fetched!.id).toBe(entry.id);
   });
 });

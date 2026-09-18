@@ -12,7 +12,7 @@
 
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware.js';
-import { listProviders, getProvider, updateProviderConfig, testAndLoadModels, selectVoice, resetProvider, onboardCustomProvider, classifyProvider } from '../provider-registry/registry.js';
+import { listProviders, getProvider, updateProviderConfig, testAndLoadModels, selectVoice, resetProvider, onboardCustomProvider, classifyProvider, testCustomProviderUrl } from '../provider-registry/registry.js';
 import type { ProviderRegistryEntry, ProviderCategory } from '../provider-registry/types.js';
 
 export const providersRouter = Router();
@@ -156,12 +156,31 @@ providersRouter.post('/:id/select-voice', requireAuth, async (req, res) => {
   res.json({ success: true, provider: serializeProvider(updated) });
 });
 
+// POST /api/providers/test-url — test a custom provider's URL before onboarding
+// Body: { apiUrl, apiKey? }
+// Returns: { success, error?, detectedCategory?, detectedShape?, durationMs }
+providersRouter.post('/test-url', requireAuth, async (req, res) => {
+  const { apiUrl, apiKey } = req.body ?? {};
+  if (typeof apiUrl !== 'string' || !apiUrl) {
+    res.status(400).json({ error: 'Missing apiUrl' });
+    return;
+  }
+  const result = await testCustomProviderUrl({
+    apiUrl,
+    apiKey: typeof apiKey === 'string' ? apiKey : undefined,
+  });
+  res.json(result);
+});
+
 // POST /api/providers/onboard — onboard a custom provider
-// Body: { displayName, apiUrl, apiKey?, whatDoesItDo }
+// Body: { displayName, apiUrl, apiKey?, whatDoesItDo, detectedCategory? }
 // The whatDoesItDo field is classified into a category via classifyProvider().
+// If detectedCategory is provided (from the test-url step), the classifier
+// checks for misclassification and surfaces a warning if the user's answer
+// contradicts the URL test's detection.
 // For TTS providers, apiUrl may be empty (skipped per spec).
 providersRouter.post('/onboard', requireAuth, (req, res) => {
-  const { displayName, apiUrl, apiKey, whatDoesItDo } = req.body ?? {};
+  const { displayName, apiUrl, apiKey, whatDoesItDo, detectedCategory } = req.body ?? {};
 
   if (typeof displayName !== 'string' || !displayName.trim()) {
     res.status(400).json({ error: 'Missing displayName' });
@@ -173,7 +192,10 @@ providersRouter.post('/onboard', requireAuth, (req, res) => {
   }
 
   // Classify the provider into a category
-  const category = classifyProvider({ whatDoesItDo });
+  const { category, warning } = classifyProvider({
+    whatDoesItDo,
+    detectedCategory: detectedCategory ?? null,
+  });
 
   // TTS providers may skip the URL (per spec)
   const finalApiUrl = typeof apiUrl === 'string' ? apiUrl : '';
@@ -190,6 +212,7 @@ providersRouter.post('/onboard', requireAuth, (req, res) => {
     success: true,
     provider: serializeProvider(entry),
     category,
+    warning,
     message: `Custom provider "${displayName}" onboarded as ${category}. It now appears in the provider list and can be tested/loaded like any preset provider.`,
   });
 });
