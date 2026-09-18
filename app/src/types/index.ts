@@ -375,7 +375,16 @@ export interface ProviderVoice {
   description?: string;
 }
 
-export type ProviderCategory = 'llm' | 'tts' | 'tool' | 'image-video';
+export type ProviderCategory = 'llm' | 'tts' | 'tool' | 'image-video' | 'information';
+
+export interface ProviderInfoEndpoint {
+  path: string;
+  method: 'GET' | 'POST';
+  description: string;
+  requiredParams: string[];
+  optionalParams: string[];
+  sampleResponsePath?: string;
+}
 
 export interface ProviderImageModel {
   id: string;
@@ -410,29 +419,48 @@ export interface ProviderEntry {
   voices: ProviderVoice[];
   tools: ProviderTool[];
   imageModels: ProviderImageModel[];
+  infoEndpoints: ProviderInfoEndpoint[];
   selectedVoiceId?: string;
   lastError: string | null;
   lastLoadedAt: number | null;
+  // Phase 3 fields
+  isCustom: boolean;
+  healthy: boolean;
+  lastHealthCheckAt: number | null;
+  suggestedAction: string | null;
+  // Convenience counts
   modelCount: number;
   voiceCount: number;
   toolCount: number;
   imageModelCount: number;
+  infoEndpointCount: number;
 }
 
 export interface ProviderTestResult {
   success: boolean;
   provider: ProviderEntry;
   modelsLoaded: number;
+  voicesLoaded?: number;
+  toolsLoaded?: number;
+  imageModelsLoaded?: number;
+  infoEndpointsLoaded?: number;
   error: string | null;
   durationMs: number;
 }
 
-// ── UPR Phase 2 Step 2d — Custom provider onboarding ────────────────────
+// ── UPR Phase 2 Step 2d + Phase 3 — Custom provider onboarding ────────────
+export type OnboardingAnswer =
+  | 'generate-text'
+  | 'generate-speech'
+  | 'execute-tools'
+  | 'generate-images'
+  | 'fetch-information';
+
 export interface OnboardProviderRequest {
   displayName: string;
   apiUrl?: string;
   apiKey?: string;
-  whatDoesItDo: 'generate-text' | 'generate-speech' | 'execute-tools' | 'generate-images';
+  whatDoesItDo: OnboardingAnswer;
 }
 
 export interface OnboardProviderResult {
@@ -440,4 +468,21 @@ export interface OnboardProviderResult {
   provider: ProviderEntry;
   category: ProviderCategory;
   message: string;
+}
+
+// ── Phase 3 — Pre-onboarding URL probe ────────────────────────────────────
+export interface TestUrlRequest {
+  apiUrl: string;
+  apiKey?: string;
+  claimedCategory?: ProviderCategory;
+}
+
+export interface TestUrlResult {
+  success: boolean;
+  detectedCategory: ProviderCategory | null;
+  detectedShape: string;
+  sampleResponse: string;
+  suggestedAction: string;
+  error: string | null;
+  durationMs: number;
 }

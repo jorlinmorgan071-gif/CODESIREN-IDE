@@ -1575,3 +1575,66 @@ Stage Summary:
 - Both steps tested separately — Step 2a passing did NOT imply Step 2b was correct. The /complete 3s cap test specifically would have passed under Step 2a (because the for-await loop checks the signal) but would have taken 14s instead of 3s. The Step 2b test caught this by reporting exact elapsed time.
 - npm-registry CI flakiness logged as tracked cleanup item (not part of this directive).
 - Ready for Step 3 (ProviderRegistry + Test & load models + settings-panel card).
+
+---
+Task ID: api-hub-phase-3
+Agent: main (super-z)
+Task: API Hub refactor — rename "Model Router" → "API Hub" with 5 categories (Model/Tool/Voice/Image-Video/Information), single "Add a custom API" wizard, single-active-per-slot with green=status-working, full-delete-on-reset semantics, background health-check cycle with suggested actions, inline Kokoro offline model download, read-aloud wiring fix.
+
+Work Log:
+- Phase A — renamed:
+  - Routes: /api/providers/* → /api/hub/* (old path kept as backward-compat alias)
+  - UI tab label: "Model Router" → "API Hub"
+  - "AUTO Model Router" → "AUTO Engine Selection"
+  - Internal ModelRouter class kept (LLM dispatch, not user-facing)
+- Phase B — added Information category:
+  - New `information` value in ProviderCategory type
+  - New ProviderInfoEndpoint interface
+  - 3 seed providers: newsapi, openweather, alphavantage (real API URLs + endpoint catalogs)
+  - testAndLoadModels for Information providers probes real endpoints with the API key
+- Phase C — "Add custom API" wizard (AddCustomApiModal.tsx):
+  - 4 fields: displayName, apiUrl, apiKey, whatDoesItDo (5 options)
+  - "Test API" button → calls api.testCustomUrl → server probes URL + detects category from response shape
+  - Mismatch warning when detected ≠ claimed
+  - Save calls api.onboardProvider → server classifies + slots into matching category
+  - DELETE route /api/hub/:id (built-ins cannot be deleted; custom can be fully removed)
+- Phase D — single-active-per-slot semantics:
+  - Green badge only when healthy=true (configured AND verified working)
+  - Yellow badge when configured but never tested
+  - Red badge when lastError set OR healthy=false
+  - "Reset key" button calls api.resetProviderKey → fully clears the key (user's directive: "key is fully gone")
+  - "Health check" button calls api.healthCheckProvider → runs immediate test
+  - Background health-check cycle (health-check.ts): runs every 5 minutes, tests each configured provider, sets healthy/lastHealthCheckAt/suggestedAction
+  - suggestedAction classifier: maps 401/403/404/429/timeout/network errors to specific remediation messages
+- Phase E — Kokoro offline model download UX:
+  - Added "preload" request type to sidecar.py (forces model load + download if not cached)
+  - POST /api/hub/kokoro-status — pings sidecar, returns { running, modelLoaded }
+  - POST /api/hub/kokoro-download — triggers preload (long-running, 5min timeout)
+  - Kokoro provider card shows inline Download button + status badge (Not downloaded / Downloading / Ready)
+  - Status polling auto-adjusts interval (5s while downloading, 30s otherwise)
+- Phase F.1 — read-aloud wiring fix (was a dead button before):
+  - POST /api/voice/speak — accepts { text }, calls getTTSProvider().speak(text), returns audioBase64
+  - Wired onSpeak at <ChatBubble> call site in ChatPanel.tsx
+  - Single HTMLAudioElement (not VoiceSessionContext) — avoids conflicts with live-voice audio
+  - Toggle behavior: clicking the same message's "Listen" again pauses
+  - Clicking a different message stops current + starts new (no overlap)
+  - 5 tests (returns 400 on empty, returns audio on success, returns 500+suggestedAction on TTS failure, calls singleton, etc.)
+- Phase F.3 — pre-commit checks:
+  - Server TypeScript: clean
+  - App TypeScript: clean
+  - App ESLint --max-warnings 0: clean (fixed pre-existing react-hooks/purity error in AvatarShowcase.tsx)
+  - grep-audit: PASS (zero unexpected matches)
+  - npm audit --audit-level=high: 0 high vulnerabilities (server + app)
+  - Full unit test suite: 610 tests passing, 0 failures
+
+Stage Summary:
+- 24 new Phase 3 tests + 5 read-aloud tests = 29 new tests, all passing
+- Total test count: 610 passing (was ~580 pre-Phase-3)
+- New files: AddCustomApiModal.tsx, health-check.ts, upr-phase3-api-hub.test.ts, upr-phase3-read-aloud.test.ts
+- Modified files: types.ts, registry.ts, providers.ts (routes), index.ts, voice.ts, voice.py (sidecar), SettingsModal.tsx, ProviderCard.tsx, ChatPanel.tsx, api.ts, types/index.ts (app), AvatarShowcase.tsx (pre-existing ESLint fix), 2 test files
+- API Hub now has 5 categories with 24 providers (was 21 with 4 categories)
+- Green/red badges reflect real working state, not just "tested"
+- Custom APIs can be added via wizard + deleted when no longer needed
+- Background health-check cycle catches expired/invalid keys + suggests remediation
+- Kokoro offline model can be downloaded inline from the Voice API card
+- Read-aloud ("Listen" button) is now a real working feature (was a silent no-op)

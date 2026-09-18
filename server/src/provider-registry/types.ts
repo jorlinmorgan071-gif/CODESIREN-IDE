@@ -1,13 +1,22 @@
 // server/src/provider-registry/types.ts
-// UPR Phase 1 Step 3 + Phase 2 — ProviderRegistry data model.
+// API Hub — single source of truth for all configured external APIs.
 //
 // Phase 1: LLM category (OpenRouter + Anthropic).
 // Phase 2 Step 2a: TTS category (11 cloud providers + Kokoro local).
 // Phase 2 Step 2b: Tool/MCP category (built-in tools + external tool APIs).
 // Phase 2 Step 2c: Image/Video generation category (5 cloud providers).
 // Phase 2 Step 2d: Custom provider onboarding.
+// Phase 3 (current): Information category (News API, weather, etc.) +
+//   health-check cycle + single-active-per-slot semantics.
+//
+// The user-facing "API Hub" surface shows 5 sibling categories:
+//   1. Model API       (LLM providers)
+//   2. Tool API        (MCP / tool providers)
+//   3. Voice API       (TTS providers)
+//   4. Image/Video API (generative image/video)
+//   5. Information API (news, weather, stock — read-only data APIs)
 
-export type ProviderCategory = 'llm' | 'tts' | 'tool' | 'image-video';
+export type ProviderCategory = 'llm' | 'tts' | 'tool' | 'image-video' | 'information';
 
 export type CostTier = 'free' | 'freemium' | 'paid';
 
@@ -91,12 +100,31 @@ export interface ProviderImageModel {
   pricingNote: string;
 }
 
+// ── Information source metadata (Phase 3) ────────────────────────────────
+// Read-only data APIs — NewsAPI, weather, stock, etc. The system uses these
+// to fetch real-time information for agents + the chat panel.
+
+export interface ProviderInfoEndpoint {
+  /** Endpoint path under the provider's base URL (e.g. '/v2/top-headlines', '/data/2.5/weather'). */
+  path: string;
+  /** HTTP method — almost always GET for information APIs. */
+  method: 'GET' | 'POST';
+  /** Human-readable description of what this endpoint returns. */
+  description: string;
+  /** Required query parameters (e.g. ['country', 'apiKey']). */
+  requiredParams: string[];
+  /** Optional query parameters. */
+  optionalParams: string[];
+  /** Sample response field path (e.g. 'articles[].title' for NewsAPI). */
+  sampleResponsePath?: string;
+}
+
 // ── Registry entry ────────────────────────────────────────────────────────
 
 export interface ProviderRegistryEntry {
   /** Unique provider ID (e.g. 'openrouter', 'anthropic', 'kokoro', 'elevenlabs'). */
   id: string;
-  /** Category — 'llm', 'tts', 'tool', or 'image-video'. */
+  /** Category — 'llm', 'tts', 'tool', 'image-video', or 'information'. */
   category: ProviderCategory;
   /** Human-readable display name (e.g. 'OpenRouter (Cloud Gateway)', 'Kokoro (Local)'). */
   displayName: string;
@@ -116,12 +144,22 @@ export interface ProviderRegistryEntry {
   tools: ProviderTool[];
   /** Image/video models available from this provider (Image/Video category). Empty until tested. */
   imageModels: ProviderImageModel[];
+  /** Information endpoints exposed by this provider (Information category). Empty until tested. */
+  infoEndpoints: ProviderInfoEndpoint[];
   /** The currently-selected voice ID for this provider (TTS category). Undefined if none selected. */
   selectedVoiceId?: string;
   /** Last error from a test-and-load attempt — null if none. */
   lastError: string | null;
   /** Timestamp (epoch ms) of the last successful model/voice/tool/image-model load. */
   lastLoadedAt: number | null;
+  /** Timestamp (epoch ms) of the last background health-check (Phase 3). */
+  lastHealthCheckAt: number | null;
+  /** Whether the latest health-check passed (Phase 3). False until first check. */
+  healthy: boolean;
+  /** Suggested action when the key is invalid/expired (Phase 3). Empty if healthy. */
+  suggestedAction: string | null;
+  /** Whether this is a user-added custom provider (vs. a built-in preset). */
+  isCustom: boolean;
 }
 
 // ── Test & load result ───────────────────────────────────────────────────
@@ -139,8 +177,19 @@ export interface TestAndLoadResult {
   tools: ProviderTool[];
   /** Image/video models loaded (empty if failed or non-Image/Video category). */
   imageModels: ProviderImageModel[];
+  /** Information endpoints loaded (empty if failed or non-Information category). */
+  infoEndpoints: ProviderInfoEndpoint[];
   /** Error message if failed — specific and visible, not silent. */
   error: string | null;
   /** How long the real API call took in ms. */
   durationMs: number;
 }
+
+// ── Onboarding classification (Phase 2 Step 2d + Phase 3) ────────────────
+
+export type OnboardingAnswer =
+  | 'generate-text'        // LLM
+  | 'generate-speech'      // TTS
+  | 'execute-tools'        // Tool/MCP
+  | 'generate-images'      // Image/Video
+  | 'fetch-information';   // Information (NEW — Phase 3)

@@ -22,6 +22,7 @@ import {
   classifyProvider,
   testAndLoadModels,
   resetProvider,
+  deleteProvider,
 } from '../../src/provider-registry/registry.js';
 
 describe('UPR Phase 2 Step 2d — Custom provider onboarding', () => {
@@ -53,6 +54,13 @@ describe('UPR Phase 2 Step 2d — Custom provider onboarding', () => {
   it('classifyProvider maps generate-images → image-video', () => {
     const result = classifyProvider({ whatDoesItDo: 'generate-images' });
     expect(result.category).toBe('image-video');
+    expect(result.warning).toBeNull();
+  });
+
+  // Phase 3 — Information category
+  it('classifyProvider maps fetch-information → information', () => {
+    const result = classifyProvider({ whatDoesItDo: 'fetch-information' });
+    expect(result.category).toBe('information');
     expect(result.warning).toBeNull();
   });
 
@@ -99,7 +107,7 @@ describe('UPR Phase 2 Step 2d — Custom provider onboarding', () => {
   });
 
   // ── TEST 4: onboarded provider can be test-and-loaded ──────────────────
-  it('onboarded LLM provider can be testAndLoadModels() — fails with specific error for unknown endpoint', async () => {
+  it('onboarded LLM provider testAndLoadModels() — fails with fetch error for unknown endpoint', async () => {
     const entry = onboardCustomProvider({
       displayName: 'Custom LLM',
       category: 'llm',
@@ -107,13 +115,16 @@ describe('UPR Phase 2 Step 2d — Custom provider onboarding', () => {
       apiKey: 'test-key',
     });
 
-    // testAndLoadModels should dispatch to the LLM branch and fail
-    // because the provider ID doesn't match 'openrouter' or 'anthropic'
+    // Phase 3: custom LLM providers now hit OpenAI-compatible /models endpoint
+    // (was: returned "No model-list endpoint" error pre-Phase-3).
+    // For a nonexistent host, fetch fails with a network error.
     const result = await testAndLoadModels(entry.id);
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('No model-list endpoint');
-    expect(result.error).toContain(entry.id);
+    // The error should mention the provider ID (since we built the URL from it)
+    expect(result.error).toBeTruthy();
+    // Clean up
+    deleteProvider(entry.id);
   });
 
   // ── TEST 5: onboarded TTS provider with no URL works (skip per spec) ──

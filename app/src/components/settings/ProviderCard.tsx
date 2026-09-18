@@ -1,21 +1,23 @@
 // app/src/components/settings/ProviderCard.tsx
-// UPR Phase 1 Step 3 + Phase 2 Step 2a — data-driven settings-panel card.
+// Phase 3 — data-driven API Hub card.
 //
-// Renders: API URL field, API Key field, model/voice dropdown (populated from
-// loaded models[] or voices[]), "Test & load" button, capability/voice line.
+// Renders: API URL field, API Key field, model/voice/tool/image/info dropdown,
+// "Test & load" button, capability/voice line, "Reset key" button, "Delete"
+// button (custom providers only), health-check status.
 //
-// For LLM category: shows model dropdown + context/output tokens capability line.
-// For TTS category: shows voice dropdown + language/gender voice info + "Select"
-//   button that calls api.selectVoice() to wire through system-wide.
+// Green badge = configured AND working (healthy=true).
+// Yellow badge = configured but never tested.
+// Red badge = configured but failing (lastError set OR healthy=false).
 //
-// This is a SINGLE card component that renders any provider — not one
-// hardcoded card per provider. The card reads from the ProviderRegistry on
-// the server via api.listProviders() + api.testProvider().
+// The card reads from the API Hub on the server via api.listProviders() +
+// api.testProvider(). The "Reset key" button calls api.resetProviderKey() —
+// per the user's directive, "the key is fully gone and the system does not
+// have any key until a new one is present."
 
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
-import type { ProviderEntry, ProviderModel, ProviderVoice, ProviderTool, ProviderImageModel } from '@/types';
-import { Loader2, CheckCircle, XCircle, RefreshCw, Eye, EyeOff, Volume2 } from 'lucide-react';
+import type { ProviderEntry, ProviderModel, ProviderVoice, ProviderTool, ProviderImageModel, ProviderInfoEndpoint } from '@/types';
+import { Loader2, CheckCircle, XCircle, RefreshCw, Eye, EyeOff, Volume2, Trash2, KeyRound, Activity, AlertTriangle, Download, HardDrive } from 'lucide-react';
 
 interface ProviderCardProps {
   provider: ProviderEntry;
@@ -32,6 +34,58 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
   // TTS-specific state
   const [selectedVoice, setSelectedVoice] = useState<string>('');
   const [selectingVoice, setSelectingVoice] = useState(false);
+  // Phase 3 — reset / delete / health-check state
+  const [resetting, setResetting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [healthChecking, setHealthChecking] = useState(false);
+  // Phase 3 — Kokoro offline model download state
+  const [kokoroStatus, setKokoroStatus] = useState<{ running: boolean; modelLoaded: boolean } | null>(null);
+  const [kokoroDownloading, setKokoroDownloading] = useState(false);
+  const [kokoroError, setKokoroError] = useState<string | null>(null);
+
+  // Phase 3 — Poll Kokoro status when this card is the Kokoro provider
+  useEffect(() => {
+    if (provider.id !== 'kokoro') return;
+    let cancelled = false;
+    const checkStatus = async () => {
+      try {
+        const status = await api.getKokoroStatus();
+        if (!cancelled) {
+          setKokoroStatus(status);
+          setKokoroError(status.error ?? null);
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setKokoroError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    };
+    checkStatus();
+    // Poll every 5s while downloading, every 30s otherwise
+    const interval = kokoroDownloading ? 5_000 : 30_000;
+    const handle = setInterval(checkStatus, interval);
+    return () => { cancelled = true; clearInterval(handle); };
+  }, [provider.id, kokoroDownloading]);
+
+  // Phase 3 — Trigger Kokoro model download
+  const handleDownloadKokoro = async () => {
+    setKokoroDownloading(true);
+    setKokoroError(null);
+    try {
+      const result = await api.downloadKokoroModel({ wait: true });
+      if (!result.success) {
+        setKokoroError(result.error ?? 'Download failed');
+      } else {
+        // Refresh status
+        const status = await api.getKokoroStatus();
+        setKokoroStatus(status);
+      }
+    } catch (err: unknown) {
+      setKokoroError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setKokoroDownloading(false);
+    }
+  };
 
   // Sync apiUrl when provider prop changes (e.g. after refetch)
   useEffect(() => {
@@ -125,6 +179,53 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
     }
   };
 
+  // Phase 3 — Reset key: fully clears the API key + all loaded state.
+  // Per the user's directive: "the key is fully gone and the system does not
+  // have any key until a new one is present."
+  const handleResetKey = async () => {
+    if (!confirm(`Reset the API key for "${provider.displayName}"?\n\nThe key will be FULLY cleared. The system will have no key until you enter a new one and run "Test & load".`)) return;
+    setResetting(true);
+    try {
+      await api.resetProviderKey(provider.id);
+      setApiKey('');
+      onUpdated();
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[provider-card] reset key failed for ${provider.id}:`, errorMsg);
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  // Phase 3 — Delete custom provider (built-ins cannot be deleted).
+  const handleDelete = async () => {
+    if (!confirm(`Delete custom provider "${provider.displayName}"?\n\nThis cannot be undone. The provider will be removed from the API Hub entirely.`)) return;
+    setDeleting(true);
+    try {
+      await api.deleteProvider(provider.id);
+      onUpdated();
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[provider-card] delete failed for ${provider.id}:`, errorMsg);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Phase 3 — Manually trigger a health check.
+  const handleHealthCheck = async () => {
+    setHealthChecking(true);
+    try {
+      await api.healthCheckProvider(provider.id);
+      onUpdated();
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[provider-card] health-check failed for ${provider.id}:`, errorMsg);
+    } finally {
+      setHealthChecking(false);
+    }
+  };
+
   // Find the selected model object for the capability line
   const selectedModelObj: ProviderModel | undefined = provider.models.find((m) => m.id === selectedModel);
   // Find the selected voice object for the voice info line
@@ -133,29 +234,49 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
   return (
     <div
       className="rounded-lg p-4"
-      style={{ backgroundColor: 'var(--surface-dark)', border: '1px solid var(--border-subtle)' }}
+      style={{
+        backgroundColor: 'var(--surface-dark)',
+        border: `1px solid ${provider.healthy ? 'rgba(34, 197, 94, 0.3)' : (provider.lastError ? 'rgba(238, 28, 28, 0.3)' : 'var(--border-subtle)')}`,
+      }}
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <div>
-          <h4 className="text-[13px] font-medium" style={{ color: 'var(--bright-silver)' }}>
+        <div className="flex-1 min-w-0">
+          <h4 className="text-[13px] font-medium flex items-center gap-2" style={{ color: 'var(--bright-silver)' }}>
             {provider.displayName}
+            {provider.isCustom && (
+              <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(168, 85, 247, 0.1)', color: '#A855F7' }}>
+                Custom
+              </span>
+            )}
           </h4>
           <p className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
             {provider.category.toUpperCase()} provider
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {provider.connectionTested && (
-            <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)', color: '#22C55E' }}>
+        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          {/* Phase 3: Green = healthy, Yellow = untested, Red = failing */}
+          {provider.healthy && (
+            <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: 'rgba(34, 197, 94, 0.15)', color: '#22C55E' }}>
               <CheckCircle className="w-3 h-3" />
-              Tested
+              Working
             </span>
           )}
-          {provider.lastError && (
+          {!provider.healthy && provider.connectionTested && !provider.lastError && (
+            <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: 'rgba(245, 158, 11, 0.1)', color: '#F59E0B' }}>
+              <AlertTriangle className="w-3 h-3" />
+              Untested
+            </span>
+          )}
+          {!provider.healthy && provider.lastError && (
             <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: 'rgba(238, 28, 28, 0.1)', color: 'var(--siren-red)' }}>
               <XCircle className="w-3 h-3" />
               Error
+            </span>
+          )}
+          {!provider.apiKeyIsSet && provider.id !== 'kokoro' && provider.id !== 'code-siren-tools' && (
+            <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: 'rgba(107, 114, 128, 0.1)', color: 'var(--muted-silver)' }}>
+              No key
             </span>
           )}
           {provider.modelCount > 0 && (
@@ -163,8 +284,45 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
               {provider.modelCount} models
             </span>
           )}
+          {provider.voiceCount > 0 && (
+            <span className="text-[10px]" style={{ color: 'var(--steel-silver)' }}>
+              {provider.voiceCount} voices
+            </span>
+          )}
+          {provider.toolCount > 0 && (
+            <span className="text-[10px]" style={{ color: 'var(--steel-silver)' }}>
+              {provider.toolCount} tools
+            </span>
+          )}
+          {provider.imageModelCount > 0 && (
+            <span className="text-[10px]" style={{ color: 'var(--steel-silver)' }}>
+              {provider.imageModelCount} models
+            </span>
+          )}
+          {provider.infoEndpointCount > 0 && (
+            <span className="text-[10px]" style={{ color: 'var(--steel-silver)' }}>
+              {provider.infoEndpointCount} endpoints
+            </span>
+          )}
         </div>
       </div>
+
+      {/* Phase 3: Suggested action banner (shown when unhealthy + suggestedAction is set) */}
+      {!provider.healthy && provider.suggestedAction && (
+        <div
+          className="mb-3 px-3 py-2 rounded text-[10px] flex items-start gap-2"
+          style={{
+            backgroundColor: 'rgba(245, 158, 11, 0.06)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            color: '#F59E0B',
+          }}
+        >
+          <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <strong>Suggested action:</strong> {provider.suggestedAction}
+          </div>
+        </div>
+      )}
 
       {/* API URL field */}
       <div className="mb-2">
@@ -210,8 +368,8 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
         </div>
       </div>
 
-      {/* Test & load button — label changes per category */}
-      <div className="flex items-center gap-2 mb-3">
+      {/* Action buttons — Test & load + Save + Phase 3: Reset key + Health check + Delete */}
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
         <button
           onClick={handleTest}
           disabled={testing}
@@ -226,7 +384,7 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
           ) : (
             <>
               <RefreshCw className="w-3 h-3" />
-              {provider.category === 'tts' ? 'Test & load voices' : 'Test & load models'}
+              {provider.category === 'tts' ? 'Test & load voices' : 'Test & load'}
             </>
           )}
         </button>
@@ -237,6 +395,41 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
         >
           Save
         </button>
+        {/* Phase 3 — Health check button */}
+        <button
+          onClick={handleHealthCheck}
+          disabled={healthChecking}
+          title="Run a health check now"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors hover:bg-white/5 disabled:opacity-60 disabled:cursor-not-allowed"
+          style={{ color: 'var(--steel-silver)', border: '1px solid var(--border-subtle)' }}
+        >
+          {healthChecking ? <Loader2 className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
+          Check
+        </button>
+        {/* Phase 3 — Reset key (clears the key entirely per user's directive) */}
+        <button
+          onClick={handleResetKey}
+          disabled={resetting}
+          title="Clear the API key entirely — the system will have no key until you enter a new one"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors hover:bg-white/5 disabled:opacity-60 disabled:cursor-not-allowed"
+          style={{ color: provider.apiKeyIsSet ? 'var(--siren-red)' : 'var(--muted-silver)', border: '1px solid var(--border-subtle)' }}
+        >
+          {resetting ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+          Reset key
+        </button>
+        {/* Phase 3 — Delete (custom providers only) */}
+        {provider.isCustom && (
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            title="Delete this custom provider — cannot be undone"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors hover:bg-white/5 disabled:opacity-60 disabled:cursor-not-allowed ml-auto"
+            style={{ color: 'var(--siren-red)', border: '1px solid rgba(238, 28, 28, 0.3)' }}
+          >
+            {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+            Delete
+          </button>
+        )}
       </div>
 
       {/* Test result / error display */}
@@ -335,6 +528,84 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
           {selectedModelObj.pricingNote && (
             <div className="mt-1" style={{ color: 'var(--muted-silver)' }}>
               {selectedModelObj.pricingNote}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Phase 3 — Kokoro offline model download ───────────────────── */}
+      {provider.id === 'kokoro' && (
+        <div
+          className="mb-3 px-3 py-2 rounded"
+          style={{
+            backgroundColor: kokoroStatus?.modelLoaded
+              ? 'rgba(34, 197, 94, 0.06)'
+              : (kokoroDownloading ? 'rgba(59, 130, 246, 0.06)' : 'var(--surface-raised)'),
+            border: `1px solid ${
+              kokoroStatus?.modelLoaded
+                ? 'rgba(34, 197, 94, 0.3)'
+                : (kokoroDownloading ? 'rgba(59, 130, 246, 0.3)' : 'var(--border-subtle)')
+            }`,
+          }}
+        >
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-1.5">
+              <HardDrive className="w-3 h-3" style={{ color: kokoroStatus?.modelLoaded ? '#22C55E' : 'var(--steel-silver)' }} />
+              <span className="text-[11px] font-medium" style={{ color: 'var(--bright-silver)' }}>
+                Offline model
+              </span>
+              {kokoroStatus?.modelLoaded ? (
+                <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(34, 197, 94, 0.15)', color: '#22C55E' }}>
+                  Ready
+                </span>
+              ) : kokoroDownloading ? (
+                <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' }}>
+                  Downloading...
+                </span>
+              ) : (
+                <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(107, 114, 128, 0.1)', color: 'var(--muted-silver)' }}>
+                  Not downloaded
+                </span>
+              )}
+            </div>
+            <button
+              onClick={handleDownloadKokoro}
+              disabled={kokoroDownloading || kokoroStatus?.modelLoaded}
+              className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              style={{
+                backgroundColor: kokoroStatus?.modelLoaded ? 'transparent' : 'var(--siren-red)',
+                color: kokoroStatus?.modelLoaded ? 'var(--muted-silver)' : 'white',
+                border: kokoroStatus?.modelLoaded ? '1px solid var(--border-subtle)' : 'none',
+              }}
+            >
+              {kokoroDownloading ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Downloading...
+                </>
+              ) : kokoroStatus?.modelLoaded ? (
+                <>
+                  <CheckCircle className="w-3 h-3" />
+                  Downloaded
+                </>
+              ) : (
+                <>
+                  <Download className="w-3 h-3" />
+                  Download (~312 MB)
+                </>
+              )}
+            </button>
+          </div>
+          <div className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
+            {kokoroStatus?.modelLoaded
+              ? 'Kokoro-82M model is downloaded + loaded. Voice synthesis works offline — no cloud API needed.'
+              : kokoroDownloading
+                ? 'Downloading from HuggingFace + loading into RAM (~1.3 GB peak). First-time setup takes 5-30s depending on connection.'
+                : 'Kokoro runs entirely offline once the model is downloaded. Click "Download" to fetch the 312 MB model from HuggingFace.'}
+          </div>
+          {kokoroError && (
+            <div className="mt-1.5 px-2 py-1 rounded text-[10px]" style={{ backgroundColor: 'rgba(238, 28, 28, 0.06)', color: 'var(--siren-red)' }}>
+              {kokoroError}
             </div>
           )}
         </div>
@@ -512,6 +783,48 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
                       {m.pricingNote}
                     </div>
                   )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Information: endpoint list + capability badges ───────────── */}
+      {provider.category === 'information' && provider.infoEndpoints.length > 0 && (
+        <div className="mb-3">
+          <label className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--steel-silver)' }}>
+            Available Endpoints ({provider.infoEndpoints.length})
+          </label>
+          <div className="mt-1 space-y-1.5">
+            {provider.infoEndpoints.map((ep: ProviderInfoEndpoint, idx: number) => (
+              <div
+                key={`${ep.path}-${idx}`}
+                className="flex items-start gap-2 px-3 py-2 rounded text-[10px]"
+                style={{ backgroundColor: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-mono" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', color: '#3B82F6' }}>
+                      {ep.method}
+                    </span>
+                    <span className="font-mono font-medium" style={{ color: 'var(--bright-silver)' }}>
+                      {ep.path}
+                    </span>
+                  </div>
+                  <div className="mt-0.5" style={{ color: 'var(--muted-silver)' }}>
+                    {ep.description}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-3 flex-wrap text-[9px]">
+                    <span style={{ color: 'var(--steel-silver)' }}>
+                      Required: <span style={{ color: 'var(--bright-silver)' }}>{ep.requiredParams.join(', ') || 'none'}</span>
+                    </span>
+                    {ep.optionalParams.length > 0 && (
+                      <span style={{ color: 'var(--steel-silver)' }}>
+                        Optional: <span style={{ color: 'var(--bright-silver)' }}>{ep.optionalParams.join(', ')}</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

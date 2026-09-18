@@ -251,3 +251,44 @@ voiceRouter.post('/settings', requireAuth, async (req, res) => {
 
   res.json({ settings: next });
 });
+
+// POST /api/voice/speak — Phase 3 read-aloud wiring.
+// Body: { text: string }
+// Returns: { audioBase64, format, sampleRate, durationMs }
+//
+// This is the endpoint the ChatBubble "Listen" button calls. It uses the
+// SAME getTTSProvider() singleton as greeting + agent-response playback —
+// no second TTS path, no separate voice client, no z-ai SDK direct call.
+//
+// The selected TTS provider is whatever the user picked in the API Hub
+// Voice API category (Kokoro local / ElevenLabs cloud / OpenAI TTS / Zai).
+// The selection is wired through applyVoiceProvider() which swaps the
+// active TTSProvider at runtime — so this endpoint always uses the
+// currently-selected voice.
+voiceRouter.post('/speak', requireAuth, async (req, res) => {
+  const text = req.body?.text;
+  if (typeof text !== 'string' || !text.trim()) {
+    res.status(400).json({ error: 'Missing "text" in body' });
+    return;
+  }
+
+  try {
+    const { getTTSProvider } = await import('../systems/voice/tts-provider.js');
+    const tts = getTTSProvider();
+    const result = await tts.speak(text);
+    res.json({
+      audioBase64: result.audioBase64,
+      format: result.format,
+      sampleRate: result.sampleRate,
+      durationMs: result.durationMs,
+    });
+  } catch (err: any) {
+    console.error(`[voice:speak] TTS failed: ${err?.message ?? err}`);
+    res.status(500).json({
+      error: `TTS failed: ${err?.message ?? String(err)}`,
+      suggestedAction: err?.message?.includes('Kokoro')
+        ? 'Make sure the Kokoro model is downloaded (API Hub → Voice API → Kokoro → Download).'
+        : 'Check that the selected TTS provider is configured and working (API Hub → Voice API).',
+    });
+  }
+});

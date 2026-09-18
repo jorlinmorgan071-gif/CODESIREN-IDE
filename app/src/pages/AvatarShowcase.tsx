@@ -1,22 +1,17 @@
 // app/src/pages/AvatarShowcase.tsx
 //
 // Standalone avatar showcase — no auth, no API, no WS required.
-// Renders all 4 built-in VRM avatars in a grid. Each canvas runs its
-// own auto-cycle scheduler with built-in animations, anime micro-
-// expressions, and personality-driven idle variety.
+// Renders all 4 built-in VRM avatars side-by-side in a single canvas,
+// each running its own auto-cycle scheduler with built-in animations,
+// anime micro-expressions, and personality-driven idle variety.
 //
 // Useful for:
 //   - Verifying the Miku body-missing fix in isolation
 //   - Comparing personality profiles across avatars
 //   - Stress-testing the built-in animation library
 //   - Demoing the auto-cycle scheduler without the full IDE
-//
-// Custom avatars (user-uploaded VRMs at /models/avatars/custom/<id>/)
-// can be toggled on via a separate control. They are NOT rendered by
-// default because browsers cap WebGL contexts (~16) and rendering 7+
-// heavy VRMs simultaneously causes context-loss crashes.
 
-import { Suspense, useEffect, useMemo, useRef, useState, Component, type ReactNode } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -37,49 +32,12 @@ import { LocalVrmaPlayer } from '@/lib/vrma-player';
 import {
   createAutoCycleState,
   ensureBuiltInForState,
-  finalisePersonalityWithCapabilities,
   resetForNewModel,
   tickAutoCycle,
   tryIssueGreeting,
   type AutoCycleState,
 } from '@/lib/avatar-auto-cycle';
-import { triggerAvatarSwitch, triggerIdleEnter, triggerUserTap } from '@/lib/avatar-animation-triggers';
 import { getAvatarPersonality } from '@/lib/avatar-personality';
-import { AvatarRuntimeErrorBoundary } from '@/components/avatar/AvatarRuntimeErrorBoundary';
-
-// Hard-coded list of custom avatar ids that ship in the repo's
-// app/public/models/avatars/custom/ folder. Used to populate the
-// "Custom avatars" section when the user toggles it on.
-const KNOWN_CUSTOM_AVATAR_IDS = [
-  'custom-1786523722899-ada9bb',
-  'custom-1786544165091-a75503',
-  'custom-1786545304482-52b180',
-];
-
-// Lightweight React error boundary that renders an error message inline
-// instead of crashing the whole page. Used around each Canvas so a
-// single failure doesn't take down the whole showcase.
-class ShowcaseErrorBoundary extends Component<{ label: string; children: ReactNode }, { error: string | null }> {
-  state: { error: string | null } = { error: null };
-  static getDerivedStateFromError(error: Error): { error: string } {
-    return { error: error.message ?? String(error) };
-  }
-  componentDidUpdate(prevProps: { label: string }): void {
-    if (prevProps.label !== this.props.label) this.setState({ error: null });
-  }
-  render(): ReactNode {
-    if (this.state.error) {
-      return (
-        <div style={{ padding: 12, color: '#ff6b6b', fontSize: 11, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-          <strong>Render error:</strong>
-          {'\n'}
-          {this.state.error.substring(0, 400)}
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 interface ShowcaseAvatarProps {
   avatarId: string;
@@ -95,8 +53,8 @@ function ShowcaseAvatar({ avatarId, avatarUrl, position }: ShowcaseAvatarProps) 
   const currentBlendValues = useRef<Record<string, number>>({});
   const targetBlendValues = useRef<Record<string, number>>({});
   const lookAtTarget = useRef(new THREE.Object3D());
-  // Initial value is set in the model-load effect below; useRef(0) is just
-  // a placeholder so we don't call Date.now() during render (React purity).
+  // Use 0 as the sentinel — actual value is set in a useEffect to avoid
+  // calling the impure Date.now() during render (react-hooks/purity rule).
   const motionStartedAtRef = useRef(0);
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
   const autoCycleRef = useRef<AutoCycleState | null>(null);
@@ -131,10 +89,6 @@ function ShowcaseAvatar({ avatarId, avatarUrl, position }: ShowcaseAvatarProps) 
         const states: Array<'idle' | 'enter' | 'gesture' | 'rest' | 'bored' | 'listening' | 'thinking' | 'celebrate' | 'wake'> =
           ['idle', 'enter', 'gesture', 'rest', 'bored', 'listening', 'thinking', 'celebrate', 'wake'];
         for (const s of states) ensureBuiltInForState(autoCycleRef.current, player, s);
-        // Fire the avatar-switch greeting (wave) + install an idle clip
-        // ready for the return-to-idle transition.
-        triggerAvatarSwitch(player, autoCycleRef.current);
-        triggerIdleEnter(player, autoCycleRef.current, Date.now());
         tryIssueGreeting(autoCycleRef.current, player);
       }
     }
@@ -143,14 +97,6 @@ function ShowcaseAvatar({ avatarId, avatarUrl, position }: ShowcaseAvatarProps) 
       vrmaPlayerRef.current = null;
     };
   }, [vrm, avatarUrl, avatarId, personality.displayName, capabilities.expressionNames.length]);
-
-  // Once a custom avatar's capabilities have been detected, re-resolve its
-  // personality against the trait-based inference. Built-in avatars skip
-  // this (their personality is shipped in code).
-  useEffect(() => {
-    if (!autoCycleRef.current) return;
-    finalisePersonalityWithCapabilities(autoCycleRef.current, extractAvatarModelId(avatarUrl), capabilities);
-  }, [capabilities, avatarUrl]);
 
   useFrame((state, delta) => {
     const vrm = vrmRef.current;
@@ -254,74 +200,17 @@ function ShowcaseAvatar({ avatarId, avatarUrl, position }: ShowcaseAvatarProps) 
         position={compatibility.profile.transform.positionOffset}
         rotation={compatibility.profile.transform.rotationOffset}
       />
-      {/* Invisible clickable mesh that triggers a wave gesture on click. */}
-      <mesh
-        visible={false}
-        onClick={(e) => {
-          e.stopPropagation();
-          const player = vrmaPlayerRef.current;
-          const cycle = autoCycleRef.current;
-          if (player && cycle) {
-            triggerUserTap(player, cycle, Date.now());
-          }
-        }}
-      >
-        <boxGeometry args={[2, 4, 2]} />
-        <meshBasicMaterial transparent opacity={0} />
-      </mesh>
     </group>
-  );
-}
-
-function AvatarShowcaseCanvas({ avatarId }: { avatarId: string }) {
-  const avatarUrl = avatarId.startsWith('custom-')
-    ? `/models/avatars/custom/${avatarId}/model.vrm`
-    : `/models/avatars/${avatarId}/model.vrm`;
-  return (
-    <Canvas camera={{ position: [0, 1.2, 3.5], fov: 35 }} gl={{ antialias: true, alpha: true }}
-      style={{ width: '100%', height: '100%' }}
-    >
-      <ambientLight intensity={0.7} />
-      <directionalLight position={[0, 2, 3]} intensity={1.4} color="#FFFFFF" />
-      <directionalLight position={[-2, 1, 2]} intensity={0.5} color="#aaccff" />
-      <Suspense fallback={null}>
-        <AvatarRuntimeErrorBoundary avatarIdentity={avatarId}>
-          <ShowcaseAvatar
-            avatarId={avatarId}
-            avatarUrl={avatarUrl}
-            position={[0, -1.2, 0]}
-          />
-        </AvatarRuntimeErrorBoundary>
-      </Suspense>
-      <OrbitControls enablePan={false} enableZoom={true} minDistance={2} maxDistance={6} target={[0, 0.4, 0]} />
-    </Canvas>
   );
 }
 
 interface ShowcaseAvatarCardProps {
   avatarId: string;
   displayName: string;
-  isCustom: boolean;
+  statusText: string;
 }
 
-function ShowcaseAvatarCard({ avatarId, displayName, isCustom }: ShowcaseAvatarCardProps) {
-  const [, setTick] = useState(0);
-  const [statusText, setStatusText] = useState(() => {
-    const p = getAvatarPersonality(avatarId);
-    return `${p.displayName} · ${p.temperament} · ${p.source}`;
-  });
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      const fresh = getAvatarPersonality(avatarId);
-      const clipNames = ['standing-idle', 'catwalk-idle-twist-l', 'catwalk-idle-twist-r', 'catwalk-idle-to-twist-r', 'waving', 'looking-behind', 'excited', 'silly-dancing', 'macarena-dance', 'northern-soul-spin-combo', 'praying'];
-      const pick = clipNames[Math.floor(Math.random() * clipNames.length)];
-      setStatusText(`${fresh.displayName} · ${fresh.temperament} · now playing: ${pick}`);
-      setTick(t => t + 1);
-    }, 4000);
-    return () => clearInterval(id);
-  }, [avatarId]);
-
+function ShowcaseAvatarCard({ avatarId, displayName, statusText }: ShowcaseAvatarCardProps) {
   return (
     <div style={{
       display: 'flex',
@@ -332,32 +221,47 @@ function ShowcaseAvatarCard({ avatarId, displayName, isCustom }: ShowcaseAvatarC
       background: 'rgba(7,7,11,0.6)',
     }}>
       <div style={{ padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>
-          {displayName}
-          {isCustom && <span style={{ marginLeft: 6, fontSize: 10, color: '#ff6b6b', border: '1px solid #ff6b6b33', borderRadius: 3, padding: '1px 4px' }}>CUSTOM</span>}
-        </div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{displayName}</div>
         <div style={{ fontSize: 11, color: '#7a7a85', marginTop: 2 }}>{statusText}</div>
-        <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>click avatar to wave</div>
       </div>
       <div style={{ height: 280, background: 'rgba(0,0,0,0.4)', position: 'relative' }}>
-        <ShowcaseErrorBoundary label={avatarId}>
-          <AvatarShowcaseCanvas avatarId={avatarId} />
-        </ShowcaseErrorBoundary>
+        <AvatarShowcaseCanvas avatarId={avatarId} displayName={displayName} />
       </div>
     </div>
   );
 }
 
+function AvatarShowcaseCanvas({ avatarId }: { avatarId: string; displayName: string }) {
+  const avatarUrl = `/models/avatars/${avatarId}/model.vrm`;
+  return (
+    <Canvas camera={{ position: [0, 1.2, 3.5], fov: 35 }} gl={{ antialias: true, alpha: true }}
+      style={{ width: '100%', height: '100%' }}
+      onPointerMove={() => {
+        // markUserActivity is fired from within useFrame tick; we don't need to do anything here.
+      }}
+    >
+      <ambientLight intensity={0.7} />
+      <directionalLight position={[0, 2, 3]} intensity={1.4} color="#FFFFFF" />
+      <directionalLight position={[-2, 1, 2]} intensity={0.5} color="#aaccff" />
+      <Suspense fallback={null}>
+        <ShowcaseAvatar
+          avatarId={avatarId}
+          avatarUrl={avatarUrl}
+          position={[0, -1.2, 0]}
+        />
+      </Suspense>
+      <OrbitControls enablePan={false} enableZoom={true} minDistance={2} maxDistance={6} target={[0, 0.4, 0]} />
+    </Canvas>
+  );
+}
+
 export default function AvatarShowcase() {
-  const [showCustoms, setShowCustoms] = useState(false);
-  const builtInAvatars = [
+  const avatars = [
     { id: 'default', name: 'Default Avatar' },
     { id: 'hatsune-miku', name: 'Hatsune Miku' },
     { id: 'yinlin', name: 'Yinlin' },
     { id: 'marionette', name: 'Marionette' },
   ];
-  const customAvatars = KNOWN_CUSTOM_AVATAR_IDS.map((id, i) => ({ id, name: `Custom Upload ${i + 1}` }));
-
   return (
     <div style={{
       minHeight: '100vh',
@@ -369,15 +273,12 @@ export default function AvatarShowcase() {
       <header style={{ marginBottom: 24, textAlign: 'center' }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>Avatar Showcase</h1>
         <p style={{ fontSize: 13, color: '#a0a0aa' }}>
-          All 4 built-in VRM avatars running the auto-cycle scheduler with built-in animations,
-          anime micro-expressions, and per-character personalities. Custom avatars are also
-          supported — their temperament is inferred from VRM traits (look-at, expressions,
-          spring bones, humanoid rig), or user-overridable via{' '}
-          <code>setCustomAvatarPersonalityOverride()</code>. The Miku body-missing bug is
-          fixed — every avatar renders fully.
+          All 4 built-in VRM avatars running the auto-cycle scheduler with built-in
+          animations, anime micro-expressions, and per-character personalities.
+          Drag to orbit. The Miku body-missing bug should be gone — every avatar
+          renders fully.
         </p>
       </header>
-
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
@@ -385,47 +286,29 @@ export default function AvatarShowcase() {
         maxWidth: 1200,
         margin: '0 auto',
       }}>
-        {builtInAvatars.map((a) => (
-          <ShowcaseAvatarCard key={a.id} avatarId={a.id} displayName={a.name} isCustom={false} />
+        {avatars.map((a) => (
+          <ShowcaseAvatarCardWithStatus key={a.id} avatarId={a.id} displayName={a.name} />
         ))}
       </div>
-
-      <div style={{ marginTop: 32, textAlign: 'center' }}>
-        <button
-          type="button"
-          onClick={() => setShowCustoms(!showCustoms)}
-          style={{
-            fontSize: 13, padding: '8px 18px',
-            background: showCustoms ? '#ff6b6b22' : '#00ffaa22',
-            color: showCustoms ? '#ff6b6b' : '#00ffaa',
-            border: `1px solid ${showCustoms ? '#ff6b6b66' : '#00ffaa66'}`,
-            borderRadius: 6, cursor: 'pointer', fontWeight: 600,
-          }}
-        >
-          {showCustoms ? 'Hide Custom Avatars' : `Show Custom Avatars (${customAvatars.length})`}
-        </button>
-        <p style={{ fontSize: 11, color: '#555', marginTop: 6 }}>
-          Custom avatars render on demand to avoid WebGL context limits (~16 contexts).
-        </p>
-      </div>
-
-      {showCustoms && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-          gap: 16,
-          maxWidth: 1200,
-          margin: '24px auto 0',
-        }}>
-          {customAvatars.map((a) => (
-            <ShowcaseAvatarCard key={a.id} avatarId={a.id} displayName={a.name} isCustom={true} />
-          ))}
-        </div>
-      )}
-
       <footer style={{ marginTop: 24, textAlign: 'center', fontSize: 11, color: '#555' }}>
-        Code Siren IDE · Phase B+ Avatar Liveliness Pass · Built-in animation library · Custom avatar support
+        Code Siren IDE · Phase B+ Avatar Liveliness Pass · Built-in animation library
       </footer>
     </div>
   );
+}
+
+function ShowcaseAvatarCardWithStatus({ avatarId, displayName }: { avatarId: string; displayName: string }) {
+  const [statusText, setStatusText] = useState('Loading…');
+  const personality = useMemo(() => getAvatarPersonality(avatarId), [avatarId]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const clipNames = ['standing-idle', 'catwalk-idle-twist-l', 'catwalk-idle-twist-r', 'catwalk-idle-to-twist-r', 'waving', 'looking-behind', 'excited', 'silly-dancing', 'macarena-dance', 'northern-soul-spin-combo', 'praying'];
+      const pick = clipNames[Math.floor(Math.random() * clipNames.length)];
+      setStatusText(`${personality.displayName} · ${personality.temperament} · now playing: ${pick}`);
+    }, 4000);
+    return () => clearInterval(id);
+  }, [personality.displayName, personality.temperament]);
+
+  return <ShowcaseAvatarCard avatarId={avatarId} displayName={displayName} statusText={statusText} />;
 }

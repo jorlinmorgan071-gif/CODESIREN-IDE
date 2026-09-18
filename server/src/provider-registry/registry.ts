@@ -15,7 +15,7 @@
 // visible error message — NOT a silent empty dropdown.
 
 import { config } from '../config.js';
-import type { ProviderRegistryEntry, ProviderModel, ProviderVoice, ProviderTool, ProviderImageModel, TestAndLoadResult, CostTier, ProviderCategory } from './types.js';
+import type { ProviderRegistryEntry, ProviderModel, ProviderVoice, ProviderTool, ProviderImageModel, ProviderInfoEndpoint, TestAndLoadResult, CostTier, ProviderCategory, OnboardingAnswer } from './types.js';
 
 // ── Provider defaults ────────────────────────────────────────────────────
 // These are the seed values. The user can override apiUrl + apiKey via the
@@ -41,6 +41,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'anthropic',
@@ -56,6 +61,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     // ── TTS providers (Phase 2 Step 2a) ─────────────────────────────────
     // 11 cloud providers + Kokoro as the permanent local entry.
@@ -75,6 +85,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'elevenlabs',
@@ -90,6 +105,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'openai-tts',
@@ -105,6 +125,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'doubao',
@@ -120,6 +145,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'minimax-tts',
@@ -135,6 +165,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'inworld',
@@ -150,6 +185,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'fish-audio',
@@ -165,6 +205,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'speechify',
@@ -180,6 +225,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'gemini-tts',
@@ -195,6 +245,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'mistral-voxtral',
@@ -210,6 +265,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'cartesia',
@@ -225,6 +285,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     // ── Tool providers (Phase 2 Step 2b) ───────────────────────────────
     // Built-in Code Siren tools — the "test & load" action inspects the live
@@ -244,6 +309,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     // Tavily — web search API provider (external tool)
     {
@@ -260,6 +330,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     // Judge0 — code execution sandbox (external tool)
     {
@@ -276,6 +351,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     // ── Image/Video generation providers (Phase 2 Step 2c) ─────────────
     // 5 cloud providers. "Test & load" returns static capability catalogs
@@ -295,6 +375,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'gemini-image',
@@ -310,6 +395,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'minimax-image',
@@ -325,6 +415,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'wavespeed',
@@ -340,6 +435,11 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
     {
       id: 'byteplus-seedream',
@@ -355,6 +455,74 @@ function seedEntries(): ProviderRegistryEntry[] {
       imageModels: [],
       lastError: null,
       lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
+    },
+    // ── Information providers (Phase 3) ──────────────────────────────────
+    // Read-only data APIs — NewsAPI, OpenWeatherMap, AlphaVantage. The system
+    // uses these to fetch real-time information for agents + chat.
+    {
+      id: 'newsapi',
+      category: 'information',
+      displayName: 'NewsAPI (News Headlines)',
+      defaultApiUrl: 'https://newsapi.org/v2',
+      apiUrl: 'https://newsapi.org/v2',
+      apiKey: process.env.NEWSAPI_KEY ?? process.env.NEWS_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      imageModels: [],
+      lastError: null,
+      lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
+    },
+    {
+      id: 'openweather',
+      category: 'information',
+      displayName: 'OpenWeatherMap (Weather Data)',
+      defaultApiUrl: 'https://api.openweathermap.org/data/2.5',
+      apiUrl: 'https://api.openweathermap.org/data/2.5',
+      apiKey: process.env.OPENWEATHER_API_KEY ?? process.env.OPENWEATHERMAP_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      imageModels: [],
+      lastError: null,
+      lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
+    },
+    {
+      id: 'alphavantage',
+      category: 'information',
+      displayName: 'Alpha Vantage (Stock Market Data)',
+      defaultApiUrl: 'https://www.alphavantage.co/query',
+      apiUrl: 'https://www.alphavantage.co/query',
+      apiKey: process.env.ALPHAVANTAGE_API_KEY ?? process.env.ALPHA_VANTAGE_API_KEY ?? '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      imageModels: [],
+      lastError: null,
+      lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
     },
   ];
 }
@@ -411,8 +579,13 @@ export function onboardCustomProvider(opts: {
     voices: [],
     tools: [],
     imageModels: [],
+    infoEndpoints: [],
     lastError: null,
     lastLoadedAt: null,
+    lastHealthCheckAt: null,
+    healthy: false,
+    suggestedAction: null,
+    isCustom: true,
   };
   entries.set(id, entry);
   console.log(`[provider-registry] custom provider onboarded: ${id} (${opts.category}) — ${opts.displayName}`);
@@ -420,132 +593,214 @@ export function onboardCustomProvider(opts: {
 }
 
 /**
- * Phase 2 Step 2d — Test a custom provider's URL before onboarding.
+ * Phase 3 — Delete a custom provider from the registry.
  *
- * Hits the URL with a lightweight connectivity/auth check. This is NOT the
- * full "Test & load models" action — it's a pre-onboarding probe to verify
- * the URL is reachable and the key (if provided) authenticates.
+ * Built-in providers cannot be deleted (only reset). Custom providers can be
+ * fully removed — this matches the user's "you can delete it if you don't want
+ * it anymore" directive.
  *
- * For LLM-type providers: tries GET <url>/models (OpenAI-compatible shape).
- * For other types: just verifies the URL is reachable (HEAD or GET).
+ * Returns true if deleted, false if not found or if the provider is built-in.
+ */
+export function deleteProvider(id: string): { success: boolean; error: string | null } {
+  const entry = entries.get(id);
+  if (!entry) {
+    return { success: false, error: `Unknown provider: ${id}` };
+  }
+  if (!entry.isCustom) {
+    return { success: false, error: `Provider ${id} is a built-in provider and cannot be deleted. Use "Reset" instead to clear its configuration.` };
+  }
+  entries.delete(id);
+  console.log(`[provider-registry] custom provider deleted: ${id} (${entry.displayName})`);
+  return { success: true, error: null };
+}
+
+/**
+ * Phase 3 — Pre-onboarding URL probe.
  *
- * Returns:
- *   - success: true if the URL is reachable + auth works
- *   - success: false if the URL is unreachable, auth fails, or the response
- *     shape is unexpected — with a SPECIFIC error message
- *   - detectedCategory: if the response shape strongly suggests a category
- *     (e.g. /models returns an LLM model list), this is set so the
- *     questionnaire can pre-fill the classification.
+ * Before adding a custom provider, the user pastes a URL + (optionally) an API
+ * key. This function probes the URL with a lightweight request and tries to
+ * detect what kind of API it is based on the response shape:
+ *
+ *   - JSON with { data: [{ id, ... }] }  → LLM (OpenAI/OpenRouter-style)
+ *   - JSON with { voices: [{ voice_id, ... }] }  → TTS (ElevenLabs-style)
+ *   - JSON with { articles: [...] } or { status: "ok", ... }  → Information
+ *   - JSON with { models: [...] }  → Image/Video (some providers)
+ *   - HTML response  → likely a docs page, not an API endpoint
+ *   - Non-JSON, non-HTML  → unknown
+ *
+ * Returns the detected category + a sample of the response so the user can
+ * confirm before onboarding.
  */
 export async function testCustomProviderUrl(opts: {
   apiUrl: string;
   apiKey?: string;
+  claimedCategory?: ProviderCategory;
 }): Promise<{
   success: boolean;
-  error: string | null;
   detectedCategory: ProviderCategory | null;
-  detectedShape: string | null;
+  detectedShape: string;
+  sampleResponse: string;
+  suggestedAction: string;
+  error: string | null;
   durationMs: number;
 }> {
   const start = Date.now();
-  const { apiUrl, apiKey } = opts;
-
-  if (!apiUrl) {
-    return { success: false, error: 'API URL is required (TTS providers can skip this step).', detectedCategory: null, detectedShape: null, durationMs: 0 };
+  if (!opts.apiUrl) {
+    return { success: false, detectedCategory: null, detectedShape: '', sampleResponse: '', suggestedAction: '', error: 'apiUrl is required', durationMs: 0 };
   }
-
-  // Validate URL format
+  let url: URL;
   try {
-    new URL(apiUrl);
+    url = new URL(opts.apiUrl);
   } catch {
-    return { success: false, error: `Invalid URL: ${apiUrl}. Make sure it starts with https://`, detectedCategory: null, detectedShape: null, durationMs: Date.now() - start };
+    return { success: false, detectedCategory: null, detectedShape: '', sampleResponse: '', suggestedAction: '', error: `Invalid URL format: ${opts.apiUrl}`, durationMs: Date.now() - start };
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    return { success: false, detectedCategory: null, detectedShape: '', sampleResponse: '', suggestedAction: '', error: `URL must be HTTP or HTTPS, got ${url.protocol}`, durationMs: Date.now() - start };
   }
 
-  // Try the OpenAI-compatible /models endpoint first (most LLM providers support this)
-  const modelsUrl = `${apiUrl.replace(/\/+$/, '')}/models`;
   try {
-    const headers: Record<string, string> = {};
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (opts.apiKey) {
+      // Try common auth header styles. Most APIs accept Bearer; some accept x-api-key.
+      headers['Authorization'] = `Bearer ${opts.apiKey}`;
+      headers['x-api-key'] = opts.apiKey;
     }
-
-    const res = await fetch(modelsUrl, { method: 'GET', headers, signal: AbortSignal.timeout(10_000) });
-
-    if (res.status === 401 || res.status === 403) {
-      return { success: false, error: `Authentication failed (HTTP ${res.status}). The API key is invalid or missing.`, detectedCategory: null, detectedShape: 'auth-failed', durationMs: Date.now() - start };
-    }
-
-    if (res.status === 404) {
-      // /models endpoint doesn't exist — try a bare GET to verify the host is reachable
-      try {
-        const rootRes = await fetch(apiUrl, { method: 'GET', signal: AbortSignal.timeout(10_000) });
-        if (rootRes.status < 500) {
-          // Host is reachable, just no /models endpoint
-          return {
-            success: true,
-            error: null,
-            detectedCategory: null,  // Can't auto-classify without /models
-            detectedShape: 'reachable-no-models-endpoint',
-            durationMs: Date.now() - start,
-          };
-        }
-      } catch {
-        // Root also failed — host is unreachable
-      }
-      return { success: false, error: `Could not reach ${modelsUrl} (404) and the root URL is also unreachable. Verify the URL is correct.`, detectedCategory: null, detectedShape: 'unreachable', durationMs: Date.now() - start };
-    }
+    const res = await fetch(opts.apiUrl, { method: 'GET', headers, signal: AbortSignal.timeout(8000) });
+    const bodyText = await res.text();
+    const sampleResponse = bodyText.slice(0, 800);
+    const durationMs = Date.now() - start;
 
     if (!res.ok) {
-      const body = await res.text().catch(() => '(no response body)');
-      return { success: false, error: `URL returned HTTP ${res.status}: ${body.slice(0, 200)}`, detectedCategory: null, detectedShape: 'http-error', durationMs: Date.now() - start };
-    }
-
-    // Success — try to parse as JSON and detect the shape
-    const data = await res.json().catch(() => null) as any;
-    if (!data) {
-      return { success: true, error: null, detectedCategory: null, detectedShape: 'reachable-non-json', durationMs: Date.now() - start };
-    }
-
-    // Check if it looks like an LLM /models response (OpenAI-compatible: { data: [{ id, ... }] })
-    if (data.data && Array.isArray(data.data) && data.data.length > 0 && data.data[0].id) {
+      // 401/403 → key is wrong/missing. 404 → wrong URL. 5xx → server error.
+      let suggestedAction = '';
+      let detectedShape = `http-${res.status}`;
+      if (res.status === 401 || res.status === 403) {
+        detectedShape = 'auth-failed';
+        suggestedAction = 'The API rejected the key. Verify the API key is correct and has not expired.';
+        return {
+          success: false,
+          detectedCategory: null,
+          detectedShape,
+          sampleResponse,
+          suggestedAction,
+          error: `Authentication failed (HTTP ${res.status}). The API key is missing, invalid, or expired. Response: ${bodyText.slice(0, 200)}`,
+          durationMs,
+        };
+      } else if (res.status === 404) {
+        suggestedAction = 'The URL returned 404. Check the path — most APIs need a suffix like /v1/models or /v2/top-headlines.';
+      } else if (res.status >= 500) {
+        suggestedAction = 'The API server returned an error. Try again later, or check the provider\'s status page.';
+      }
       return {
-        success: true,
-        error: null,
-        detectedCategory: 'llm',
-        detectedShape: 'openai-compatible-models',
-        durationMs: Date.now() - start,
+        success: false,
+        detectedCategory: null,
+        detectedShape,
+        sampleResponse,
+        suggestedAction,
+        error: `HTTP ${res.status} ${res.statusText}`,
+        durationMs,
       };
     }
 
-    // Check if it looks like an ElevenLabs /voices response ({ voices: [{ voice_id, name }] })
-    if (data.voices && Array.isArray(data.voices) && data.voices.length > 0) {
+    // Try to parse as JSON
+    let json: unknown = null;
+    try {
+      json = JSON.parse(bodyText);
+    } catch {
+      // Not JSON — check if it's HTML (docs page)
+      if (bodyText.trim().startsWith('<!') || bodyText.trim().startsWith('<html')) {
+        return {
+          success: false,
+          detectedCategory: null,
+          detectedShape: 'html-not-json',
+          sampleResponse: '(HTML response — this URL is a web page, not an API endpoint)',
+          suggestedAction: 'This URL returned HTML, not JSON. It looks like a docs page. Find the actual API endpoint URL (often ends in /v1, /v2, /api, etc.).',
+          error: 'Response is HTML, not JSON',
+          durationMs,
+        };
+      }
       return {
-        success: true,
-        error: null,
-        detectedCategory: 'tts',
-        detectedShape: 'elevenlabs-compatible-voices',
-        durationMs: Date.now() - start,
+        success: false,
+        detectedCategory: null,
+        detectedShape: 'non-json-non-html',
+        sampleResponse,
+        suggestedAction: 'The response is not JSON. This URL may not be an API endpoint, or the API may require a different request format.',
+        error: 'Response is not JSON',
+        durationMs,
       };
     }
 
-    // Reachable + returned JSON, but unknown shape
+    // Detect shape
+    const detected = detectCategoryFromJson(json, opts.claimedCategory ?? null);
     return {
       success: true,
+      detectedCategory: detected.category,
+      detectedShape: detected.shape,
+      sampleResponse,
+      suggestedAction: detected.category === opts.claimedCategory
+        ? `Detected shape matches your claimed category (${opts.claimedCategory}). Ready to save.`
+        : (opts.claimedCategory
+            ? `⚠ Detected shape suggests "${detected.category}" but you said "${opts.claimedCategory}". Save anyway? The system will classify as "${detected.category}".`
+            : `Detected category: ${detected.category}. Ready to save.`),
       error: null,
-      detectedCategory: null,
-      detectedShape: 'reachable-unknown-json',
-      durationMs: Date.now() - start,
+      durationMs,
     };
   } catch (err: any) {
-    const msg = err?.message ?? String(err);
-    if (msg.includes('aborted') || msg.includes('timeout') || msg.includes('Timeout')) {
-      return { success: false, error: `Connection timed out after 10s. The URL may be unreachable or behind a firewall.`, detectedCategory: null, detectedShape: 'timeout', durationMs: Date.now() - start };
-    }
-    if (msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED') || msg.includes('fetch failed')) {
-      return { success: false, error: `Could not reach that URL: ${msg}. Verify the URL is correct and the service is running.`, detectedCategory: null, detectedShape: 'network-error', durationMs: Date.now() - start };
-    }
-    return { success: false, error: `Connection failed: ${msg}`, detectedCategory: null, detectedShape: 'error', durationMs: Date.now() - start };
+    const rawError = err?.message ?? String(err);
+    // Produce a more descriptive error than just "fetch failed" so the UI
+    // can show something useful to the user.
+    const descriptiveError = rawError.includes('fetch failed')
+      ? `Could not reach the API server at ${opts.apiUrl}. The host may be down, the URL may be wrong, or there may be a network issue.`
+      : `Network error probing ${opts.apiUrl}: ${rawError}`;
+    return {
+      success: false,
+      detectedCategory: null,
+      detectedShape: 'network-error',
+      sampleResponse: '',
+      suggestedAction: 'Network error — check the URL, your internet connection, and whether the API requires a VPN.',
+      error: descriptiveError,
+      durationMs: Date.now() - start,
+    };
   }
+}
+
+/**
+ * Detect the provider category from the JSON response shape.
+ * Used by testCustomProviderUrl() to suggest a category to the user.
+ */
+function detectCategoryFromJson(json: unknown, claimed: ProviderCategory | null): { category: ProviderCategory; shape: string } {
+  if (typeof json !== 'object' || json === null) {
+    return { category: 'information', shape: 'primitive-json' };
+  }
+  const obj = json as Record<string, unknown>;
+
+  // LLM-style: { data: [{ id: "model-name", ... }] }
+  if (Array.isArray(obj.data) && obj.data.length > 0 && typeof obj.data[0] === 'object' && obj.data[0] !== null && 'id' in obj.data[0]) {
+    return { category: 'llm', shape: 'openai-compatible-models' };
+  }
+
+  // TTS-style: { voices: [{ voice_id: "..." }] }
+  if (Array.isArray(obj.voices) && obj.voices.length > 0 && typeof obj.voices[0] === 'object' && obj.voices[0] !== null && ('voice_id' in obj.voices[0] || 'id' in obj.voices[0])) {
+    return { category: 'tts', shape: 'elevenlabs-compatible-voices' };
+  }
+
+  // Image/Video-style: { data: [{ outputType: "image" }] } or { images: [...] }
+  if (Array.isArray(obj.images) || (Array.isArray(obj.data) && obj.data.length > 0 && typeof obj.data[0] === 'object' && obj.data[0] !== null && ('outputType' in obj.data[0] || 'image_url' in obj.data[0]))) {
+    return { category: 'image-video', shape: 'image-generation-response' };
+  }
+
+  // Information-style: { articles: [...] } (NewsAPI), { main: {...} } (OpenWeather), { 'Global Quote': {...} } (AlphaVantage), { status: "ok" }
+  if (Array.isArray(obj.articles) || 'articles' in obj || 'main' in obj || 'Global Quote' in obj || 'Time Series' in obj || ('status' in obj && obj.status === 'ok')) {
+    return { category: 'information', shape: 'news-weather-stock-data' };
+  }
+
+  // Tool/MCP-style: { tools: [{ name, description }] }
+  if (Array.isArray(obj.tools) && obj.tools.length > 0 && typeof obj.tools[0] === 'object' && obj.tools[0] !== null && 'name' in obj.tools[0]) {
+    return { category: 'tool', shape: 'mcp-tool-registry' };
+  }
+
+  // Unknown — fall back to claimed category or default to information
+  return { category: claimed ?? 'information', shape: 'unknown-json-shape' };
 }
 
 /**
@@ -559,34 +814,38 @@ export async function testCustomProviderUrl(opts: {
  *   2. "Does it require an API URL?" → boolean (TTS providers may not need one)
  *
  * The classification is deterministic and testable.
+ */
+/**
+ * Phase 2 Step 2d + Phase 3 — Classify a provider into a category based on the
+ * user's answer to "What does this API do?". Optionally accepts a detectedCategory
+ * (from the testCustomProviderUrl probe) and returns a warning if the user's
+ * answer contradicts the URL probe's detection.
  *
- * Misclassification resilience: if the detectedCategory from the URL test
- * contradicts the user's answer, we surface a warning but respect the user's
- * explicit choice — the user knows their provider better than a heuristic.
+ * Returns { category, warning } where warning is null when there's no
+ * contradiction, or a string explaining the mismatch.
  */
 export function classifyProvider(answers: {
-  whatDoesItDo: 'generate-text' | 'generate-speech' | 'execute-tools' | 'generate-images';
-  detectedCategory?: ProviderCategory | null;  // from the URL test, if any
+  whatDoesItDo: OnboardingAnswer;
+  detectedCategory?: ProviderCategory | null;
 }): { category: ProviderCategory; warning: string | null } {
-  const userCategory: ProviderCategory = (() => {
-    switch (answers.whatDoesItDo) {
-      case 'generate-text':   return 'llm';
-      case 'generate-speech': return 'tts';
-      case 'execute-tools':   return 'tool';
-      case 'generate-images': return 'image-video';
-    }
-  })();
+  const categoryMap: Record<OnboardingAnswer, ProviderCategory> = {
+    'generate-text': 'llm',
+    'generate-speech': 'tts',
+    'execute-tools': 'tool',
+    'generate-images': 'image-video',
+    'fetch-information': 'information',
+  };
+  const category = categoryMap[answers.whatDoesItDo];
 
-  // Misclassification resilience: if the URL test detected a different category,
-  // surface a warning but respect the user's explicit choice
-  if (answers.detectedCategory && answers.detectedCategory !== userCategory) {
-    return {
-      category: userCategory,
-      warning: `Warning: the URL test detected this looks like a ${answers.detectedCategory} provider, but you classified it as ${userCategory}. The provider will be registered as ${userCategory}. If "Test & load" fails later, try re-onboarding with the detected category (${answers.detectedCategory}).`,
-    };
+  // Phase 3: if the URL probe detected a different category, warn the user.
+  // The classification still uses the user's answer (they know best what the
+  // API is supposed to do), but the warning surfaces the contradiction.
+  let warning: string | null = null;
+  if (answers.detectedCategory && answers.detectedCategory !== category) {
+    warning = `You said this API does "${answers.whatDoesItDo}" (category: ${category}), but the URL probe detected a "${answers.detectedCategory}" response shape. The classification may be wrong — verify before saving.`;
   }
 
-  return { category: userCategory, warning: null };
+  return { category, warning };
 }
 
 export function updateProviderConfig(id: string, patch: { apiUrl?: string; apiKey?: string }): ProviderRegistryEntry | undefined {
@@ -594,16 +853,21 @@ export function updateProviderConfig(id: string, patch: { apiUrl?: string; apiKe
   if (!entry) return undefined;
   if (patch.apiUrl !== undefined) entry.apiUrl = patch.apiUrl;
   if (patch.apiKey !== undefined) entry.apiKey = patch.apiKey;
-  // If config changed, mark as not-tested (models/voices/tools/imageModels are now stale)
+  // If config changed, mark as not-tested (models/voices/tools/imageModels/infoEndpoints are now stale)
   if (patch.apiUrl !== undefined || patch.apiKey !== undefined) {
     entry.connectionTested = false;
     entry.models = [];
     entry.voices = [];
     entry.tools = [];
     entry.imageModels = [];
+    entry.infoEndpoints = [];
     entry.selectedVoiceId = undefined;
     entry.lastError = null;
     entry.lastLoadedAt = null;
+    // Phase 3: config change invalidates health-check state
+    entry.lastHealthCheckAt = null;
+    entry.healthy = false;
+    entry.suggestedAction = null;
   }
   return entry;
 }
@@ -621,11 +885,20 @@ export function resetProvider(id: string): void {
   entry.voices = [];
   entry.tools = [];
   entry.imageModels = [];
+  entry.infoEndpoints = [];
   entry.selectedVoiceId = undefined;
   entry.lastError = null;
   entry.lastLoadedAt = null;
+  entry.lastHealthCheckAt = null;
+  entry.healthy = false;
+  entry.suggestedAction = null;
   // Restore API key from config (env) — falls back to process.env directly
-  // in case config.ts was parsed before env vars were set (test ordering issue)
+  // in case config.ts was parsed before env vars were set (test ordering issue).
+  // NOTE: This is for TESTS that need a clean state but with env keys restored.
+  // For the user-facing "Reset key" action, use clearProviderKey() instead —
+  // that one fully clears the key (matching the user's directive: "when the
+  // user resets a key, the key is fully gone and the system does not have any
+  // key until a new one is present").
   if (id === 'openrouter') {
     entry.apiKey = config.OPENROUTER_API_KEY ?? process.env.OPENROUTER_API_KEY ?? '';
   }
@@ -652,9 +925,48 @@ export function resetProvider(id: string): void {
   if (id === 'minimax-image') entry.apiKey = process.env.MINIMAX_API_KEY ?? '';
   if (id === 'wavespeed') entry.apiKey = process.env.WAVESPEED_API_KEY ?? '';
   if (id === 'byteplus-seedream') entry.apiKey = process.env.BYTEPLUS_API_KEY ?? process.env.DOUBAO_API_KEY ?? '';
+  // Information providers
+  if (id === 'newsapi') entry.apiKey = process.env.NEWSAPI_KEY ?? process.env.NEWS_API_KEY ?? '';
+  if (id === 'openweather') entry.apiKey = process.env.OPENWEATHER_API_KEY ?? process.env.OPENWEATHERMAP_API_KEY ?? '';
+  if (id === 'alphavantage') entry.apiKey = process.env.ALPHAVANTAGE_API_KEY ?? process.env.ALPHA_VANTAGE_API_KEY ?? '';
   // Kokoro has no API key (local)
   if (id === 'kokoro') entry.apiKey = '';
   entry.apiUrl = entry.defaultApiUrl;
+}
+
+/**
+ * Phase 3 — User-facing "Reset key" action.
+ *
+ * Per the user's directive: "when the user resets a key this means the key is
+ * fully gone and the system does not have any key until a new one is present."
+ *
+ * This FULLY clears the apiKey (sets to '') and all loaded state. The env var
+ * is NOT consulted — the user explicitly chose to clear the key.
+ *
+ * Also clears health-check state — the entry is now unhealthy until a new key
+ * is provided + tested.
+ */
+export function clearProviderKey(id: string): { success: boolean; error: string | null } {
+  const entry = entries.get(id);
+  if (!entry) {
+    return { success: false, error: `Unknown provider: ${id}` };
+  }
+  entry.apiKey = '';
+  entry.connectionTested = false;
+  entry.models = [];
+  entry.voices = [];
+  entry.tools = [];
+  entry.imageModels = [];
+  entry.infoEndpoints = [];
+  entry.selectedVoiceId = undefined;
+  entry.lastError = null;
+  entry.lastLoadedAt = null;
+  entry.lastHealthCheckAt = null;
+  entry.healthy = false;
+  entry.suggestedAction = 'API key cleared. Enter a new key and run "Test & load" to reactivate this provider.';
+  entry.apiUrl = entry.defaultApiUrl;
+  console.log(`[provider-registry] provider key cleared: ${id}`);
+  return { success: true, error: null };
 }
 
 // ── "Test & load" — dispatches by category ──────────────────────────────
@@ -665,7 +977,7 @@ export function resetProvider(id: string): void {
 export async function testAndLoadModels(providerId: string): Promise<TestAndLoadResult> {
   const entry = entries.get(providerId);
   if (!entry) {
-    return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `Unknown provider: ${providerId}`, durationMs: 0 };
+    return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], infoEndpoints: [], error: `Unknown provider: ${providerId}`, durationMs: 0 };
   }
 
   const start = Date.now();
@@ -678,21 +990,30 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
         models = await fetchOpenRouterModels(entry.apiUrl, entry.apiKey);
       } else if (providerId === 'anthropic') {
         models = await fetchAnthropicModels(entry.apiUrl, entry.apiKey);
+      } else if (entry.isCustom) {
+        // Custom LLM provider — try the OpenAI-compatible /models endpoint shape.
+        // Most LLM APIs (Together AI, GroqCloud, Anyscale, etc.) follow OpenAI's
+        // /v1/models convention. This is a best-effort probe.
+        models = await fetchOpenAICompatibleModels(entry.apiUrl, entry.apiKey, providerId);
       } else {
-        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `No model-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], infoEndpoints: [], error: `No model-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
       }
 
       entry.models = models;
       entry.connectionTested = true;
       entry.lastError = null;
       entry.lastLoadedAt = Date.now();
-      return { providerId, success: true, models, voices: [], tools: [], imageModels: [], error: null, durationMs: Date.now() - start };
+      entry.healthy = true;
+      entry.suggestedAction = null;
+      entry.lastHealthCheckAt = Date.now();
+      return { providerId, success: true, models, voices: [], tools: [], imageModels: [], infoEndpoints: [], error: null, durationMs: Date.now() - start };
 
     } else if (entry.category === 'tts') {
       // ── TTS: fetch voices ──────────────────────────────────────────────
       let voices: ProviderVoice[] = [];
 
       if (providerId === 'kokoro') {
+        // Kokoro local has no API key — skip the apiKey check
         voices = getKokoroVoicesStatic();
       } else if (providerId === 'elevenlabs') {
         voices = await fetchElevenLabsVoices(entry.apiUrl, entry.apiKey);
@@ -705,19 +1026,30 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
         // connection test: if the API key is set, mark as connected + return
         // an empty voice list with a note that voices are configured per-call.
         voices = await testTtsConnection(providerId, entry.apiUrl, entry.apiKey);
+      } else if (entry.isCustom) {
+        // Custom TTS provider — assume ElevenLabs-style /voices endpoint.
+        // Best-effort: try the endpoint, fall back to connection test.
+        try {
+          voices = await fetchElevenLabsVoices(entry.apiUrl, entry.apiKey);
+        } catch {
+          voices = await testTtsConnection(providerId, entry.apiUrl, entry.apiKey);
+        }
       } else {
-        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `No voice-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], infoEndpoints: [], error: `No voice-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
       }
 
       entry.voices = voices;
       entry.connectionTested = true;
       entry.lastError = null;
       entry.lastLoadedAt = Date.now();
+      entry.healthy = true;
+      entry.suggestedAction = null;
+      entry.lastHealthCheckAt = Date.now();
       // Auto-select the first voice if none is selected
       if (!entry.selectedVoiceId && voices.length > 0) {
         entry.selectedVoiceId = voices[0].id;
       }
-      return { providerId, success: true, models: [], voices, tools: [], imageModels: [], error: null, durationMs: Date.now() - start };
+      return { providerId, success: true, models: [], voices, tools: [], imageModels: [], infoEndpoints: [], error: null, durationMs: Date.now() - start };
 
     } else if (entry.category === 'tool') {
       // ── Tool: inventory the live toolRegistry ─────────────────────────
@@ -730,14 +1062,17 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
       } else if (providerId === 'judge0') {
         tools = await testExternalToolProvider(providerId, entry.apiUrl, entry.apiKey);
       } else {
-        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `No tool-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
+        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], infoEndpoints: [], error: `No tool-list endpoint for provider: ${providerId}`, durationMs: Date.now() - start };
       }
 
       entry.tools = tools;
       entry.connectionTested = true;
       entry.lastError = null;
       entry.lastLoadedAt = Date.now();
-      return { providerId, success: true, models: [], voices: [], tools, imageModels: [], error: null, durationMs: Date.now() - start };
+      entry.healthy = true;
+      entry.suggestedAction = null;
+      entry.lastHealthCheckAt = Date.now();
+      return { providerId, success: true, models: [], voices: [], tools, imageModels: [], infoEndpoints: [], error: null, durationMs: Date.now() - start };
 
     } else if (entry.category === 'image-video') {
       // ── Image/Video: load static capability catalog ───────────────────
@@ -758,7 +1093,7 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
       } else if (providerId === 'byteplus-seedream') {
         imageModels = getBytePlusImageModelsStatic();
       } else {
-        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `No image-model catalog for provider: ${providerId}`, durationMs: Date.now() - start };
+        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], infoEndpoints: [], error: `No image-model catalog for provider: ${providerId}`, durationMs: Date.now() - start };
       }
 
       // For external providers, verify API key + URL before marking as connected
@@ -773,17 +1108,165 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
       entry.connectionTested = true;
       entry.lastError = null;
       entry.lastLoadedAt = Date.now();
-      return { providerId, success: true, models: [], voices: [], tools: [], imageModels, error: null, durationMs: Date.now() - start };
+      entry.healthy = true;
+      entry.suggestedAction = null;
+      entry.lastHealthCheckAt = Date.now();
+      return { providerId, success: true, models: [], voices: [], tools: [], imageModels, infoEndpoints: [], error: null, durationMs: Date.now() - start };
+
+    } else if (entry.category === 'information') {
+      // ── Information: probe a known endpoint + return the endpoint catalog ──
+      // Each information provider has a documented endpoint we probe with the
+      // user's API key. On success, we return a static catalog of the
+      // provider's documented endpoints (so the UI can show what's available).
+      // Verify API key + URL BEFORE the probe (so we get a clear "no key" error
+      // rather than a confusing 401 from the probe).
+      if (!entry.apiKey && providerId !== 'code-siren-tools') {
+        throw new Error(`${providerId} API key is not set. Enter your API key and try again.`);
+      }
+      if (entry.apiUrl) {
+        try { new URL(entry.apiUrl); } catch { throw new Error(`${providerId} API URL is invalid: ${entry.apiUrl}`); }
+      }
+
+      let infoEndpoints: ProviderInfoEndpoint[] = [];
+
+      if (providerId === 'newsapi') {
+        infoEndpoints = getNewsApiEndpointsStatic();
+        // Verify the API key by hitting /v2/top-headlines?country=us&pageSize=1
+        await probeInformationEndpoint(`${entry.apiUrl}/top-headlines?country=us&pageSize=1&apiKey=${entry.apiKey}`, providerId);
+      } else if (providerId === 'openweather') {
+        infoEndpoints = getOpenWeatherEndpointsStatic();
+        await probeInformationEndpoint(`${entry.apiUrl}/weather?q=London&appid=${entry.apiKey}`, providerId);
+      } else if (providerId === 'alphavantage') {
+        infoEndpoints = getAlphaVantageEndpointsStatic();
+        await probeInformationEndpoint(`${entry.apiUrl}?function=GLOBAL_QUOTE&symbol=IBM&apikey=${entry.apiKey}`, providerId);
+      } else if (entry.isCustom) {
+        // Custom information provider — probe the URL + return a generic endpoint catalog
+        infoEndpoints = [{
+          path: '/',
+          method: 'GET',
+          description: 'Custom information endpoint — probe the URL to determine available query parameters.',
+          requiredParams: ['apiKey'],
+          optionalParams: [],
+          sampleResponsePath: '',
+        }];
+        await probeInformationEndpoint(entry.apiUrl, providerId);
+      } else {
+        return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], infoEndpoints: [], error: `No information-endpoint catalog for provider: ${providerId}`, durationMs: Date.now() - start };
+      }
+
+      entry.infoEndpoints = infoEndpoints;
+      entry.connectionTested = true;
+      entry.lastError = null;
+      entry.lastLoadedAt = Date.now();
+      entry.healthy = true;
+      entry.suggestedAction = null;
+      entry.lastHealthCheckAt = Date.now();
+      return { providerId, success: true, models: [], voices: [], tools: [], imageModels: [], infoEndpoints, error: null, durationMs: Date.now() - start };
     }
 
-    return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], error: `Unknown category: ${entry.category}`, durationMs: Date.now() - start };
+    return { providerId, success: false, models: [], voices: [], tools: [], imageModels: [], infoEndpoints: [], error: `Unknown category: ${entry.category}`, durationMs: Date.now() - start };
   } catch (err: any) {
     const errorMsg = err?.message ?? String(err);
     entry.lastError = errorMsg;
     entry.connectionTested = false;
+    entry.healthy = false;
+    // Phase 3: suggest a remediation action based on the error type
+    entry.suggestedAction = suggestRemediation(err);
     // Keep any previously-loaded models/voices/tools
-    return { providerId, success: false, models: entry.models, voices: entry.voices, tools: entry.tools, imageModels: entry.imageModels, error: errorMsg, durationMs: Date.now() - start };
+    return { providerId, success: false, models: entry.models, voices: entry.voices, tools: entry.tools, imageModels: entry.imageModels, infoEndpoints: entry.infoEndpoints, error: errorMsg, durationMs: Date.now() - start };
   }
+}
+
+/**
+ * Phase 3 — Suggest a remediation action based on an error.
+ * Used by the test-and-load failure path + the background health-check cycle.
+ */
+function suggestRemediation(err: any): string {
+  const msg = (err?.message ?? String(err)).toLowerCase();
+  if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('api key is not set') || msg.includes('api key is invalid') || msg.includes('rejected the api key')) {
+    return 'The API key is invalid, expired, or missing. Generate a new key from the provider\'s dashboard and replace it here.';
+  }
+  if (msg.includes('403') || msg.includes('forbidden')) {
+    return 'The API key is valid but lacks permission for this endpoint. Check the key\'s scope/plan on the provider\'s dashboard.';
+  }
+  if (msg.includes('404')) {
+    return 'The URL returned 404. Verify the API URL is correct — check the provider\'s docs for the right endpoint path.';
+  }
+  if (msg.includes('429') || msg.includes('rate limit') || msg.includes('quota')) {
+    return 'Rate limit exceeded or quota exhausted. Wait a moment, or upgrade your plan on the provider\'s dashboard.';
+  }
+  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('aborted')) {
+    return 'The request timed out. Check your network connection and the provider\'s status page.';
+  }
+  if (msg.includes('enotfound') || msg.includes('econnrefused') || msg.includes('fetch failed') || msg.includes('network')) {
+    return 'Could not reach the API server. Check your internet connection, the API URL, and whether the provider is online.';
+  }
+  if (msg.includes('ssl') || msg.includes('certificate')) {
+    return 'SSL certificate error. The API\'s certificate may be expired or self-signed. Contact the provider.';
+  }
+  return 'The API returned an unexpected error. Check the error message above for details.';
+}
+
+/**
+ * Phase 3 — Probe an information endpoint with the API key.
+ * Throws on auth failure or non-OK response; returns silently on success.
+ */
+async function probeInformationEndpoint(url: string, providerId: string): Promise<void> {
+ const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(8000) });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '(no response body)');
+    if (res.status === 401) {
+      throw new Error(`${providerId} rejected the API key (401 Unauthorized). Verify your key is valid. Response: ${body.slice(0, 200)}`);
+    }
+    if (res.status === 403) {
+      throw new Error(`${providerId} API key lacks permission (403 Forbidden). Check your key\'s scope. Response: ${body.slice(0, 200)}`);
+    }
+    if (res.status === 429) {
+      throw new Error(`${providerId} rate limit exceeded (429). Wait a moment and try again.`);
+    }
+    throw new Error(`${providerId} endpoint request failed (HTTP ${res.status}): ${body.slice(0, 200)}`);
+  }
+}
+
+/**
+ * Generic OpenAI-compatible /models fetcher for custom LLM providers.
+ * Most LLM APIs (Together AI, GroqCloud, Anyscale, etc.) follow OpenAI's
+ * /v1/models convention. This is a best-effort probe for custom providers.
+ */
+async function fetchOpenAICompatibleModels(apiUrl: string, apiKey: string, providerId: string): Promise<ProviderModel[]> {
+  if (!apiKey) {
+    throw new Error(`${providerId} API key is not set. Enter your API key and try again.`);
+  }
+  const base = apiUrl.replace(/\/+$/, '');
+  // If the URL doesn't end in /models, append it
+  const url = base.endsWith('/models') ? base : `${base}/models`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '(no response body)');
+    if (res.status === 401) {
+      throw new Error(`${providerId} rejected the API key (401 Unauthorized). Verify your key is valid. Response: ${body.slice(0, 200)}`);
+    }
+    throw new Error(`${providerId} models request failed (HTTP ${res.status}): ${body.slice(0, 200)}`);
+  }
+  const data = await res.json() as { data?: Array<{ id: string; name?: string; context_length?: number }>; };
+  if (!data.data || !Array.isArray(data.data)) {
+    throw new Error(`${providerId} returned unexpected response shape — no "data" array. The URL may not be a model-list endpoint.`);
+  }
+  return data.data.map((m) => ({
+    id: m.id,
+    name: m.name ?? m.id,
+    contextWindow: m.context_length ?? 0,
+    maxOutputTokens: 0,
+    costTier: 'paid' as CostTier,
+    freeOrPaid: 'paid' as const,
+    supportsVision: false,
+    supportsToolUse: false,
+    pricingNote: '',
+  }));
 }
 
 // ── "Select voice" — sets the active voice + wires through to runtime ────
@@ -1314,6 +1797,99 @@ function getBytePlusImageModelsStatic(): ProviderImageModel[] {
       supportsVideo: false,
       costTier: 'paid',
       pricingNote: 'See BytePlus pricing page',
+    },
+  ];
+}
+
+// ── Information endpoint catalogs (Phase 3) ───────────────────────────────
+// Each information provider has a documented set of endpoints. These static
+// catalogs reflect the current (as of 2026-09) documented endpoints. The
+// "Test & load" action verifies the API key by hitting one real endpoint,
+// then returns this catalog so the UI can show what's available.
+
+function getNewsApiEndpointsStatic(): ProviderInfoEndpoint[] {
+  return [
+    {
+      path: '/top-headlines',
+      method: 'GET',
+      description: 'Top news headlines for a country + category. Returns articles with title, description, URL, source, and publishedAt.',
+      requiredParams: ['country', 'apiKey'],
+      optionalParams: ['category', 'q', 'pageSize', 'page'],
+      sampleResponsePath: 'articles[].title',
+    },
+    {
+      path: '/everything',
+      method: 'GET',
+      description: 'Search all articles matching a query. Returns articles sorted by relevancy or date.',
+      requiredParams: ['q', 'apiKey'],
+      optionalParams: ['from', 'to', 'language', 'sortBy', 'pageSize', 'page'],
+      sampleResponsePath: 'articles[].title',
+    },
+    {
+      path: '/sources',
+      method: 'GET',
+      description: 'List of news sources the provider aggregates. Returns source name, description, URL, and category.',
+      requiredParams: ['apiKey'],
+      optionalParams: ['category', 'language', 'country'],
+      sampleResponsePath: 'sources[].name',
+    },
+  ];
+}
+
+function getOpenWeatherEndpointsStatic(): ProviderInfoEndpoint[] {
+  return [
+    {
+      path: '/weather',
+      method: 'GET',
+      description: 'Current weather for a city name or coordinates. Returns temperature, humidity, wind, conditions.',
+      requiredParams: ['q'/* or 'lat'+'lon' */, 'appid'],
+      optionalParams: ['units', 'lang', 'mode'],
+      sampleResponsePath: 'main.temp',
+    },
+    {
+      path: '/forecast',
+      method: 'GET',
+      description: '5-day / 3-hour weather forecast for a city. Returns list of weather data points at 3-hour intervals.',
+      requiredParams: ['q', 'appid'],
+      optionalParams: ['units', 'lang', 'mode', 'cnt'],
+      sampleResponsePath: 'list[].main.temp',
+    },
+    {
+      path: '/air_pollution',
+      method: 'GET',
+      description: 'Current air pollution data for coordinates. Returns AQI + component concentrations (CO, NO, NO2, O3, SO2, PM2.5, PM10, NH3).',
+      requiredParams: ['lat', 'lon', 'appid'],
+      optionalParams: [],
+      sampleResponsePath: 'list[].main.aqi',
+    },
+  ];
+}
+
+function getAlphaVantageEndpointsStatic(): ProviderInfoEndpoint[] {
+  return [
+    {
+      path: '/',
+      method: 'GET',
+      description: 'Global quote — current price + change for a stock symbol. Returns open, high, low, price, volume, change, change percent.',
+      requiredParams: ['function=GLOBAL_QUOTE', 'symbol', 'apikey'],
+      optionalParams: [],
+      sampleResponsePath: 'Global Quote.05. price',
+    },
+    {
+      path: '/',
+      method: 'GET',
+      description: 'Time series (daily) — historical daily prices for a stock symbol. Returns date, open, high, low, close, volume.',
+      requiredParams: ['function=TIME_SERIES_DAILY', 'symbol', 'apikey'],
+      optionalParams: ['outputsize', 'datatype'],
+      sampleResponsePath: 'Time Series (Daily).*.4. close',
+    },
+    {
+      path: '/',
+      method: 'GET',
+      description: 'Currency exchange rate — real-time rate from one currency to another.',
+      requiredParams: ['function=CURRENCY_EXCHANGE_RATE', 'from_currency', 'to_currency', 'apikey'],
+      optionalParams: [],
+      sampleResponsePath: 'Realtime Currency Exchange Rate.5. Exchange Rate',
     },
   ];
 }

@@ -16,7 +16,10 @@ import type {
   ElevenLabsVoiceOption,
   ProviderEntry,
   ProviderTestResult,
+  OnboardProviderRequest,
   OnboardProviderResult,
+  TestUrlRequest,
+  TestUrlResult,
 } from '@/types';
 import { getToken, clearAuth } from './auth';
 import type { ChangeImpactAnalysis } from './change-impact';
@@ -362,47 +365,84 @@ export const api = {
     return request('/ghost-mode/level');
   },
 
-  // ── UPR Phase 1 Step 3 — ProviderRegistry ──────────────────────────────
-  // The "Test & load models" action hits the real provider /models endpoint.
-  // On success, models[] is populated with real current data. On failure,
-  // lastError is set to a specific, visible error message.
+  // ── API Hub (Phase 3 — was "ProviderRegistry") ────────────────────────
+  // The "Test & load" action hits the real provider endpoint. On success,
+  // models[]/voices[]/tools[]/imageModels[]/infoEndpoints[] is populated with
+  // real current data. On failure, lastError is set + suggestedAction is set.
+  //
+  // Route note: Phase 3 renamed /api/providers/* → /api/hub/*. The server still
+  // accepts both paths (backward compat). New code uses /api/hub/*.
 
   async listProviders(): Promise<{ providers: ProviderEntry[] }> {
-    return request('/providers');
+    return request('/hub');
   },
 
   async testProvider(providerId: string, opts?: { apiKey?: string; apiUrl?: string }): Promise<ProviderTestResult> {
-    return request(`/providers/${providerId}/test`, {
+    return request(`/hub/${providerId}/test`, {
       method: 'POST',
       body: JSON.stringify(opts ?? {}),
     });
   },
 
   async updateProvider(providerId: string, patch: { apiUrl?: string; apiKey?: string }): Promise<{ provider: ProviderEntry }> {
-    return request(`/providers/${providerId}`, {
+    return request(`/hub/${providerId}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     });
   },
 
-  // UPR Phase 2 Step 2a — select a TTS voice system-wide
+  // Phase 2 Step 2a — select a TTS voice system-wide
   async selectVoice(providerId: string, voiceId: string): Promise<{ success: boolean; provider: ProviderEntry }> {
-    return request(`/providers/${providerId}/select-voice`, {
+    return request(`/hub/${providerId}/select-voice`, {
       method: 'POST',
       body: JSON.stringify({ voiceId }),
     });
   },
 
-  // UPR Phase 2 Step 2d — onboard a custom provider
-  async onboardProvider(opts: {
-    displayName: string;
-    apiUrl?: string;
-    apiKey?: string;
-    whatDoesItDo: 'generate-text' | 'generate-speech' | 'execute-tools' | 'generate-images';
-  }): Promise<OnboardProviderResult> {
-    return request('/providers/onboard', {
+  // Phase 3 — fully clear the API key (user's "reset key" directive)
+  async resetProviderKey(providerId: string): Promise<{ success: boolean; provider: ProviderEntry }> {
+    return request(`/hub/${providerId}/reset-key`, {
+      method: 'POST',
+    });
+  },
+
+  // Phase 3 — manually trigger a health check
+  async healthCheckProvider(providerId: string): Promise<{ success: boolean; provider: ProviderEntry }> {
+    return request(`/hub/${providerId}/health-check`, {
+      method: 'POST',
+    });
+  },
+
+  // Phase 3 — delete a custom provider (built-ins cannot be deleted)
+  async deleteProvider(providerId: string): Promise<{ success: boolean; message: string }> {
+    return request(`/hub/${providerId}`, { method: 'DELETE' });
+  },
+
+  // Phase 2 Step 2d + Phase 3 — onboard a custom provider
+  async onboardProvider(opts: OnboardProviderRequest): Promise<OnboardProviderResult> {
+    return request('/hub/onboard', {
       method: 'POST',
       body: JSON.stringify(opts),
+    });
+  },
+
+  // Phase 3 — pre-onboarding URL probe with shape detection
+  async testCustomUrl(opts: TestUrlRequest): Promise<TestUrlResult> {
+    return request('/hub/test-url', {
+      method: 'POST',
+      body: JSON.stringify(opts),
+    });
+  },
+
+  // Phase 3 — Kokoro offline model: check status + trigger download
+  async getKokoroStatus(): Promise<{ running: boolean; modelLoaded: boolean; error?: string }> {
+    return request('/hub/kokoro-status', { method: 'POST' });
+  },
+
+  async downloadKokoroModel(opts?: { wait?: boolean }): Promise<{ success: boolean; modelLoaded?: boolean; message: string; suggestedAction?: string; error?: string }> {
+    return request('/hub/kokoro-download', {
+      method: 'POST',
+      body: JSON.stringify({ wait: opts?.wait ?? true }),
     });
   },
 
@@ -425,6 +465,14 @@ export const api = {
     return request('/voice/settings', {
       method: 'POST',
       body: JSON.stringify(body),
+    });
+  },
+
+  // Read-aloud: speak arbitrary text via the active TTSProvider
+  async speak(text: string): Promise<{ audioBase64: string; format: string; sampleRate: number; durationMs: number }> {
+    return request('/voice/speak', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
     });
   },
 };

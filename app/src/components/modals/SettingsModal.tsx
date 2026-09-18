@@ -2,9 +2,10 @@ import type { LucideIcon } from "lucide-react";
 import { useState, useEffect } from 'react';
 import { useApp } from '@/store/AppContext';
 import { motion, AnimatePresence } from 'motion/react';
-import type { ThemeName, VoiceSettings, VoiceProviderOption, KokoroVoiceOption, ElevenLabsVoiceOption, ProviderEntry } from '@/types';
+import type { ThemeName, VoiceSettings, VoiceProviderOption, KokoroVoiceOption, ElevenLabsVoiceOption, ProviderEntry, ProviderCategory } from '@/types';
 import { BubbleSettingsPanel } from './BubbleSettingsPanel';
 import { ProviderCard } from '@/components/settings/ProviderCard';
+import { AddCustomApiModal } from '@/components/settings/AddCustomApiModal';
 import { themes } from '@/store/themes';
 import { api } from '@/lib/api';
 import {
@@ -22,12 +23,13 @@ import {
   CircleDot,
   Sparkles,
   Bot,
+  Plus,
 } from 'lucide-react';
 
 type SettingsTab = 'models' | 'voice' | 'themes' | 'bubble' | 'security' | 'deployment';
 
 const settingsTabs: { id: SettingsTab; label: string; icon: LucideIcon }[] = [
-  { id: 'models', label: 'Model Router', icon: Cpu },
+  { id: 'models', label: 'API Hub', icon: Cpu },
   { id: 'voice', label: 'Voice', icon: Mic },
   { id: 'themes', label: 'Themes', icon: Palette },
   { id: 'bubble', label: 'Bubble', icon: Sparkles },
@@ -91,6 +93,15 @@ export function SettingsModal() {
   const [engines, setEngines] = useState<Array<{ id: string; name: string; available: boolean; models?: string[]; activeModel?: string }>>([]);
   // UPR Phase 1 Step 3 — ProviderRegistry state
   const [providers, setProviders] = useState<ProviderEntry[]>([]);
+  // Phase 3 — Add Custom API modal + category-grouped view
+  const [showAddCustomApi, setShowAddCustomApi] = useState(false);
+  const [expandedCategories, setExpandedCategories] = useState<Record<ProviderCategory, boolean>>({
+    'llm': true,
+    'tool': true,
+    'tts': true,
+    'image-video': true,
+    'information': true,
+  });
 
   const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -390,10 +401,10 @@ export function SettingsModal() {
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-[13px] font-medium" style={{ color: 'var(--bright-silver)' }}>
-                          AUTO Model Router
+                          AUTO Engine Selection
                         </h3>
                         <p className="text-[11px] mt-0.5" style={{ color: 'var(--steel-silver)' }}>
-                          Intelligently selects the best model for each task type
+                          Intelligently selects the best LLM engine for each task type
                         </p>
                       </div>
                       <button onClick={() => setAutoModel(!autoModel)}>
@@ -566,29 +577,104 @@ export function SettingsModal() {
                     </div>
                   )}
 
-                  {/* UPR Phase 1 Step 3 — ProviderRegistry cards (data-driven) */}
+                  {/* Phase 3 — API Hub (was "Provider Registry"): categorized + Add custom API */}
                   <div>
-                    <h3 className="text-[12px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--steel-silver)' }}>
-                      Provider Registry (Test &amp; load models)
-                    </h3>
-                    <p className="text-[10px] mb-3" style={{ color: 'var(--muted-silver)' }}>
-                      Hit each provider's real /models endpoint to load current models + capability metadata.
-                    </p>
-                    <div className="space-y-3">
-                      {providers.map((provider) => (
-                        <ProviderCard
-                          key={provider.id}
-                          provider={provider}
-                          onUpdated={fetchProviders}
-                        />
-                      ))}
-                      {providers.length === 0 && (
-                        <div className="text-[11px] px-3 py-2" style={{ color: 'var(--muted-silver)' }}>
-                          Loading providers...
-                        </div>
-                      )}
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-[12px] font-semibold uppercase tracking-wider" style={{ color: 'var(--steel-silver)' }}>
+                        API Hub
+                      </h3>
+                      <button
+                        onClick={() => setShowAddCustomApi(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors"
+                        style={{ backgroundColor: 'var(--siren-red)', color: 'white' }}
+                      >
+                        <Plus className="w-3 h-3" />
+                        Add a custom API
+                      </button>
                     </div>
+                    <p className="text-[10px] mb-3" style={{ color: 'var(--muted-silver)' }}>
+                      Each API is grouped by category. Click "Test &amp; load" to verify the connection and load the model / voice / tool / endpoint list. A green badge means the API is configured AND working.
+                    </p>
+
+                    {/* Phase 3 — Category-grouped provider list */}
+                    {([
+                      { key: 'llm',          label: 'Model API',         desc: 'LLM providers (chat / completion)' },
+                      { key: 'tool',          label: 'Tool API',          desc: 'MCP / tool execution providers' },
+                      { key: 'tts',           label: 'Voice API',         desc: 'Text-to-speech providers' },
+                      { key: 'image-video',   label: 'Image/Video API',  desc: 'Image + video generation providers' },
+                      { key: 'information',    label: 'Information API',   desc: 'Read-only data APIs (news, weather, stock, etc.)' },
+                    ] as { key: ProviderCategory; label: string; desc: string }[]).map(({ key, label, desc }) => {
+                      const categoryProviders = providers.filter((p) => p.category === key);
+                      if (categoryProviders.length === 0) return null;
+                      const healthyCount = categoryProviders.filter((p) => p.healthy).length;
+                      const configuredCount = categoryProviders.filter((p) => p.apiKeyIsSet || p.id === 'kokoro' || p.id === 'code-siren-tools').length;
+                      const isExpanded = expandedCategories[key];
+                      return (
+                        <div key={key} className="mb-3">
+                          <button
+                            onClick={() => setExpandedCategories({ ...expandedCategories, [key]: !isExpanded })}
+                            className="w-full flex items-center justify-between px-3 py-2 rounded-md transition-colors hover:bg-white/5"
+                            style={{
+                              backgroundColor: isExpanded ? 'var(--surface-dark)' : 'transparent',
+                              border: '1px solid var(--border-subtle)',
+                            }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="text-[10px] font-mono"
+                                style={{ color: isExpanded ? 'var(--siren-red)' : 'var(--steel-silver)', transition: 'transform 0.15s', display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                              >
+                                ▶
+                              </span>
+                              <span className="text-[12px] font-medium" style={{ color: 'var(--bright-silver)' }}>
+                                {label}
+                              </span>
+                              <span className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
+                                ({categoryProviders.length})
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px]">
+                              <span style={{ color: '#22C55E' }}>
+                                {healthyCount} working
+                              </span>
+                              <span style={{ color: 'var(--steel-silver)' }}>
+                                {configuredCount} configured
+                              </span>
+                            </div>
+                          </button>
+                          {isExpanded && (
+                            <div className="mt-2 space-y-3">
+                              {categoryProviders.map((provider) => (
+                                <ProviderCard
+                                  key={provider.id}
+                                  provider={provider}
+                                  onUpdated={fetchProviders}
+                                />
+                              ))}
+                            </div>
+                          )}
+                          {isExpanded && (
+                            <p className="text-[10px] mt-1.5 px-3" style={{ color: 'var(--muted-silver)' }}>
+                              {desc}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {providers.length === 0 && (
+                      <div className="text-[11px] px-3 py-2" style={{ color: 'var(--muted-silver)' }}>
+                        Loading providers...
+                      </div>
+                    )}
                   </div>
+
+                  {/* Phase 3 — Add Custom API modal */}
+                  <AddCustomApiModal
+                    open={showAddCustomApi}
+                    onClose={() => setShowAddCustomApi(false)}
+                    onSaved={fetchProviders}
+                  />
 
                   {/* Agent Relay + Orchestrator */}
                   <div

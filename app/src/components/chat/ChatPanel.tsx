@@ -40,20 +40,24 @@ export function ChatPanel() {
   const [chatBackground, setChatBackground] = useState<ChatBackground>({ type: 'none', url: '', opacity: 0.3, blur: 0 });
   const [showBackgroundSettings, setShowBackgroundSettings] = useState(false);
   // Start Project loading state — directive Section 2.1.
-  // True while the orchestrator is reading the chat history + producing
-  // a plan. The "Start Project" button shows a spinner during this time.
   const [startProjectLoading, setStartProjectLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Read-aloud state — tracks which message is currently being spoken
+  // so the UI can show a playing indicator + prevent overlap.
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const speakAbortRef = useRef<AbortController | null>(null);
+  // Shared AudioContext for read-aloud playback (lazily created on first use).
+  // Reuses the same Web Audio API pattern as VoiceSessionContext — no second
+  // playback path, just a separate AudioContext instance since ChatPanel
+  // doesn't have access to VoiceSessionContext's singleton.
+  const speakAudioCtxRef = useRef<AudioContext | null>(null);
+  const speakSourceRef = useRef<AudioBufferSourceNode | null>(null);
+
   const activeChat = state.chatSessions.find(c => c.id === state.activeChatId);
   const messages = useMemo(() => activeChat?.messages ?? [], [activeChat?.messages]);
   const requestStartTime = useRef<number>(0);
-
-  // ── Auto-scroll to bottom on new messages ─────────────────────────────
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
 
   // ── Dismiss notification ──────────────────────────────────────────────
   const dismissNotification = useCallback((id: string) => {
@@ -62,11 +66,18 @@ export function ChatPanel() {
 
   // ── Add notification (only for the 3 trigger conditions per Section 8) ─
   const addNotification = useCallback((severity: NotificationItem['severity'], title: string, description?: string) => {
-    const id = `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    setNotifications(prev => [...prev, { id, severity, title, description, duration: 5000 }]);
-    // Auto-dismiss after 5s
+    const id = `n-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setNotifications(prev => [...prev, { id, severity, title, description }]);
     setTimeout(() => dismissNotification(id), 5000);
   }, [dismissNotification]);
+
+  // ── Auto-scroll to bottom on new messages ─────────────────────────────
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // (dismissNotification + addNotification are declared earlier in the file,
+  // before handleSpeak, because handleSpeak depends on addNotification.)
 
   // ── WS event listener for agent responses ─────────────────────────────
   // Listens to BOTH agent:* (existing agent-relay flow) AND orchestrator:*
@@ -225,6 +236,78 @@ export function ChatPanel() {
   const handleFollowUp = useCallback((text: string) => {
     handleSend(text, [], { provider: '', model: '' });
   }, [handleSend]);
+
+  // ── Read aloud (Listen button) ──────────────────────────────────────────
+  // POSTs message content to /api/voice/speak, which calls getTTSProvider().speak().
+  // Plays the returned audio via Web Audio API (same pattern as VoiceSessionContext).
+  //
+  // Overlap prevention: if audio is already playing, clicking Listen again
+  // stops the current playback before starting the new one. This is deliberate
+  // — not undefined behavior.
+  const handleSpeak = useCallback(async (content: string) => {
+    // If already speaking this exact content, stop playback (toggle behavior)
+    if (speakingMessageId) {
+      // Stop current playback
+      if (speakSourceRef.current) {
+        try { speakSourceRef.current.stop(); } catch { /* already ended */ }
+        speakSourceRef.current = null;
+      }
+      setSpeakingMessageId(null);
+      // If the user clicked the same message, just stop (toggle off)
+      // If they clicked a different message, the flow continues below
+      // to start the new one
+    }
+
+    // Abort any in-flight speak request
+    if (speakAbortRef.current) {
+      speakAbortRef.current.abort();
+    }
+    const abort = new AbortController();
+    speakAbortRef.current = abort;
+
+    // Find the message ID for this content
+    const msg = messages.find(m => m.content === content);
+    const msgId = msg?.id ?? `speak-${Date.now()}`;
+
+    try {
+      const result = await api.speak(content);
+      if (abort.signal.aborted) return;  // superseded by a newer click
+
+      // Lazily create AudioContext (browsers require user gesture)
+      if (!speakAudioCtxRef.current) {
+        speakAudioCtxRef.current = new AudioContext();
+      }
+      const ctx = speakAudioCtxRef.current;
+
+      // Decode the base64 audio
+      const arrayBuffer = Uint8Array.from(atob(result.audioBase64), c => c.charCodeAt(0)).buffer;
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+      if (abort.signal.aborted) return;
+
+      // Stop any previous source
+      if (speakSourceRef.current) {
+        try { speakSourceRef.current.stop(); } catch { /* */ }
+      }
+
+      // Create + play new source
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
+      source.start();
+      speakSourceRef.current = source;
+      setSpeakingMessageId(msgId);
+
+      source.onended = () => {
+        speakSourceRef.current = null;
+        setSpeakingMessageId(null);
+      };
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error('[chat:speak] failed:', errorMsg);
+      addNotification('error', 'Read aloud failed', errorMsg);
+    }
+  }, [messages, speakingMessageId, addNotification]);
 
   // ── Regenerate last response ──────────────────────────────────────────
   const handleRegenerate = useCallback(() => {
@@ -411,6 +494,7 @@ export function ChatPanel() {
             onFollowUpClick={handleFollowUp}
             onRegenerate={handleRegenerate}
             onCopy={(content) => navigator.clipboard.writeText(content)}
+            onSpeak={handleSpeak}
           />
         ))}
 

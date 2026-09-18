@@ -176,6 +176,26 @@ def handle_request(req: dict) -> dict:
             "modelLoaded": _model is not None,
         }
 
+    if req_type == "preload":
+        # Phase 3 — explicitly trigger the model download + load.
+        # The user clicked "Download offline model" in the API Hub UI.
+        # This forces ensure_model() which downloads the 312 MB model from
+        # HuggingFace if not cached, then loads it into RAM (~1.3 GB peak).
+        # Returns when the model is loaded — the UI shows progress while this
+        # request is in-flight (typically 5-30s for download, 5s for load).
+        try:
+            ensure_model()
+            return {
+                "id": req_id,
+                "ok": True,
+                "modelLoaded": True,
+                "message": "Kokoro model downloaded + loaded. Ready for offline TTS.",
+            }
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"[kokoro] preload error: {e}\n{tb}", file=sys.stderr, flush=True)
+            return {"id": req_id, "ok": False, "error": f"{type(e).__name__}: {e}"}
+
     if req_type == "crash":
         # Fabrication-guard test path — simulate a crash mid-job
         sys.exit(1)

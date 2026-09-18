@@ -261,8 +261,8 @@ describe('UPR Phase 1 Step 3 — ProviderRegistry', () => {
   it('listProviders returns OpenRouter + Anthropic + TTS providers with correct seed data', () => {
     const providers = listProviders();
     // Phase 1: 2 LLM. Phase 2a: +11 TTS. Phase 2b: +3 Tool.
-    // Phase 2c: +5 Image/Video = 21 total.
-    expect(providers.length).toBe(21);
+    // Phase 2c: +5 Image/Video. Phase 3: +3 Information = 24 total.
+    expect(providers.length).toBe(24);
 
     const openrouter = providers.find((p) => p.id === 'openrouter')!;
     expect(openrouter.category).toBe('llm');
@@ -277,6 +277,12 @@ describe('UPR Phase 1 Step 3 — ProviderRegistry', () => {
     expect(anthropic.defaultApiUrl).toBe('https://api.anthropic.com/v1');
     expect(anthropic.models).toEqual([]);
     expect(anthropic.connectionTested).toBe(false);
+
+    // Phase 3 — Information providers
+    const newsapi = providers.find((p) => p.id === 'newsapi')!;
+    expect(newsapi.category).toBe('information');
+    expect(newsapi.defaultApiUrl).toBe('https://newsapi.org/v2');
+    expect(newsapi.infoEndpoints).toEqual([]);
   });
 
   // ── TEST 10: updateProviderConfig clears models on config change ─────

@@ -33,6 +33,7 @@ import { workflowRouter } from './routes/workflow.js';
 import { memoryRouter } from './routes/memory.js';
 import { voiceLiveRouter } from './routes/voice-live.js';
 import { orchestratorRouter } from './routes/orchestrator.js';
+import { startHealthCheckCycle, stopHealthCheckCycle } from './provider-registry/health-check.js';
 import { workspaceRouter } from './routes/workspace.js';
 import { changesRouter } from './routes/changes.js';
 import { rateLimitApi } from './middleware/rate-limiter.js';
@@ -146,7 +147,8 @@ async function main() {
   app.use('/api/sentinel', sentinelRouter);
   app.use('/api/presence', presenceRouter);
   app.use('/api/models', modelsRouter);
-  app.use('/api/providers', providersRouter);
+  app.use('/api/providers', providersRouter); // backward compat — old clients
+  app.use('/api/hub', providersRouter);        // Phase 3 — new canonical path
   app.use('/api/project-files', projectFilesRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/system', systemHealthRouter);
@@ -280,11 +282,15 @@ async function main() {
     console.log(`[server] Ghost: state=${ghostMode.currentState} level=${ghostMode.currentLevel}`);
     console.log(`[server] Sidecars: ${sidecarManager.list().length > 0 ? sidecarManager.list().join(', ') : '(none — spawned on first use)'}`);
     console.log('─'.repeat(60));
+    // Phase 3 — start the API Hub background health-check cycle.
+    // Tests set DISABLE_HEALTH_CHECK=1 to opt out.
+    startHealthCheckCycle();
   });
 
   // 6. Graceful shutdown — kill sidecars FIRST so they don't outlive Node
   const shutdown = async () => {
     console.log('\n[server] shutting down...');
+    stopHealthCheckCycle();    // Phase 3 — stop the API Hub health-check cycle
     sidecarManager.killAll();  // kill sidecars synchronously before Node exits
     stopOllamaServe();         // stop ollama serve if we started it
     ghostMode.stop();
