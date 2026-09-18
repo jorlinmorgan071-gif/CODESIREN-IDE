@@ -10,7 +10,12 @@ import type { AvatarMotionState } from './avatar-motion';
 import type { LocalVrmaSession } from './local-vrma-session';
 import { LatestOperationGate } from './runtime-coordination';
 
-const CROSSFADE_SECONDS = 0.22;
+// Default crossfade duration for state-to-state transitions.
+// 0.55s is long enough to avoid a visible pop when the avatar changes
+// motion state (idle → gesture → idle), but short enough to feel
+// responsive when the user clicks. Individual triggers can override
+// this via the `crossfadeSeconds` option on installBuiltInClip().
+const CROSSFADE_SECONDS = 0.55;
 
 // Marker used to tag built-in clips (so we can avoid trying to revoke a blob
 // URL or re-fetch them).

@@ -48,6 +48,7 @@ import {
   type AnimeExpressionSample,
 } from './anime-expressions';
 import type { AvatarCompatibilityProfile, AvatarCapabilities } from './avatar-compatibility';
+import { CROSSFADE } from './avatar-animation-triggers';
 
 export interface AutoCycleState {
   avatarId: string | null;
@@ -269,7 +270,10 @@ export function tickAutoCycle(ctx: TickContext): AutoCycleTickResult {
       const nextId = pickRandom(pool, current);
       if (nextId !== current) {
         const anim = getBuiltInAnimation(nextId);
-        player.swapBuiltInClip(currentMotionState, anim.clip, nextId, anim.crossfadeSeconds);
+        // Use the longer idle-swap crossfade for fluid transitions
+        // between idle clips. The anim.crossfadeSeconds is used for
+        // one-shot triggers (greetings, gestures), not idle swaps.
+        player.swapBuiltInClip(currentMotionState, anim.clip, nextId, CROSSFADE.idleSwap);
         state.currentClipPerState.set(currentMotionState, nextId);
         result.swappedClip = true;
       }

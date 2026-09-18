@@ -43,6 +43,7 @@ import {
   tryIssueGreeting,
   type AutoCycleState,
 } from '@/lib/avatar-auto-cycle';
+import { triggerAvatarSwitch, triggerIdleEnter, triggerUserTap } from '@/lib/avatar-animation-triggers';
 import { getAvatarPersonality } from '@/lib/avatar-personality';
 import { AvatarRuntimeErrorBoundary } from '@/components/avatar/AvatarRuntimeErrorBoundary';
 
@@ -94,7 +95,9 @@ function ShowcaseAvatar({ avatarId, avatarUrl, position }: ShowcaseAvatarProps) 
   const currentBlendValues = useRef<Record<string, number>>({});
   const targetBlendValues = useRef<Record<string, number>>({});
   const lookAtTarget = useRef(new THREE.Object3D());
-  const motionStartedAtRef = useRef(Date.now());
+  // Initial value is set in the model-load effect below; useRef(0) is just
+  // a placeholder so we don't call Date.now() during render (React purity).
+  const motionStartedAtRef = useRef(0);
   const vrmaPlayerRef = useRef<LocalVrmaPlayer | null>(null);
   const autoCycleRef = useRef<AutoCycleState | null>(null);
   const personality = useMemo(() => getAvatarPersonality(avatarId), [avatarId]);
@@ -128,6 +131,10 @@ function ShowcaseAvatar({ avatarId, avatarUrl, position }: ShowcaseAvatarProps) 
         const states: Array<'idle' | 'enter' | 'gesture' | 'rest' | 'bored' | 'listening' | 'thinking' | 'celebrate' | 'wake'> =
           ['idle', 'enter', 'gesture', 'rest', 'bored', 'listening', 'thinking', 'celebrate', 'wake'];
         for (const s of states) ensureBuiltInForState(autoCycleRef.current, player, s);
+        // Fire the avatar-switch greeting (wave) + install an idle clip
+        // ready for the return-to-idle transition.
+        triggerAvatarSwitch(player, autoCycleRef.current);
+        triggerIdleEnter(player, autoCycleRef.current, Date.now());
         tryIssueGreeting(autoCycleRef.current, player);
       }
     }
@@ -247,6 +254,21 @@ function ShowcaseAvatar({ avatarId, avatarUrl, position }: ShowcaseAvatarProps) 
         position={compatibility.profile.transform.positionOffset}
         rotation={compatibility.profile.transform.rotationOffset}
       />
+      {/* Invisible clickable mesh that triggers a wave gesture on click. */}
+      <mesh
+        visible={false}
+        onClick={(e) => {
+          e.stopPropagation();
+          const player = vrmaPlayerRef.current;
+          const cycle = autoCycleRef.current;
+          if (player && cycle) {
+            triggerUserTap(player, cycle, Date.now());
+          }
+        }}
+      >
+        <boxGeometry args={[2, 4, 2]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
     </group>
   );
 }
@@ -283,18 +305,12 @@ interface ShowcaseAvatarCardProps {
 }
 
 function ShowcaseAvatarCard({ avatarId, displayName, isCustom }: ShowcaseAvatarCardProps) {
-  // Re-read personality on every render so the display text reflects the
-  // latest inferred temperament (custom avatars get re-resolved once
-  // their VRM capabilities are detected at runtime).
   const [, setTick] = useState(0);
   const [statusText, setStatusText] = useState(() => {
     const p = getAvatarPersonality(avatarId);
     return `${p.displayName} · ${p.temperament} · ${p.source}`;
   });
 
-  // Force a re-render every 4s so the personality display refreshes
-  // (in case the auto-cycle scheduler has re-resolved the temperament
-  // via finalisePersonalityWithCapabilities).
   useEffect(() => {
     const id = setInterval(() => {
       const fresh = getAvatarPersonality(avatarId);
@@ -321,6 +337,7 @@ function ShowcaseAvatarCard({ avatarId, displayName, isCustom }: ShowcaseAvatarC
           {isCustom && <span style={{ marginLeft: 6, fontSize: 10, color: '#ff6b6b', border: '1px solid #ff6b6b33', borderRadius: 3, padding: '1px 4px' }}>CUSTOM</span>}
         </div>
         <div style={{ fontSize: 11, color: '#7a7a85', marginTop: 2 }}>{statusText}</div>
+        <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>click avatar to wave</div>
       </div>
       <div style={{ height: 280, background: 'rgba(0,0,0,0.4)', position: 'relative' }}>
         <ShowcaseErrorBoundary label={avatarId}>

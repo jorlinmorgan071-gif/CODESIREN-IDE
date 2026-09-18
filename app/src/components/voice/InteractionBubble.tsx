@@ -59,6 +59,7 @@ import {
   tryIssueGreeting,
   type AutoCycleState,
 } from '@/lib/avatar-auto-cycle';
+import { triggerAvatarSwitch, triggerIdleEnter } from '@/lib/avatar-animation-triggers';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
 
@@ -216,6 +217,8 @@ function VRMBubbleContent({
         ensureBuiltInForState(autoCycleRef.current, player, 'thinking');
         ensureBuiltInForState(autoCycleRef.current, player, 'celebrate');
         ensureBuiltInForState(autoCycleRef.current, player, 'wake');
+        triggerAvatarSwitch(player, autoCycleRef.current);
+        triggerIdleEnter(player, autoCycleRef.current, Date.now());
         tryIssueGreeting(autoCycleRef.current, player);
       }
     }

@@ -334,8 +334,11 @@ class MockPlayer implements Pick<LocalVrmaPlayer,
   getBuiltInClipId(state: AvatarMotionState): string | null {
     return this.installed.get(state) ?? null;
   }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   setState(_state: AvatarMotionState): void { /* noop */ }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   setStateWithCrossfade(_state: AvatarMotionState, _crossfade: number): void { /* noop */ }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   update(_deltaSeconds: number): void { /* noop */ }
 }
 

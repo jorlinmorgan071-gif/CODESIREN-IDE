@@ -53,6 +53,7 @@ import {
   tryIssueGreeting,
   type AutoCycleState,
 } from '@/lib/avatar-auto-cycle';
+import { triggerAvatarSwitch, triggerIdleEnter } from '@/lib/avatar-animation-triggers';
 
 type EmotionId = 'happy' | 'sad' | 'angry' | 'think' | 'surprised' | 'neutral';
 
@@ -160,7 +161,10 @@ function PipVRMModel({ avatarUrl, currentEmotion, isActive, audioSource, audioCo
         ensureBuiltInForState(autoCycleRef.current, player, 'thinking');
         ensureBuiltInForState(autoCycleRef.current, player, 'celebrate');
         ensureBuiltInForState(autoCycleRef.current, player, 'wake');
-        // Optionally fire a one-shot greeting wave.
+        // Fire the avatar-switch greeting (wave) — activates the gesture
+        // clip with a smooth crossfade, then returns to idle naturally.
+        triggerAvatarSwitch(player, autoCycleRef.current);
+        triggerIdleEnter(player, autoCycleRef.current, nowMs);
         tryIssueGreeting(autoCycleRef.current, player);
       }
     }

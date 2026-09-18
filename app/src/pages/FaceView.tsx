@@ -67,6 +67,7 @@ import {
   tryIssueGreeting,
   type AutoCycleState,
 } from '@/lib/avatar-auto-cycle';
+import { triggerAvatarSwitch, triggerIdleEnter } from '@/lib/avatar-animation-triggers';
 
 // Phase B: Lazy-load the upload dialog (heavy: Three.js + VRM analysis)
 const AvatarUploadDialogLazy = lazy(() =>
@@ -181,6 +182,16 @@ function VRMModel({ amplitude, isActive, currentEmotion, audioSource, audioConte
         ensureBuiltInForState(autoCycleRef.current, player, 'thinking');
         ensureBuiltInForState(autoCycleRef.current, player, 'celebrate');
         ensureBuiltInForState(autoCycleRef.current, player, 'wake');
+        // Fire the avatar-switch greeting — this activates a wave
+        // clip under the 'gesture' state slot, with a smooth crossfade.
+        // The motion reducer will return to 'idle' naturally after the
+        // gesture duration expires.
+        triggerAvatarSwitch(player, autoCycleRef.current);
+        // Also install an idle clip so it's ready to fade in the
+        // moment the greeting finishes.
+        triggerIdleEnter(player, autoCycleRef.current, nowMs);
+        // For backwards compatibility: tryIssueGreeting is also called
+        // (it's idempotent now — triggerAvatarSwitch already set greeted=true).
         tryIssueGreeting(autoCycleRef.current, player);
       }
     }
