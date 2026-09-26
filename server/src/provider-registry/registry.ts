@@ -357,6 +357,30 @@ function seedEntries(): ProviderRegistryEntry[] {
       suggestedAction: null,
       isCustom: false,
     },
+    // Whisper — local neural ASR (transcription, NOT TTS).
+    // Uses faster-whisper (CTranslate2-backed) running in a Python sidecar.
+    // Installed via the same installer flow as Kokoro (Phase 3+).
+    // Category is 'tool' (it's a transcription tool, not TTS output).
+    {
+      id: 'whisper',
+      category: 'tool',
+      displayName: 'Whisper (Local — speech-to-text)',
+      defaultApiUrl: '',
+      apiUrl: '',
+      apiKey: '',
+      connectionTested: false,
+      models: [],
+      voices: [],
+      tools: [],
+      imageModels: [],
+      lastError: null,
+      lastLoadedAt: null,
+      infoEndpoints: [],
+      lastHealthCheckAt: null,
+      healthy: false,
+      suggestedAction: null,
+      isCustom: false,
+    },
     // ── Image/Video generation providers (Phase 2 Step 2c) ─────────────
     // 5 cloud providers. "Test & load" returns static capability catalogs
     // (image generation APIs don't have a /models endpoint — the model list
@@ -929,8 +953,9 @@ export function resetProvider(id: string): void {
   if (id === 'newsapi') entry.apiKey = process.env.NEWSAPI_KEY ?? process.env.NEWS_API_KEY ?? '';
   if (id === 'openweather') entry.apiKey = process.env.OPENWEATHER_API_KEY ?? process.env.OPENWEATHERMAP_API_KEY ?? '';
   if (id === 'alphavantage') entry.apiKey = process.env.ALPHAVANTAGE_API_KEY ?? process.env.ALPHA_VANTAGE_API_KEY ?? '';
-  // Kokoro has no API key (local)
+  // Kokoro + Whisper have no API key (local)
   if (id === 'kokoro') entry.apiKey = '';
+  if (id === 'whisper') entry.apiKey = '';
   entry.apiUrl = entry.defaultApiUrl;
 }
 

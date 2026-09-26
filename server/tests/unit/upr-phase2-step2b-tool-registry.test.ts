@@ -29,16 +29,17 @@ describe('UPR Phase 2 Step 2b — Tool/MCP ProviderRegistry', () => {
     vi.restoreAllMocks();
   });
 
-  // ── TEST 1: listProviders includes 3 Tool providers ──────────────────
-  it('listProviders includes all 3 Tool providers', () => {
+  // ── TEST 1: listProviders includes 4 Tool providers ──────────────────
+  it('listProviders includes all 4 Tool providers (3 cloud + 1 local Whisper)', () => {
     const providers = listProviders();
     const toolProviders = providers.filter((p) => p.category === 'tool');
-    expect(toolProviders.length).toBe(3);
+    expect(toolProviders.length).toBe(4);
 
     const ids = toolProviders.map((p) => p.id);
     expect(ids).toContain('code-siren-tools');
     expect(ids).toContain('tavily');
     expect(ids).toContain('judge0');
+    expect(ids).toContain('whisper');  // Phase 3+ — local ASR
   });
 
   // ── TEST 2: Code Siren built-in tools — "test & load" returns real tool catalog ──

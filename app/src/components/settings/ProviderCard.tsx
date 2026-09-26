@@ -17,7 +17,8 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import type { ProviderEntry, ProviderModel, ProviderVoice, ProviderTool, ProviderImageModel, ProviderInfoEndpoint } from '@/types';
-import { Loader2, CheckCircle, XCircle, RefreshCw, Eye, EyeOff, Volume2, Trash2, KeyRound, Activity, AlertTriangle, Download, HardDrive } from 'lucide-react';
+import { SidecarInstallPanel } from './SidecarInstallPanel';
+import { Loader2, CheckCircle, XCircle, RefreshCw, Eye, EyeOff, Volume2, Trash2, KeyRound, Activity, AlertTriangle } from 'lucide-react';
 
 interface ProviderCardProps {
   provider: ProviderEntry;
@@ -38,54 +39,6 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
   const [resetting, setResetting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [healthChecking, setHealthChecking] = useState(false);
-  // Phase 3 — Kokoro offline model download state
-  const [kokoroStatus, setKokoroStatus] = useState<{ running: boolean; modelLoaded: boolean } | null>(null);
-  const [kokoroDownloading, setKokoroDownloading] = useState(false);
-  const [kokoroError, setKokoroError] = useState<string | null>(null);
-
-  // Phase 3 — Poll Kokoro status when this card is the Kokoro provider
-  useEffect(() => {
-    if (provider.id !== 'kokoro') return;
-    let cancelled = false;
-    const checkStatus = async () => {
-      try {
-        const status = await api.getKokoroStatus();
-        if (!cancelled) {
-          setKokoroStatus(status);
-          setKokoroError(status.error ?? null);
-        }
-      } catch (err: unknown) {
-        if (!cancelled) {
-          setKokoroError(err instanceof Error ? err.message : String(err));
-        }
-      }
-    };
-    checkStatus();
-    // Poll every 5s while downloading, every 30s otherwise
-    const interval = kokoroDownloading ? 5_000 : 30_000;
-    const handle = setInterval(checkStatus, interval);
-    return () => { cancelled = true; clearInterval(handle); };
-  }, [provider.id, kokoroDownloading]);
-
-  // Phase 3 — Trigger Kokoro model download
-  const handleDownloadKokoro = async () => {
-    setKokoroDownloading(true);
-    setKokoroError(null);
-    try {
-      const result = await api.downloadKokoroModel({ wait: true });
-      if (!result.success) {
-        setKokoroError(result.error ?? 'Download failed');
-      } else {
-        // Refresh status
-        const status = await api.getKokoroStatus();
-        setKokoroStatus(status);
-      }
-    } catch (err: unknown) {
-      setKokoroError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setKokoroDownloading(false);
-    }
-  };
 
   // Sync apiUrl when provider prop changes (e.g. after refetch)
   useEffect(() => {
@@ -533,82 +486,15 @@ export function ProviderCard({ provider, onUpdated }: ProviderCardProps) {
         </div>
       )}
 
-      {/* ── Phase 3 — Kokoro offline model download ───────────────────── */}
-      {provider.id === 'kokoro' && (
-        <div
-          className="mb-3 px-3 py-2 rounded"
-          style={{
-            backgroundColor: kokoroStatus?.modelLoaded
-              ? 'rgba(34, 197, 94, 0.06)'
-              : (kokoroDownloading ? 'rgba(59, 130, 246, 0.06)' : 'var(--surface-raised)'),
-            border: `1px solid ${
-              kokoroStatus?.modelLoaded
-                ? 'rgba(34, 197, 94, 0.3)'
-                : (kokoroDownloading ? 'rgba(59, 130, 246, 0.3)' : 'var(--border-subtle)')
-            }`,
-          }}
-        >
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-1.5">
-              <HardDrive className="w-3 h-3" style={{ color: kokoroStatus?.modelLoaded ? '#22C55E' : 'var(--steel-silver)' }} />
-              <span className="text-[11px] font-medium" style={{ color: 'var(--bright-silver)' }}>
-                Offline model
-              </span>
-              {kokoroStatus?.modelLoaded ? (
-                <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(34, 197, 94, 0.15)', color: '#22C55E' }}>
-                  Ready
-                </span>
-              ) : kokoroDownloading ? (
-                <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' }}>
-                  Downloading...
-                </span>
-              ) : (
-                <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'rgba(107, 114, 128, 0.1)', color: 'var(--muted-silver)' }}>
-                  Not downloaded
-                </span>
-              )}
-            </div>
-            <button
-              onClick={handleDownloadKokoro}
-              disabled={kokoroDownloading || kokoroStatus?.modelLoaded}
-              className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              style={{
-                backgroundColor: kokoroStatus?.modelLoaded ? 'transparent' : 'var(--siren-red)',
-                color: kokoroStatus?.modelLoaded ? 'var(--muted-silver)' : 'white',
-                border: kokoroStatus?.modelLoaded ? '1px solid var(--border-subtle)' : 'none',
-              }}
-            >
-              {kokoroDownloading ? (
-                <>
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  Downloading...
-                </>
-              ) : kokoroStatus?.modelLoaded ? (
-                <>
-                  <CheckCircle className="w-3 h-3" />
-                  Downloaded
-                </>
-              ) : (
-                <>
-                  <Download className="w-3 h-3" />
-                  Download (~312 MB)
-                </>
-              )}
-            </button>
-          </div>
-          <div className="text-[10px]" style={{ color: 'var(--muted-silver)' }}>
-            {kokoroStatus?.modelLoaded
-              ? 'Kokoro-82M model is downloaded + loaded. Voice synthesis works offline — no cloud API needed.'
-              : kokoroDownloading
-                ? 'Downloading from HuggingFace + loading into RAM (~1.3 GB peak). First-time setup takes 5-30s depending on connection.'
-                : 'Kokoro runs entirely offline once the model is downloaded. Click "Download" to fetch the 312 MB model from HuggingFace.'}
-          </div>
-          {kokoroError && (
-            <div className="mt-1.5 px-2 py-1 rounded text-[10px]" style={{ backgroundColor: 'rgba(238, 28, 28, 0.06)', color: 'var(--siren-red)' }}>
-              {kokoroError}
-            </div>
-          )}
-        </div>
+      {/* ── Phase 3+ — Local-model installer (Kokoro + Whisper) ──────────
+          One button → venv created → deps installed → model downloaded → verified.
+          Shared component handles all progress UI + resume + cancel. */}
+      {(provider.id === 'kokoro' || provider.id === 'whisper') && (
+        <SidecarInstallPanel
+          sidecar={provider.id}
+          displayName={provider.id === 'kokoro' ? 'Kokoro voice engine' : 'Whisper transcription engine'}
+          onReady={onUpdated}
+        />
       )}
 
       {/* ── TTS: Voice dropdown + select button + voice info ──────────── */}

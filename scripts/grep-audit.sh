@@ -23,6 +23,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # Allowlist — these files MAY mention the donor project names
 ALLOWLIST=(
   "scripts/grep-audit.sh"
+  "scripts/secret-scan-donors.sh"
   "CHANGELOG.md"
   "ACKNOWLEDGMENTS.md"
   "download/inventory-and-merge-plan.md"
@@ -30,7 +31,7 @@ ALLOWLIST=(
 )
 
 # Build grep include/exclude
-EXCLUDE_DIRS=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=.cache --exclude-dir=venv --exclude-dir=.venv --exclude-dir=__pycache__)
+EXCLUDE_DIRS=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=.cache --exclude-dir=venv --exclude-dir=.venv --exclude-dir=__pycache__ --exclude-dir=model-cache)
 EXCLUDE_FILES=(--exclude="package-lock.json" --exclude="yarn.lock" --exclude="pnpm-lock.yaml" --exclude="uv.lock" --exclude="Cargo.lock" --exclude="*.vrm" --exclude="*.fbx" --exclude="*.glb" --exclude="*.gltf" --exclude="*.bin" --exclude="*.wasm")
 
 # Run grep across the whole tree.

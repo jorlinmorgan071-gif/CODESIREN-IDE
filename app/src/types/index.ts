@@ -486,3 +486,31 @@ export interface TestUrlResult {
   error: string | null;
   durationMs: number;
 }
+
+// ── Phase 3+ — Local-model installer (Kokoro + Whisper) ──────────────────
+export type InstallPhase =
+  | 'pre-check'    // checking Python + disk space
+  | 'venv'         // creating Python virtual environment
+  | 'deps'         // pip installing dependencies
+  | 'model'        // downloading model weights
+  | 'verify'       // verifying sidecar spawns + responds
+  | 'done'         // install complete
+  | 'error'        // install failed
+  | 'cancelled';   // install cancelled by user
+
+export interface InstallProgress {
+  phase: InstallPhase;
+  /** Cumulative percent 0-100 across all steps. */
+  percent: number;
+  /** Plain-language status line shown to the user (e.g. "Setting up voice engine..."). */
+  label: string;
+  /** Optional sub-detail (e.g. a specific pip package being installed). */
+  detail?: string;
+  /** Present only when phase === 'error'. Plain-language error + retry guidance. */
+  error?: string;
+  /** Present only when phase === 'done'. Confirmation message. */
+  message?: string;
+}
+
+export type SidecarName = 'kokoro' | 'whisper';
+

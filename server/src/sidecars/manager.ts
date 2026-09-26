@@ -373,3 +373,33 @@ export function ensureKokoroSidecar(): void {
     cwd: KOKORO_SIDECAR_DIR,
   });
 }
+
+// ── Whisper ASR sidecar helper ────────────────────────────────────────────
+// Phase 3+: lazy-spawned on first WhisperASRProvider.transcribe() call.
+// Same lifecycle contract as Kokoro. Uses faster-whisper (CTranslate2-backed,
+// ~4x faster than openai/whisper on CPU, ~50% less RAM).
+//
+// Like Kokoro, the Whisper sidecar uses a dedicated Python venv at
+// server/sidecars/whisper/venv/ (NOT committed — see .gitignore) because it
+// needs faster-whisper + ctranslate2, which are NOT in the system Python.
+
+const WHISPER_SIDECAR_DIR = join(__dirname, '..', '..', 'sidecars', 'whisper');
+const WHISPER_SIDECAR_SCRIPT = join(WHISPER_SIDECAR_DIR, 'sidecar.py');
+const DEFAULT_WHISPER_VENV_PYTHON = join(WHISPER_SIDECAR_DIR, 'venv', 'bin', 'python');
+
+export function ensureWhisperSidecar(): void {
+  if (sidecarManager.isRunning('whisper')) return;
+  sidecarManager.removeDead('whisper');
+  if (!existsSync(WHISPER_SIDECAR_SCRIPT)) {
+    throw new Error(`Whisper sidecar script not found at ${WHISPER_SIDECAR_SCRIPT}`);
+  }
+  const pythonBin = existsSync(DEFAULT_WHISPER_VENV_PYTHON)
+    ? DEFAULT_WHISPER_VENV_PYTHON
+    : (process.env.WHISPER_VENV_PYTHON ?? process.env.PYTHON3 ?? 'python3');
+  sidecarManager.spawn('whisper', pythonBin, [WHISPER_SIDECAR_SCRIPT], {
+    cwd: WHISPER_SIDECAR_DIR,
+  });
+}
+
+export const WHISPER_SIDECAR_DIR_PATH = WHISPER_SIDECAR_DIR;
+export const KOKORO_SIDECAR_DIR_PATH = KOKORO_SIDECAR_DIR;

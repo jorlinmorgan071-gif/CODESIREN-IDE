@@ -34,7 +34,8 @@ import {
   testCustomProviderUrl,
 } from '../provider-registry/registry.js';
 import { runHealthCheckNow } from '../provider-registry/health-check.js';
-import { sidecarManager, ensureKokoroSidecar, SidecarCrashedError } from '../sidecars/manager.js';
+import { sidecarManager, ensureKokoroSidecar, ensureWhisperSidecar, SidecarCrashedError } from '../sidecars/manager.js';
+import { sidecarInstaller, type InstallProgress } from '../sidecars/installer.js';
 import type { ProviderRegistryEntry, ProviderCategory, OnboardingAnswer } from '../provider-registry/types.js';
 
 export const providersRouter = Router();
@@ -280,76 +281,150 @@ providersRouter.post('/onboard', requireAuth, (req, res) => {
   });
 });
 
-// POST /api/hub/kokoro-status — Phase 3: check if Kokoro model is downloaded + loaded
-// Returns { running: bool, modelLoaded: bool }
-// Does NOT trigger a download — just pings the sidecar (spawns it if not running).
-providersRouter.post('/kokoro-status', requireAuth, async (_req, res) => {
+// ── Phase 3+ — Local-model installer (Kokoro + Whisper) ───────────────────
+// These routes replace the broken /kokoro-download + /kokoro-status routes.
+// The new installer does the FULL job: venv creation, pip install, model
+// download, verification — all as one SSE progress stream.
+//
+// Per the user's directive: "One button. Click → venv created if needed →
+// dependencies installed → model weights downloaded → sidecar verified working,
+// all as one continuous progress bar with a plain-language status line."
+//
+// Supported sidecars: 'kokoro', 'whisper'.
+
+// GET /api/hub/install/:sidecar/state — get current install state
+// Returns { venvExists, depsInstalled, modelDownloaded, ready }
+// Used by the UI to show the right button label ("Download" vs "Installing..." vs "Ready").
+providersRouter.get('/install/:sidecar/state', requireAuth, (req, res) => {
+  const sidecar = req.params.sidecar;
+  if (!['kokoro', 'whisper'].includes(sidecar)) {
+    res.status(400).json({ error: `Unknown sidecar: ${sidecar}. Valid: kokoro, whisper.` });
+    return;
+  }
+  const state = sidecarInstaller.getInstallState(sidecar);
+  const isInstalling = sidecarInstaller.isInstalling(sidecar);
+  res.json({ ...state, isInstalling });
+});
+
+// GET /api/hub/install/:sidecar/estimate — get disk space estimate
+// Returns { estimatedSizeMb, freeBytes, sufficient, ... }
+// Called BEFORE the user clicks Download — the UI shows "Need ~1.7 GB, you
+// have 12.3 GB free" and refuses to start if insufficient.
+providersRouter.get('/install/:sidecar/estimate', requireAuth, async (req, res) => {
+  const sidecar = req.params.sidecar;
+  if (!['kokoro', 'whisper'].includes(sidecar)) {
+    res.status(400).json({ error: `Unknown sidecar: ${sidecar}. Valid: kokoro, whisper.` });
+    return;
+  }
   try {
-    ensureKokoroSidecar();
-    const result = await sidecarManager.request('kokoro', { type: 'ping' }, 5_000);
+    const estimate = await sidecarInstaller.getEstimate(sidecar);
+    res.json(estimate);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+// GET /api/hub/install/:sidecar/stream — SSE stream of install progress
+// The client opens this with fetch() (not EventSource — we need the auth
+// header) and reads the response body as a stream of SSE events:
+//   data: {"phase":"pre-check","percent":0,"label":"Checking..."}\n\n
+//   data: {"phase":"venv","percent":10,"label":"Setting up..."}\n\n
+//   ...
+//   data: {"phase":"done","percent":100,"label":"Ready"}\n\n
+//
+// On client disconnect (close tab, click Cancel), the install is cancelled.
+// Partial state (venv, partial deps) is preserved for resume.
+providersRouter.get('/install/:sidecar/stream', requireAuth, async (req, res) => {
+  const sidecar = req.params.sidecar;
+  if (!['kokoro', 'whisper'].includes(sidecar)) {
+    res.status(400).json({ error: `Unknown sidecar: ${sidecar}. Valid: kokoro, whisper.` });
+    return;
+  }
+
+  // SSE headers
+ res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',  // disable nginx buffering
+  });
+  // Send a comment to flush headers immediately
+  res.write(': connected\n\n');
+
+  const onProgress = (progress: InstallProgress) => {
+    try {
+      res.write(`data: ${JSON.stringify(progress)}\n\n`);
+    } catch {
+      // Client disconnected — cancel install
+      sidecarInstaller.cancel(sidecar);
+    }
+  };
+
+  sidecarInstaller.on(`progress:${sidecar}`, onProgress);
+
+  // On client disconnect (close tab, cancel button), cancel the install
+  const onClose = () => {
+    sidecarInstaller.off(`progress:${sidecar}`, onProgress);
+    if (sidecarInstaller.isInstalling(sidecar)) {
+      sidecarInstaller.cancel(sidecar);
+    }
+  };
+  req.on('close', onClose);
+
+  try {
+    await sidecarInstaller.install(sidecar);
+  } catch (err: any) {
+    // Error already emitted as a progress event with phase='error'.
+    // If the installer threw without emitting, emit a fallback.
+    if (!err.message.includes('cancelled') && !err.message.includes('Install cancelled')) {
+      sidecarInstaller.emit(`progress:${sidecar}`, {
+        phase: 'error',
+        percent: 0,
+        label: 'Install failed',
+        error: err?.message ?? String(err),
+      });
+    }
+  } finally {
+    sidecarInstaller.off(`progress:${sidecar}`, onProgress);
+    req.off('close', onClose);
+    res.end();
+  }
+});
+
+// POST /api/hub/install/:sidecar/cancel — cancel active install
+providersRouter.post('/install/:sidecar/cancel', requireAuth, (req, res) => {
+  const sidecar = req.params.sidecar;
+  if (!['kokoro', 'whisper'].includes(sidecar)) {
+    res.status(400).json({ error: `Unknown sidecar: ${sidecar}. Valid: kokoro, whisper.` });
+    return;
+  }
+  sidecarInstaller.cancel(sidecar);
+  res.json({ cancelled: true });
+});
+
+// POST /api/hub/sidecar-status/:sidecar — check if a sidecar is running + model loaded
+// Lightweight ping — used by the UI to show the current status badge.
+providersRouter.post('/sidecar-status/:sidecar', requireAuth, async (req, res) => {
+  const sidecar = req.params.sidecar;
+  if (!['kokoro', 'whisper'].includes(sidecar)) {
+    res.status(400).json({ error: `Unknown sidecar: ${sidecar}. Valid: kokoro, whisper.` });
+    return;
+  }
+  try {
+    // Ensure the sidecar is spawned (idempotent)
+    if (sidecar === 'kokoro') ensureKokoroSidecar();
+    else ensureWhisperSidecar();
+    const result = await sidecarManager.request(sidecar, { type: 'ping' }, 5_000);
     res.json({
       running: true,
       modelLoaded: !!(result as { modelLoaded?: boolean }).modelLoaded,
     });
   } catch (err: any) {
-    // Sidecar not running, crashed, or timed out — return a graceful status
     res.json({
       running: false,
       modelLoaded: false,
       error: err?.message ?? String(err),
     });
-  }
-});
-
-// POST /api/hub/kokoro-download — Phase 3: trigger Kokoro model download + load
-// Per the user's directive: "the user can start a download from there and then
-// the user can use his offline voice for normal use".
-//
-// This route is LONG-RUNNING (5-30s for download, ~5s for load). The client
-// should show a spinner / progress indicator while the request is in-flight.
-// We do NOT stream progress (HuggingFace's download progress isn't easily
-// piped through the sidecar protocol); instead, the client polls
-// /kokoro-status to see when modelLoaded becomes true.
-providersRouter.post('/kokoro-download', requireAuth, async (req, res) => {
-  // Optional: client can send { wait: true } to wait for the preload to finish
-  // before responding. Default: wait=true (the UI shows a spinner).
-  const wait = req.body?.wait !== false;
-  try {
-    ensureKokoroSidecar();
-    if (wait) {
-      // Long timeout — model download + load can take up to 5 minutes on slow
-      // connections. Pre-load is idempotent (if already loaded, returns immediately).
-      const result = await sidecarManager.request('kokoro', { type: 'preload' }, 5 * 60_000);
-      res.json({
-        success: true,
-        modelLoaded: !!(result as { modelLoaded?: boolean }).modelLoaded,
-        message: (result as { message?: string }).message ?? 'Kokoro model loaded.',
-      });
-    } else {
-      // Fire-and-forget — kick off the preload but don't wait for it.
-      // The client can poll /kokoro-status to track progress.
-      sidecarManager.request('kokoro', { type: 'preload' }, 5 * 60_000)
-        .then(() => console.log('[kokoro] background preload complete'))
-        .catch((err) => console.warn('[kokoro] background preload failed:', err?.message ?? err));
-      res.json({
-        success: true,
-        message: 'Download started. Poll /api/hub/kokoro-status to track progress.',
-      });
-    }
-  } catch (err: any) {
-    if (err instanceof SidecarCrashedError) {
-      res.status(500).json({
-        success: false,
-        error: `Kokoro sidecar crashed during preload: ${err.message}`,
-        suggestedAction: 'The Kokoro Python sidecar crashed. Check that Python 3 + pip are installed, then run "npm run kokoro:setup" from the server directory to install dependencies.',
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: err?.message ?? String(err),
-        suggestedAction: 'Failed to start the Kokoro download. Check that Python 3 is installed and reachable.',
-      });
-    }
   }
 });
 

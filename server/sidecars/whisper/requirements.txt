@@ -1,0 +1,14 @@
+# Whisper ASR sidecar — Python dependencies
+#
+# faster-whisper uses CTranslate2 (not torch) for inference, so it's much
+# lighter than the openai/whisper package. The installer runs:
+#   cd server/sidecars/whisper
+#   python3 -m venv venv
+#   source venv/bin/activate
+#   pip install -r requirements.txt
+#
+# Total venv size: ~1.1 GB (ctranslate2 + tokenizers + onnxruntime).
+# Model weights (~74 MB for 'base') download on first /transcribe or /preload
+# call to model-cache/.
+
+faster-whisper>=1.0.3

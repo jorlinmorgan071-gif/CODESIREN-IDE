@@ -81,6 +81,16 @@ server/sidecars/kokoro/**/*.pyc
 server/sidecars/kokoro/*.wav
 server/sidecars/kokoro/*.pth
 
+# Phase 3+ — Whisper ASR sidecar. Same rules as Kokoro — never commit the
+# venv (1.1 GB) or model cache (~74 MB for base model).
+server/sidecars/whisper/venv/
+server/sidecars/whisper/.venv/
+server/sidecars/whisper/model-cache/
+server/sidecars/whisper/__pycache__/
+server/sidecars/whisper/**/*.pyc
+server/sidecars/whisper/*.wav
+server/sidecars/whisper/*.pth
+
 
 # Tarballs + download artifacts — never commit these
 download/

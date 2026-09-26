@@ -261,8 +261,8 @@ describe('UPR Phase 1 Step 3 — ProviderRegistry', () => {
   it('listProviders returns OpenRouter + Anthropic + TTS providers with correct seed data', () => {
     const providers = listProviders();
     // Phase 1: 2 LLM. Phase 2a: +11 TTS. Phase 2b: +3 Tool.
-    // Phase 2c: +5 Image/Video. Phase 3: +3 Information = 24 total.
-    expect(providers.length).toBe(24);
+    // Phase 2c: +5 Image/Video. Phase 3: +3 Information + 1 Whisper (Tool) = 25 total.
+    expect(providers.length).toBe(25);
 
     const openrouter = providers.find((p) => p.id === 'openrouter')!;
     expect(openrouter.category).toBe('llm');

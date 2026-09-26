@@ -20,6 +20,7 @@ import type {
   OnboardProviderResult,
   TestUrlRequest,
   TestUrlResult,
+  InstallProgress,
 } from '@/types';
 import { getToken, clearAuth } from './auth';
 import type { ChangeImpactAnalysis } from './change-impact';
@@ -434,16 +435,104 @@ export const api = {
     });
   },
 
-  // Phase 3 — Kokoro offline model: check status + trigger download
-  async getKokoroStatus(): Promise<{ running: boolean; modelLoaded: boolean; error?: string }> {
-    return request('/hub/kokoro-status', { method: 'POST' });
+  // Phase 3+ — Local-model installer (Kokoro + Whisper)
+  // The installer does the FULL job: venv creation, pip install, model download,
+  // verification — all as one SSE progress stream.
+  //
+  // Three methods:
+  //   getInstallState(sidecar) — check what's already installed
+  //   getInstallEstimate(sidecar) — disk space estimate (BEFORE clicking Download)
+  //   streamInstall(sidecar, onProgress) — SSE stream of progress events
+  //   cancelInstall(sidecar) — cancel active install
+
+  async getInstallState(sidecar: 'kokoro' | 'whisper'): Promise<{
+    venvExists: boolean;
+    depsInstalled: boolean;
+    modelDownloaded: boolean;
+    ready: boolean;
+    isInstalling: boolean;
+  }> {
+    return request(`/hub/install/${sidecar}/state`);
   },
 
-  async downloadKokoroModel(opts?: { wait?: boolean }): Promise<{ success: boolean; modelLoaded?: boolean; message: string; suggestedAction?: string; error?: string }> {
-    return request('/hub/kokoro-download', {
-      method: 'POST',
-      body: JSON.stringify({ wait: opts?.wait ?? true }),
+  async getInstallEstimate(sidecar: 'kokoro' | 'whisper'): Promise<{
+    estimatedSizeMb: number;
+    estimatedSizeHuman: string;
+    freeBytes: number | null;
+    freeHuman: string;
+    sufficient: boolean;
+    insufficientByBytes: number;
+    insufficientByHuman: string;
+  }> {
+    return request(`/hub/install/${sidecar}/estimate`);
+  },
+
+  /**
+   * Stream install progress as SSE events. Calls onProgress for each event.
+   * Resolves when the install completes (phase='done') or rejects on error.
+   *
+   * Implementation note: we use fetch() + ReadableStream (not EventSource)
+   * because EventSource doesn't support the Authorization header.
+   */
+  async streamInstall(
+    sidecar: 'kokoro' | 'whisper',
+    onProgress: (p: InstallProgress) => void,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
+    const token = getToken();
+    const apiBase = API_BASE;
+    const res = await fetch(`${apiBase}/hub/install/${sidecar}/stream`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: abortSignal,
     });
+    if (!res.ok) {
+      throw new Error(`Install stream failed: HTTP ${res.status}`);
+    }
+    if (!res.body) {
+      throw new Error('Install stream failed: no response body');
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE events are separated by \n\n
+      const events = buffer.split('\n\n');
+      buffer = events.pop() ?? '';
+      for (const event of events) {
+        // Each event is one or more lines starting with "data: "
+        const dataLines = event.split('\n').filter((l) => l.startsWith('data: '));
+        if (dataLines.length === 0) continue;
+        const data = dataLines.map((l) => l.slice(6)).join('\n');
+        try {
+          const progress = JSON.parse(data) as InstallProgress;
+          onProgress(progress);
+          if (progress.phase === 'error') {
+            throw new Error(progress.error ?? 'Install failed');
+          }
+        } catch (err) {
+          // If the error is from phase='error', rethrow; otherwise skip malformed JSON
+          if (err instanceof Error && err.message.includes('Install')) {
+            throw err;
+          }
+          // Skip malformed SSE line
+        }
+      }
+    }
+  },
+
+  async cancelInstall(sidecar: 'kokoro' | 'whisper'): Promise<{ cancelled: boolean }> {
+    return request(`/hub/install/${sidecar}/cancel`, { method: 'POST' });
+  },
+
+  async getSidecarStatus(sidecar: 'kokoro' | 'whisper'): Promise<{
+    running: boolean;
+    modelLoaded: boolean;
+    error?: string;
+  }> {
+    return request(`/hub/sidecar-status/${sidecar}`, { method: 'POST' });
   },
 
   // ── Phase E Build 2: Voice provider settings ───────────────────────────
