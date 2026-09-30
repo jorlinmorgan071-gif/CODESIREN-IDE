@@ -63,10 +63,17 @@ os.environ.setdefault("HF_HUB_CACHE", str(MODEL_CACHE))
 os.environ.setdefault("CT2_CUDA_DISABLE", "1")  # force CPU — no GPU in dev sandbox
 
 # ── Default model ────────────────────────────────────────────────────────
-# "base" = 74 MB, multilingual, good balance of speed + accuracy.
-# User can override per-call with model_size param.
-# Sizes: tiny (39MB), base (74MB), small (244MB), medium (769MB), large (1550MB)
-DEFAULT_MODEL_SIZE = "base"
+# "large-v3-turbo" = ~1.5 GB, OpenAI's latest distilled large model.
+# Per the user's directive: large-v3-turbo is the default so the install
+# pulls a real production-grade model, not a smaller stand-in.
+#
+# The trade-off: large-v3-turbo is ~1.5 GB on disk + ~10 min download vs
+# ~30s for "base". On first call it loads ~2 GB into RAM. Accuracy is
+# significantly better than base/medium on real speech.
+#
+# User can still override per-call with the model_size param (tiny/base/
+# small/medium/large-v2/large-v3/large-v3-turbo).
+DEFAULT_MODEL_SIZE = "large-v3-turbo"
 SAMPLE_RATE = 16000  # Whisper requires 16kHz mono
 
 # ── Lazy-loaded model state ──────────────────────────────────────────────

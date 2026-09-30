@@ -129,8 +129,8 @@ const SIDECAR_CONFIGS: Record<string, SidecarInstallConfig> = {
     requirementsFile: join(__dirname, '..', '..', 'sidecars', 'whisper', 'requirements.txt'),
     // No torch needed — faster-whisper uses CTranslate2
     importCheckPackage: 'faster_whisper',
-    estimatedSizeMb: 700,  // ~434 MB venv + ~142 MB base model (measured)
-    modelCacheSubdir: 'models--Systran--faster-whisper-base',
+    estimatedSizeMb: 2000,  // ~434 MB venv + ~1.5 GB large-v3-turbo model (measured)
+    modelCacheSubdir: 'models--mobiuslabsgmbh--faster-whisper-large-v3-turbo',
     ensureSidecar: ensureWhisperSidecar,
     displayName: 'Whisper transcription engine',
     description: 'Local neural speech-to-text (offline, no cloud API needed)',

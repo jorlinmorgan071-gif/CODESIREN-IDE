@@ -154,34 +154,35 @@ async function main() {
     }
     console.log('✓ Kokoro TTS works after crash recovery\n');
   } else {
-    ensureWhisperSidecar();
-    // Send a tiny test WAV (silence — just verify the sidecar responds)
-    const sampleRate = 16000;
-    const numSamples = sampleRate; // 1 second
-    const buffer = Buffer.alloc(44 + numSamples * 2);
-    buffer.write('RIFF', 0);
-    buffer.writeUInt32LE(36 + numSamples * 2, 4);
-    buffer.write('WAVE', 8);
-    buffer.write('fmt ', 12);
-    buffer.writeUInt32LE(16, 16);
-    buffer.writeUInt16LE(1, 20);
-    buffer.writeUInt16LE(1, 22);
-    buffer.writeUInt32LE(sampleRate, 24);
-    buffer.writeUInt32LE(sampleRate * 2, 28);
-    buffer.writeUInt16LE(2, 32);
-    buffer.writeUInt16LE(16, 34);
-    buffer.write('data', 36);
-    buffer.writeUInt32LE(numSamples * 2, 40);
+    // Use real speech audio (from Kokoro) instead of silence — large-v3-turbo
+    // is slow on silence (no speech detected → full VAD pass) and can time
+    // out. Real speech transcribes in 2-5s.
+    const { wrapPcmInWav } = await import('../src/systems/voice/audio-wav.js');
+    ensureKokoroSidecar();
+    const ttsResult = await sidecarManager.request('kokoro', {
+      type: 'tts',
+      text: 'Hello world.',
+      voice: 'af_heart',
+      langCode: 'a',
+    }, 60_000);
+    if (!ttsResult.ok) {
+      console.error(`✗ FAIL: Kokoro TTS failed: ${(ttsResult as any).error}`);
+      process.exit(1);
+    }
+    const pcmBytes = Buffer.from((ttsResult as any).audioBase64, 'base64');
+    const wavBuffer = wrapPcmInWav(pcmBytes, (ttsResult as any).sampleRate, 1);
 
+    ensureWhisperSidecar();
     const result = await sidecarManager.request('whisper', {
       type: 'transcribe',
-      audioBase64: buffer.toString('base64'),
-    }, 60_000);
+      audioBase64: wavBuffer.toString('base64'),
+    }, 180_000);  // 3 min timeout — large-v3-turbo is slower than base
     if (!result.ok) {
       console.error(`✗ FAIL: Whisper transcribe() failed: ${result.error}`);
       process.exit(1);
     }
-    console.log(`  Whisper transcribe() responded: "${(result as any).text || '(empty — expected for silence)'}"`);
+    const transcript = (result as any).text?.trim() || '(empty)';
+    console.log(`  Whisper transcribe() responded: "${transcript}"`);
     console.log('✓ Whisper ASR works after crash recovery\n');
   }
 
