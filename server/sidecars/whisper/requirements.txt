@@ -7,8 +7,19 @@
 #   source venv/bin/activate
 #   pip install -r requirements.txt
 #
-# Total venv size: ~1.1 GB (ctranslate2 + tokenizers + onnxruntime).
+# Total venv size: ~434 MB (ctranslate2 + tokenizers + onnxruntime + av).
 # Model weights (~74 MB for 'base') download on first /transcribe or /preload
 # call to model-cache/.
+#
+# Version pins:
+#   - faster-whisper>=1.0.3: the actual ASR library
+#   - av<14: PyAV (audio decoding). faster-whisper calls av.open() with the
+#     'metadata_errors' kwarg, which exists in av 13.x but was REMOVED in
+#     av 14.0+ (renamed). Without this pin, pip pulls the latest av (19.x)
+#     and transcribe() fails with:
+#       TypeError: open() got an unexpected keyword argument 'metadata_errors'
+#     This is a known faster-whisper/av incompatibility — see:
+#     https://github.com/SYSTRAN/faster-whisper/issues/875
 
 faster-whisper>=1.0.3
+av<14
