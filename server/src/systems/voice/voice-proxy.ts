@@ -13,12 +13,12 @@
 // the user. The transcript goes through AgentManager.send() — the same
 // path as typed chat.
 
-import ZAI from 'z-ai-web-dev-sdk';
 import { v4 as uuid } from 'uuid';
 import { agentManager } from '../../orchestration/agent-manager.js';
 import { makeEvent, broadcast } from '../../ws/events.js';
 import type { AgentTask } from '../../types.js';
 import { getTTSProvider } from './tts-provider.js';
+import { getASRProvider } from './asr-provider.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -31,12 +31,11 @@ interface ActiveVoiceSession {
   lastAudioAt: number;
   muted: boolean;
   audioBuffer: Buffer[];  // accumulated audio chunks for current turn
-  // NOTE: zaiInstance is intentionally NOT stored on the session anymore.
-  // startSession() must not depend on z-ai (it would 500 on machines
-  // without .z-ai-config, e.g. local dev environments outside Z.ai's
-  // sandbox). processAudio() calls ensureZai() on-demand when ASR is
-  // actually needed, and degrades gracefully via its existing catch block.
-  // Phase B: Voice-to-Code-Written v1
+  // NOTE: ASR is now provided by the ASRProvider singleton (default:
+  // WhisperASRProvider) — no z-ai SDK dependency. The provider is invoked
+  // lazily in processTurn() only when the user actually speaks. If the
+  // Whisper sidecar isn't installed, the error surfaces a plain-language
+  // installer prompt rather than failing the session.
   transcriptBuffer: string[];  // accumulated transcripts across turns (for multi-turn context)
   pendingConfirmation: PendingConfirmation | null;  // non-null when awaiting user confirm/cancel
 }
@@ -194,16 +193,7 @@ class VoiceProxy {
   private sessions = new Map<string, ActiveVoiceSession>();
   private voiceTaskOwners = new Map<string, Pick<ActiveVoiceSession, 'userId' | 'projectId'>>();
   private silenceTimers = new Map<string, NodeJS.Timeout>();
-  private zaiInstance: any | null = null;
   private readonly SILENCE_TIMEOUT_MS = 90_000;  // 90 seconds of silence
-
-  async ensureZai(): Promise<any> {
-    if (!this.zaiInstance) {
-      this.zaiInstance = await ZAI.create();
-      console.log('[voice-proxy] z-ai SDK initialized');
-    }
-    return this.zaiInstance;
-  }
 
   /**
    * Start a voice session. Called when user taps the Live icon.
@@ -212,14 +202,12 @@ class VoiceProxy {
   async startSession(userId: string, projectId: string, userDisplayName?: string): Promise<string> {
     const sessionId = `voice-${uuid()}`;
 
-    // NOTE: do NOT call ensureZai() here. startSession() must succeed even
-    // on machines without .z-ai-config (local dev environments outside
-    // Z.ai's sandbox). The z-ai SDK is needed for ASR (when the user
-    // actually speaks) and for z-ai TTS (used by the greeting) — both of
-    // those paths call ensureZai() on-demand and degrade gracefully via
-    // their own try/catch blocks. Eagerly initializing here would 500 the
-    // entire session start on a missing config file, which is the bug
-    // this fixes.
+    // NOTE: startSession() must NOT depend on z-ai or any ASR provider being
+    // configured. The ASR provider (Whisper by default) is invoked lazily
+    // in processTurn() only when the user actually speaks. This means the
+    // session starts successfully even on machines where the Whisper sidecar
+    // isn't installed yet — the user gets a clear installer prompt when they
+    // try to speak, not a session-start failure.
 
     const session: ActiveVoiceSession = {
       id: sessionId,
@@ -337,18 +325,24 @@ class VoiceProxy {
       return;
     }
 
-    // Step 1: ASR — speech to text via z-ai SDK
+    // Step 1: ASR — speech to text via the ASR provider singleton.
+    // The active provider is WhisperASRProvider by default (local sidecar,
+    // no z-ai dependency). If the sidecar isn't installed, the error surfaces
+    // a plain-language installer prompt (handled in the catch below).
     let transcript = '';
     try {
-      const base64Audio = combinedBuffer.toString('base64');
-      const zai = await this.ensureZai();
-      const asrResult = await zai.audio.asr.create({ file_base64: base64Audio });
-      transcript = asrResult.text ?? '';
-      console.log(`[voice-proxy] ASR result: "${transcript.slice(0, 100)}"`);
+      const asr = getASRProvider();
+      const asrResult = await asr.transcribe(combinedBuffer);
+      transcript = asrResult.text;
+      console.log(`[voice-proxy] ASR result (via ${asr.implementation}): "${transcript.slice(0, 100)}"`);
     } catch (err: any) {
       console.error('[voice-proxy] ASR failed:', err.message);
+      // Surface the Whisper-installer prompt if the sidecar isn't installed
+      const error = err.message?.includes('Whisper sidecar') || err.message?.includes('sidecar')
+        ? `Voice transcription isn't set up yet. Open Settings → API Hub → Tool API → Whisper and click Download to install the offline transcription engine. (${err.message})`
+        : `ASR failed: ${err.message}`;
       broadcast(makeEvent('voice:error' as any, {
-        sessionId, error: `ASR failed: ${err.message}`,
+        sessionId, error,
       }));
       return;
     }

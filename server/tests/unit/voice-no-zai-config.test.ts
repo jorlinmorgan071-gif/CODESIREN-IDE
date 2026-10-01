@@ -1,33 +1,38 @@
 // tests/unit/voice-no-zai-config.test.ts
 // Directive: Voice Session z-ai Dependency — Step 4 test
 //
-// Reproduces Morgan's exact condition: NO .z-ai-config available. The z-ai
-// SDK's ZAI.create() throws "Configuration file not found or invalid."
+// Originally verified that voice-proxy worked without .z-ai-config. Now
+// verifies the stronger guarantee: voice-proxy has NO z-ai dependency at all
+// (the z-ai SDK import was removed). ASR is provided by the ASRProvider
+// singleton (default: WhisperASRProvider).
 //
-// Verifies the fix:
+// Verifies:
 //   1. startSession() succeeds (returns a sessionId) — does NOT throw,
-//      does NOT 500. This is the direct fix for the reported bug.
+//      does NOT 500, does NOT depend on any z-ai config.
 //   2. fireGreeting() broadcasts a voice:greeting WS event with text but
-//      audioBase64: null (text-only fallback — TTS failed because z-ai is
-//      unavailable, but the greeting text still arrives).
+//      audioBase64: null (text-only fallback — TTS failed because no TTS
+//      provider is configured in this test env).
 //   3. processTurn() (called when the user speaks) broadcasts a clean
-//      voice:error WS event with "ASR failed: ..." — does NOT crash,
-//      does NOT throw, does NOT leave the session in a broken state.
+//      voice:error WS event when ASR fails — does NOT crash, does NOT throw,
+//      does NOT leave the session in a broken state.
+//   4. No z-ai SDK import in voice-proxy.ts — confirmed by mocking the
+//      ASR provider (not z-ai) and verifying the error message comes from
+//      the ASR provider, not from z-ai.
 //
-// Mocks ZAI.create() to throw the exact error the SDK throws when no
-// .z-ai-config file is found. This simulates Morgan's local Windows dev
-// machine where no Z.ai credentials exist.
+// Mocks the ASRProvider to throw (simulating Whisper sidecar not installed).
+// This is the same condition the user would see on a machine without the
+// Whisper sidecar — the error surfaces a plain-language installer prompt.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock the z-ai SDK BEFORE importing voice-proxy. The mock throws the
-// exact error the real SDK throws when no config file is found.
-vi.mock('z-ai-web-dev-sdk', () => ({
-  default: {
-    create: async () => {
-      throw new Error('Configuration file not found or invalid. Please create .z-ai-config in your project, home directory, or /etc.');
+// Mock the ASR provider to throw — simulates "Whisper sidecar not installed"
+vi.mock('../../src/systems/voice/asr-provider.js', () => ({
+  getASRProvider: () => ({
+    implementation: 'whisper',
+    transcribe: async () => {
+      throw new Error('Whisper sidecar crashed: ModuleNotFoundError: No module named \'faster_whisper\'');
     },
-  },
+  }),
 }));
 
 // Mock the WS broadcast so we can capture events without a real WS server
@@ -51,21 +56,14 @@ describe('Directive: Voice Session z-ai Dependency — no .z-ai-config condition
     capturedEvents.length = 0;
   });
 
-  afterEach(async () => {
-    // Clean up any sessions created during tests
-    // voiceProxy.sessions is private, but we can call endSession on known ids
-  });
-
   // ════════════════════════════════════════════════════════════════════
-  // TEST 1: startSession() succeeds when z-ai is unavailable
+  // TEST 1: startSession() succeeds without any z-ai dependency
   //
-  // This is the direct fix for the reported bug. Before the fix,
-  // startSession() called `await this.ensureZai()` which threw when
-  // .z-ai-config was missing, causing POST /voice/live/start to 500.
-  // After the fix, startSession() does not call ensureZai() at all —
-  // the session is created without z-ai, and the HTTP endpoint returns 200.
+  // This is the direct fix for the reported bug. voice-proxy.ts no longer
+  // imports z-ai-web-dev-sdk at all — the import was removed when ASR
+  // moved to the ASRProvider singleton. startSession() returns 200.
   // ════════════════════════════════════════════════════════════════════
-  it('TEST 1: startSession() succeeds when ZAI.create() throws (no .z-ai-config)', async () => {
+  it('TEST 1: startSession() succeeds with no z-ai dependency (ASR provider mocked)', async () => {
     const sessionId = await voiceProxy.startSession(
       'test-user-id',
       '00000000-0000-0000-0000-000000000000',
@@ -79,6 +77,9 @@ describe('Directive: Voice Session z-ai Dependency — no .z-ai-config condition
 
     console.log(`  ✓ startSession() returned sessionId: ${sessionId}`);
     console.log('  ✓ No throw — HTTP endpoint would return 200 (not 500)');
+    console.log('  ✓ No z-ai SDK import in voice-proxy.ts (removed in this phase)');
+
+    voiceProxy.endSession(sessionId);
   });
 
   // ════════════════════════════════════════════════════════════════════
@@ -86,11 +87,8 @@ describe('Directive: Voice Session z-ai Dependency — no .z-ai-config condition
   //
   // fireGreeting() is fire-and-forget. It broadcasts the greeting text
   // immediately (audioBase64: null), THEN tries to generate audio via
-  // the TTS provider. If TTS fails (z-ai unavailable), the text-only
-  // greeting remains — the catch block just logs a warning.
-  //
-  // We need to wait for fireGreeting() to complete (including the failed
-  // TTS attempt) before checking captured events.
+  // the TTS provider. If TTS fails (no provider configured in test env),
+  // the text-only greeting remains.
   // ════════════════════════════════════════════════════════════════════
   it('TEST 2: fireGreeting() broadcasts text-only greeting (audioBase64: null) when TTS fails', async () => {
     const sessionId = await voiceProxy.startSession(
@@ -99,17 +97,11 @@ describe('Directive: Voice Session z-ai Dependency — no .z-ai-config condition
       'TestUser2',
     );
 
-    // Wait for fireGreeting() to complete (it's fire-and-forget in
-    // startSession, so we need to give it time to run + fail)
+    // Wait for fireGreeting() to complete
     await new Promise(r => setTimeout(r, 500));
 
-    // Find the greeting events (fireGreeting broadcasts twice:
-    // once immediately with audioBase64: null, once after TTS completes
-    // with audio. When TTS fails, only the first broadcast happens.)
     const greetingEvents = capturedEvents.filter(e => e.event === 'voice:greeting');
-
     expect(greetingEvents.length).toBeGreaterThanOrEqual(1);
-    console.log(`  ✓ voice:greeting events broadcast: ${greetingEvents.length}`);
 
     const firstGreeting = greetingEvents[0];
     expect(firstGreeting.payload.sessionId).toBe(sessionId);
@@ -120,38 +112,33 @@ describe('Directive: Voice Session z-ai Dependency — no .z-ai-config condition
     console.log(`  ✓ Greeting text: "${firstGreeting.payload.text}"`);
     console.log(`  ✓ audioBase64: null (text-only — TTS failed gracefully)`);
 
-    // Clean up
     voiceProxy.endSession(sessionId);
   });
 
   // ════════════════════════════════════════════════════════════════════
   // TEST 3: processTurn() broadcasts clean voice:error when ASR fails
   //
-  // processTurn() is called when the user speaks (audio chunks arrive
-  // via WS). It calls ensureZai() on-demand for ASR. When z-ai is
-  // unavailable, ensureZai() throws, the catch block broadcasts a
-  // voice:error event with "ASR failed: <message>", and processTurn()
-  // returns normally — does NOT crash, does NOT throw.
+  // processTurn() calls getASRProvider().transcribe(). When the ASR provider
+  // throws (simulated Whisper sidecar not installed), the catch block
+  // broadcasts a voice:error event with "ASR failed: ..." + the installer
+  // prompt. processTurn() returns normally — does NOT crash.
   //
-  // We feed a real (non-empty) audio buffer to trigger the ASR path.
+  // This is the key test: the error comes from the ASR provider (not z-ai),
+  // and the message surfaces the installer prompt.
   // ════════════════════════════════════════════════════════════════════
-  it('TEST 3: processTurn() broadcasts clean voice:error (not crash) when ASR fails', async () => {
+  it('TEST 3: processTurn() broadcasts clean voice:error (not crash) when ASR provider fails', async () => {
     const sessionId = await voiceProxy.startSession(
       'test-user-id-3',
       '00000000-0000-0000-0000-000000000000',
       'TestUser3',
     );
 
-    // Wait for greeting to finish (so its events don't interfere)
+    // Wait for greeting to finish
     await new Promise(r => setTimeout(r, 500));
-    capturedEvents.length = 0;  // clear greeting events
+    capturedEvents.length = 0;
 
     // Feed a real audio buffer (>1000 bytes to pass the length check)
-    // This is a fake WAV header + silence — processTurn only checks length
     const fakeAudio = Buffer.alloc(2000, 0);
-
-    // Access the private sessions Map to inject audio (processTurn reads
-    // from session.audioBuffer)
     const sessions = (voiceProxy as any).sessions as Map<string, any>;
     const session = sessions.get(sessionId);
     expect(session).toBeDefined();
@@ -166,16 +153,21 @@ describe('Directive: Voice Session z-ai Dependency — no .z-ai-config condition
 
     const errorEvent = errorEvents[0];
     expect(errorEvent.payload.sessionId).toBe(sessionId);
-    expect(errorEvent.payload.error).toContain('ASR failed');
-    expect(errorEvent.payload.error).toContain('Configuration file not found');
+    // The error should come from the ASR provider (Whisper), NOT from z-ai.
+    // It should NOT contain "Configuration file not found" (that was the z-ai error).
+    expect(errorEvent.payload.error).not.toContain('Configuration file not found');
+    // It SHOULD mention the Whisper sidecar (the new ASR provider).
+    expect(errorEvent.payload.error).toContain('Whisper');
+    // It SHOULD surface the installer prompt (plain-language, not a stack trace).
+    expect(errorEvent.payload.error).toContain('Settings');
+    expect(errorEvent.payload.error).toContain('Download');
 
     console.log(`  ✓ processTurn() did NOT throw (returned normally)`);
     console.log(`  ✓ voice:error event broadcast:`);
-    console.log(`      event: ${errorEvent.event}`);
-    console.log(`      sessionId: ${errorEvent.payload.sessionId}`);
     console.log(`      error: "${errorEvent.payload.error}"`);
+    console.log(`  ✓ Error comes from ASR provider (not z-ai) — z-ai dependency is gone`);
+    console.log(`  ✓ Error surfaces installer prompt (plain-language, not stack trace)`);
 
-    // Clean up
     voiceProxy.endSession(sessionId);
   });
 
@@ -222,5 +214,38 @@ describe('Directive: Voice Session z-ai Dependency — no .z-ai-config condition
     // 5. Verify session is gone from the Map
     expect(sessions.has(sessionId)).toBe(false);
     console.log(`  ✓ 5. session cleaned up from memory`);
+  });
+
+  // ════════════════════════════════════════════════════════════════════
+  // TEST 5: No z-ai SDK import in voice-proxy.ts
+  //
+  // Confirms the z-ai-web-dev-sdk import was removed. The voice pipeline
+  // no longer depends on z-ai for ASR at all.
+  // ════════════════════════════════════════════════════════════════════
+  it('TEST 5: voice-proxy.ts does not import z-ai-web-dev-sdk', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const voiceProxySource = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'src', 'systems', 'voice', 'voice-proxy.ts'),
+      'utf8',
+    );
+
+    // The import line should NOT exist
+    expect(voiceProxySource).not.toContain("import ZAI from 'z-ai-web-dev-sdk'");
+    expect(voiceProxySource).not.toMatch(/import\s+.*z-ai-web-dev-sdk/);
+
+    // ensureZai() method should NOT exist
+    expect(voiceProxySource).not.toMatch(/async\s+ensureZai\s*\(/);
+
+    // zaiInstance field should NOT exist
+    expect(voiceProxySource).not.toMatch(/zaiInstance\s*[:=]/);
+
+    // zai.audio.asr.create call should NOT exist
+    expect(voiceProxySource).not.toContain('zai.audio.asr.create');
+
+    console.log('  ✓ voice-proxy.ts does not import z-ai-web-dev-sdk');
+    console.log('  ✓ voice-proxy.ts does not call ensureZai()');
+    console.log('  ✓ voice-proxy.ts does not call zai.audio.asr.create()');
+    console.log('  ✓ z-ai dependency is fully removed from the voice ASR path');
   });
 });
