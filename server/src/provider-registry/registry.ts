@@ -33,7 +33,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       displayName: 'OpenRouter (Cloud Gateway)',
       defaultApiUrl: OPENROUTER_DEFAULT_URL,
       apiUrl: OPENROUTER_DEFAULT_URL,
-      apiKey: config.OPENROUTER_API_KEY ?? '',
+      apiKey: config.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY || '',
       connectionTested: false,
       models: [],
       voices: [],
@@ -53,7 +53,7 @@ function seedEntries(): ProviderRegistryEntry[] {
       displayName: 'Anthropic (Direct API)',
       defaultApiUrl: ANTHROPIC_DEFAULT_URL,
       apiUrl: ANTHROPIC_DEFAULT_URL,
-      apiKey: config.ANTHROPIC_API_KEY ?? '',
+      apiKey: config.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '',
       connectionTested: false,
       models: [],
       voices: [],
@@ -923,11 +923,16 @@ export function resetProvider(id: string): void {
   // that one fully clears the key (matching the user's directive: "when the
   // user resets a key, the key is fully gone and the system does not have any
   // key until a new one is present").
+  //
+  // IMPORTANT: config.OPENROUTER_API_KEY may be an empty string ("") if the
+  // .env file has `OPENROUTER_API_KEY=` with no value. In that case, fall
+  // through to process.env (which tests set directly via process.env.XXX = ...).
+  // The `||` operator handles this: empty string is falsy, so it falls through.
   if (id === 'openrouter') {
-    entry.apiKey = config.OPENROUTER_API_KEY ?? process.env.OPENROUTER_API_KEY ?? '';
+    entry.apiKey = config.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY || '';
   }
   if (id === 'anthropic') {
-    entry.apiKey = config.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY ?? '';
+    entry.apiKey = config.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
   }
   // TTS providers — restore from process.env directly
   if (id === 'elevenlabs') entry.apiKey = process.env.ELEVENLABS_API_KEY ?? '';
