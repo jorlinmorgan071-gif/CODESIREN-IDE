@@ -115,10 +115,12 @@ describe('Phase B: Screen Intelligence — Vision endpoint', () => {
       body: JSON.stringify({ image: TINY_PNG_DATA_URI, prompt: 'What is in this image?', sessionId }),
     });
 
-    // The z-ai SDK may fail (no .z-ai-config in CI) — either 200 with analysis
-    // or 500 with a safe error message. Both are valid — we just need to verify
-    // the endpoint doesn't crash and returns structured JSON.
-    expect([200, 500].includes(res.status)).toBe(true);
+    // The endpoint may return:
+    //   200 — success (vision-capable model configured)
+    //   500 — vision call failed (model error, network, etc.)
+    //   503 — no vision-capable provider configured (Phase 3+ — registry routing)
+    // All three are valid — the endpoint doesn't crash and returns structured JSON.
+    expect([200, 500, 503].includes(res.status)).toBe(true);
 
     const data = await res.json();
     if (res.status === 200) {
@@ -126,8 +128,11 @@ describe('Phase B: Screen Intelligence — Vision endpoint', () => {
     } else {
       expect(typeof (data as any).error).toBe('string');
     }
+    // Provider may be 'z-ai-vision' (old), 'none-configured' (Phase 3+ — no
+    // vision provider configured), or a real provider id (openrouter/anthropic).
     expect((data as any).evidence).toMatchObject({
-      taskId: expect.any(String), action: 'vision', provider: 'z-ai-vision',
+      taskId: expect.any(String), action: 'vision',
+      provider: expect.any(String),  // Phase 3+: provider is dynamic (registry-routed)
       inputs: { fields: ['image', 'prompt'], imageRetained: false },
       apply: { status: 'not-applicable' }, verification: { status: 'unverified' },
     });
@@ -162,7 +167,7 @@ describe('Phase B: Screen Intelligence — Vision endpoint', () => {
 
   it('PRIVACY: no image base64 data appears in console logs', async () => {
     // Make a request (will succeed or fail — doesn't matter)
-    await fetch(`${BASE}/api/orchestrator/vision`, {
+    const res = await fetch(`${BASE}/api/orchestrator/vision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ image: TINY_PNG_DATA_URI, prompt: 'What is this?', sessionId }),
@@ -184,10 +189,14 @@ describe('Phase B: Screen Intelligence — Vision endpoint', () => {
 
     // The log SHOULD mention either the image analysis (success path) OR
     // the vision error (failure path) — but either way, no image data.
-    // When z-ai SDK is configured: "analyzing image ...KB"
-    // When z-ai SDK is NOT configured (CI): "[orchestrator:vision] error: ..."
+    // Phase 3+: when no vision provider is configured, the route returns 503
+    // before logging (no analysis log, no error log — just the 503 response).
+    // This is valid — the 503 response itself is the visible feedback.
     const hasAnalysisLog = /analyzing image.*KB/.test(allLogs);
     const hasErrorLog = /\[orchestrator:vision\] error/.test(allLogs);
-    expect(hasAnalysisLog || hasErrorLog, 'expected either analysis log or error log in output').toBe(true);
+    const hasNoProviderLog = /No vision-capable model is configured/.test(allLogs);
+    // (503 path doesn't log to console — it returns the error directly)
+    expect(hasAnalysisLog || hasErrorLog || hasNoProviderLog || res.status === 503,
+      'expected either analysis log, error log, no-provider log, or 503 status').toBe(true);
   });
 });

@@ -4,7 +4,7 @@ import { addStep, completeTrace, setOutcome, startTrace } from '../observability
 import type { SessionScope } from '../tenancy/scope.js';
 
 export type DirectEditorAction = 'completion' | 'explain' | 'refactor' | 'document' | 'optimize' | 'convert' | 'vision';
-export type DirectEditorProvider = EngineId | 'z-ai-vision';
+export type DirectEditorProvider = EngineId | 'z-ai-vision' | 'none-configured' | string;
 export type DirectEditorOutputStatus = 'succeeded' | 'timed-out' | 'failed';
 export type DirectEditorApplyStatus = 'not-applicable' | 'pending-approval';
 

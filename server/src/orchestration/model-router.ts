@@ -14,6 +14,7 @@ import { OllamaEngine, checkOllamaAvailable } from './engines/ollama.js';
 import { AnthropicEngine } from './engines/anthropic.js';
 import { GroqEngine } from './engines/groq.js';
 import { withRetry } from './engines/_retry.js';
+import { extractText } from './content-blocks.js';
 
 export interface InferenceEngine {
   id: EngineId;
@@ -35,7 +36,7 @@ class StubEngine implements InferenceEngine {
 
   async *stream(req: ModelRouterRequest): AsyncGenerator<ModelRouterChunk> {
     const lastUser = [...req.messages].reverse().find((m) => m.role === 'user');
-    const userText = lastUser?.content ?? '(no user input)';
+    const userText = extractText(lastUser?.content ?? '');
     const agentLine = `[${req.agentId}] routing domain=${req.domain} mode=${req.executionMode} engine=stub`;
 
     let body: string;
@@ -43,11 +44,11 @@ class StubEngine implements InferenceEngine {
     // (the strategy fed back an Observation/Output/Result message).
     // The donor's react/codeact loops feed observations back as user messages.
     const isFollowUp = req.messages.length > 2 &&
-      /(?:^Observation:|^Output:|^Result:)/m.test(req.messages[req.messages.length - 1]?.content ?? '');
+      /(?:^Observation:|^Output:|^Result:)/m.test(extractText(req.messages[req.messages.length - 1]?.content ?? ''));
 
     // Step 4: CAD-specific stub output. When the system prompt mentions build123d,
     // emit a valid build123d script that produces a 10mm cube with fillets.
-    const systemPrompt = req.messages[0]?.content ?? '';
+    const systemPrompt = extractText(req.messages[0]?.content ?? '');
     const isBuild123dRequest = systemPrompt.includes('build123d') && systemPrompt.includes('export_stl');
 
     if (isBuild123dRequest) {

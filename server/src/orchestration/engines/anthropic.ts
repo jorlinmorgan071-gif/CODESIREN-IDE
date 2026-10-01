@@ -15,6 +15,7 @@ import type { EngineId, ModelRouterRequest, ModelRouterChunk, RouterMessage } fr
 import type { InferenceEngine } from '../model-router.js';
 import { config } from '../../config.js';
 import { withRetry } from './_retry.js';
+import { extractText, toAnthropicContent } from '../content-blocks.js';
 
 const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -47,15 +48,16 @@ export class AnthropicEngine implements InferenceEngine {
     let messages: RouterMessage[] = req.messages;
 
     if (req.messages[0]?.role === 'system') {
-      systemPrompt = req.messages[0].content;
+      systemPrompt = extractText(req.messages[0].content);
       messages = req.messages.slice(1);
     }
 
     // Anthropic messages only support 'user' and 'assistant' roles
     // (no 'tool' role in basic mode — filter if present)
+    // Convert content blocks to Anthropic's format (image_url → image source)
     const anthropicMessages = messages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({ role: m.role, content: toAnthropicContent(m.content) }));
 
     const body = {
       model,

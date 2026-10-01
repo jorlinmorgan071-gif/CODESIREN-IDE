@@ -14,6 +14,7 @@ import { config } from '../../config.js';
 import type { EngineId, ModelRouterRequest, ModelRouterChunk } from '../../types.js';
 import type { InferenceEngine } from '../model-router.js';
 import { withRetry } from './_retry.js';
+import { extractText } from '../content-blocks.js';
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? 'http://localhost:11434';
 const OLLAMA_TIMEOUT = 5000; // 5s connection timeout
@@ -210,9 +211,11 @@ export class OllamaEngine implements InferenceEngine {
     const model = getAgentModel(req.agentId);
 
     // Convert RouterMessage[] to Ollama message format
+    // Ollama expects string content — extract text from content blocks (vision
+    // images are not supported by Ollama's text models, so we send text only).
     const messages = req.messages.map(m => ({
       role: m.role,
-      content: m.content,
+      content: extractText(m.content),
     }));
 
     const body = {

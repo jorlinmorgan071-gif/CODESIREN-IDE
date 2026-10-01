@@ -377,9 +377,26 @@ export interface ModelRouterRequest {
   engine?: EngineId;
 }
 
+// ── Vision content blocks (Phase 3+ — for vision routing) ──────────────
+// Allows RouterMessage.content to carry image blocks alongside text.
+// OpenAI/OpenRouter-style content blocks — Anthropic has its own format
+// that the AnthropicEngine converts from this shape.
+
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface RouterMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  /**
+   * Message content — either a plain string (backward compat for all
+   * existing text-only callers) or an array of content blocks (for
+   * vision/multimodal requests).
+   *
+   * Engines that don't support image blocks (Ollama, Groq, stub) will
+   * receive the string form. The vision route constructs the array form.
+   */
+  content: string | ContentBlock[];
 }
 
 export interface ModelRouterChunk {

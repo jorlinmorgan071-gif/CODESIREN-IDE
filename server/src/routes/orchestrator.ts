@@ -4,7 +4,7 @@
 //   POST /api/orchestrator/chat          Tier 1 chat (streams via WS)
 //   POST /api/orchestrator/complete      Lightweight code completion (HTTP, non-streaming)
 //   POST /api/orchestrator/explain       Explain selected code (HTTP, non-streaming, read-only)
-//   POST /api/orchestrator/vision        Analyze image/screenshot via z-ai createVision (HTTP)
+//   POST /api/orchestrator/vision        Analyze image/screenshot via registry-routed ModelRouter (vision-capable model)
 //   POST /api/orchestrator/plan          Generate plan from session history
 //   POST /api/orchestrator/plan/:id/approve    Approve + start relay
 //   POST /api/orchestrator/plan/:id/advance    Advance to next milestone
@@ -28,7 +28,8 @@ import { getPlan, listPlansByProject, listMilestoneLogs, updatePlan } from '../o
 import { runChatViaAgentManager } from '../orchestrator/tier1-chat.js';
 import { selectNormalChatCapability } from '../orchestrator/normal-chat-capabilities.js';
 import { modelRouter } from '../orchestration/model-router.js';
-import type { ModelRouterRequest } from '../types.js';
+import type { ModelRouterRequest, ContentBlock, RouterMessage } from '../types.js';
+import { listProviders, getProvider } from '../provider-registry/registry.js';
 import { startDirectEditorEvidence, type DirectEditorAction } from '../orchestrator/direct-editor-evidence.js';
 import { ProjectAccessError, SessionAccessError, ensureOwnedSession, resolveTenantScope } from '../tenancy/scope.js';
 import { WorkspaceAccessError, resolveWorkspace, workspaceRelativePath } from '../workspace/service.js';
@@ -773,23 +774,24 @@ orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
 });
 
 // ── POST /api/orchestrator/vision ───────────────────────────────────────
-// Phase B: Screen Intelligence — image/screenshot analysis via z-ai createVision.
+// Phase 3+ — Image/screenshot analysis via the registry-routed ModelRouter.
 //
-// Same lightweight family as /complete, /explain, /refactor: direct z-ai SDK
-// call, no agent dispatch or apply gate, and a tenant-scoped evidence trace
-// containing declared metadata only.
+// REPLACES the old z-ai SDK call. Now routes through whichever
+// configured provider's selected model actually reports vision support —
+// the same way text chat routes through the ModelRouter.
+//
+// Vision-capable providers are identified by the `supportsVision` flag on
+// their loaded models (populated by Phase 1's "Test & load models"). The
+// route finds the first vision-capable model across all LLM providers and
+// uses it. If no provider has a vision-capable model, the route fails with
+// a clear, specific message listing which providers/models would need to
+// be configured.
 //
 // PRIVACY (hard requirement, not nice-to-have):
 //   - Image content is NEVER logged (console.log, traces, memory beyond request)
-//   - The image base64 is passed to createVision() and then goes out of scope
+//   - The image base64 is passed to the model + then goes out of scope
 //   - Only the text response is returned to the client
 //   - No image retention of any kind
-//
-// Request:  { image: string (base64 data URI), prompt: string }
-// Response: { analysis: string }
-//
-// The image must be a data URI (e.g. "data:image/png;base64,iVBOR...") or a
-// raw base64 string (which we'll convert to a data URI internally).
 
 const visionSchema = z.object({
   image: z.string().min(1).max(5_000_000), // max ~5MB base64
@@ -798,6 +800,29 @@ const visionSchema = z.object({
 });
 
 const VISION_TIMEOUT_MS = 20_000;
+
+/**
+ * Find a vision-capable model from the ProviderRegistry.
+ * Returns the provider entry + model, or null if none found.
+ */
+function findVisionCapableModel(): { providerId: string; providerName: string; modelId: string; modelName: string; engine: 'openrouter' | 'anthropic' } | null {
+  const providers = listProviders().filter((p) => p.category === 'llm' && p.connectionTested);
+  for (const provider of providers) {
+    for (const model of provider.models) {
+      if (model.supportsVision) {
+        const engine = provider.id === 'anthropic' ? 'anthropic' : 'openrouter';
+        return {
+          providerId: provider.id,
+          providerName: provider.displayName,
+          modelId: model.id,
+          modelName: model.name,
+          engine,
+        };
+      }
+    }
+  }
+  return null;
+}
 
 orchestratorRouter.post('/vision', requireAuth, async (req, res) => {
   const parsed = visionSchema.safeParse(req.body);
@@ -809,10 +834,48 @@ orchestratorRouter.post('/vision', requireAuth, async (req, res) => {
   const { image, prompt } = parsed.data;
   const scope = await resolveDirectEditorScope(req, res, parsed.data.projectId, parsed.data.sessionId);
   if (!scope) return;
+
+  // ── Find a vision-capable provider ──────────────────────────────────
+  const visionModel = findVisionCapableModel();
+
+  if (!visionModel) {
+    // No vision-capable provider configured — fail with a clear, specific message.
+    const providers = listProviders().filter((p) => p.category === 'llm');
+    const providerNames = providers.map((p) => p.displayName).join(', ') || '(none configured)';
+    const testedProviders = providers.filter((p) => p.connectionTested).map((p) => p.displayName).join(', ') || '(none tested)';
+
+    const errorMsg = `No vision-capable model is configured. To use image analysis, you need a model that supports vision (image input).
+
+Current Model API providers: ${providerNames}
+Tested + loaded: ${testedProviders}
+
+To fix this:
+1. Open Settings → API Hub → Model API
+2. Click "Test & load" on OpenRouter or Anthropic (if not already done)
+3. Make sure the loaded models include vision-capable ones (look for the "Vision" badge)
+
+Vision-capable models include:
+- OpenRouter: models with vision modality (e.g. gpt-4o, claude-3.5-sonnet)
+- Anthropic: all Claude 3+ and Claude 4+ models support vision`;
+
+    const evidenceRun = startDirectEditorEvidence({
+      action: 'vision',
+      scope,
+      provider: 'none-configured',
+      inputs: {
+        fields: ['image', 'prompt'],
+        characterCounts: { image: image.length, prompt: prompt.length },
+        imageRetained: false,
+      },
+    });
+    res.status(503).json({ error: errorMsg, evidence: evidenceRun.fail() });
+    return;
+  }
+
   const evidenceRun = startDirectEditorEvidence({
     action: 'vision',
     scope,
-    provider: 'z-ai-vision',
+    provider: visionModel.providerId,
     inputs: {
       fields: ['image', 'prompt'],
       characterCounts: { image: image.length, prompt: prompt.length },
@@ -820,43 +883,50 @@ orchestratorRouter.post('/vision', requireAuth, async (req, res) => {
     },
   });
 
-  // Ensure the image is a data URI — createVision expects image_url.url
+  // Ensure the image is a data URI
   let dataUri = image;
   if (!dataUri.startsWith('data:')) {
     dataUri = `data:image/png;base64,${image}`;
   }
 
   try {
-    // Use z-ai SDK directly — same as how voice-proxy uses it for ASR/TTS
-    const ZAI = (await import('z-ai-web-dev-sdk')).default;
-    const zai = await ZAI.create();
-
     // PRIVACY: do NOT log the image data. Log only metadata.
-    console.log(`[orchestrator:vision] analyzing image (${Math.round(dataUri.length / 1024)}KB) with prompt: "${prompt.slice(0, 80)}"`);
+    console.log(`[orchestrator:vision] analyzing image (${Math.round(dataUri.length / 1024)}KB) via ${visionModel.providerName} / ${visionModel.modelName} with prompt: "${prompt.slice(0, 80)}"`);
 
-    const result = await zai.chat.completions.createVision({
-      model: 'glm-4v-plus', // z-ai's vision model
+    // Build the vision request using content blocks (text + image)
+    const contentBlocks: ContentBlock[] = [
+      { type: 'text', text: prompt },
+      { type: 'image_url', image_url: { url: dataUri } },
+    ];
+
+    const routerRequest: ModelRouterRequest = {
+      agentId: 'vision-analysis',
+      domain: 'REVIEW',  // REVIEW domain picks Claude/architecture models
       messages: [
         {
           role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: dataUri } },
-          ],
+          content: contentBlocks,
         },
-      ],
-      thinking: { type: 'disabled' },
-    });
+      ] as RouterMessage[],
+      executionMode: 'single-shot',
+      maxTokens: 1024,
+      temperature: 0.3,
+      engine: visionModel.engine,
+    };
 
-    // Extract text from the response — z-ai returns { choices: [{ message: { content } }] }
-    const analysis = (result as any)?.choices?.[0]?.message?.content ?? '';
+    // Stream through the ModelRouter — same path as /complete, /explain, /refactor
+    const generator = modelRouter.stream(routerRequest);
+    let analysis = '';
+    for await (const chunk of generator) {
+      if (chunk.delta) analysis += chunk.delta;
+      if (chunk.done) break;
+    }
 
     // PRIVACY: the image dataUri goes out of scope here — no retention
-    const output = typeof analysis === 'string' ? analysis : String(analysis);
+    const output = analysis.trim() || '(no analysis returned)';
     res.json({ analysis: output, evidence: evidenceRun.succeed(output.length) });
   } catch (err: any) {
     // PRIVACY: strip any base64 data from error messages before logging.
-    // The z-ai SDK may include request details in error messages.
     const rawError = err?.message ?? 'Vision analysis failed';
     const safeError = rawError
       .replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '(image data redacted)')
