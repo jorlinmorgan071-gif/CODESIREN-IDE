@@ -34,6 +34,7 @@ import { memoryRouter } from './routes/memory.js';
 import { voiceLiveRouter } from './routes/voice-live.js';
 import { orchestratorRouter } from './routes/orchestrator.js';
 import { startHealthCheckCycle, stopHealthCheckCycle } from './provider-registry/health-check.js';
+import { startStaleTaskDetector, stopStaleTaskDetector } from './orchestration/stale-task-detector.js';
 import { workspaceRouter } from './routes/workspace.js';
 import { changesRouter } from './routes/changes.js';
 import { rateLimitApi } from './middleware/rate-limiter.js';
@@ -285,12 +286,19 @@ async function main() {
     // Phase 3 — start the API Hub background health-check cycle.
     // Tests set DISABLE_HEALTH_CHECK=1 to opt out.
     startHealthCheckCycle();
+
+    // Phase 3 Follow-up — stale task detector.
+    // Scans .task-states/ on boot for orphaned tasks from a previous crash,
+    // then periodically (every 60s) for tasks that go stale while running.
+    // Tests set DISABLE_STALE_TASK_DETECTOR=1 to opt out.
+    startStaleTaskDetector();
   });
 
   // 6. Graceful shutdown — kill sidecars FIRST so they don't outlive Node
   const shutdown = async () => {
     console.log('\n[server] shutting down...');
     stopHealthCheckCycle();    // Phase 3 — stop the API Hub health-check cycle
+    stopStaleTaskDetector();   // Phase 3 Follow-up — stop the stale-task scan
     sidecarManager.killAll();  // kill sidecars synchronously before Node exits
     stopOllamaServe();         // stop ollama serve if we started it
     ghostMode.stop();
