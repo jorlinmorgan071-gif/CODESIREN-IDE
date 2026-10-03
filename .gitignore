@@ -95,3 +95,4 @@ server/sidecars/whisper/*.pth
 # Tarballs + download artifacts — never commit these
 download/
 app/public/models/avatars/custom/
+.task-states/
