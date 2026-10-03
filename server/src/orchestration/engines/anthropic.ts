@@ -16,6 +16,7 @@ import type { InferenceEngine } from '../model-router.js';
 import { config } from '../../config.js';
 import { withRetry } from './_retry.js';
 import { extractText, toAnthropicContent } from '../content-blocks.js';
+import { getRoutingForAgent } from '../agent-routing.js';
 
 const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -40,7 +41,11 @@ export class AnthropicEngine implements InferenceEngine {
   id: EngineId = 'anthropic';
 
   async *stream(req: ModelRouterRequest): AsyncGenerator<ModelRouterChunk> {
-    const model = pickAnthropicModel(req.domain);
+    // UPR Phase 4 — use routed model if configured, else fall back to domain-based picking
+    const routing = getRoutingForAgent(req.agentId);
+    const model = routing?.providerId === 'anthropic'
+      ? routing.modelId
+      : pickAnthropicModel(req.domain);
 
     // Extract system prompt from messages[0] if it's a system-role message
     // Anthropic requires system as a separate top-level parameter, NOT in messages[]

@@ -15,6 +15,7 @@ import { AnthropicEngine } from './engines/anthropic.js';
 import { GroqEngine } from './engines/groq.js';
 import { withRetry } from './engines/_retry.js';
 import { extractText } from './content-blocks.js';
+import { getRoutingForAgent } from './agent-routing.js';
 
 export interface InferenceEngine {
   id: EngineId;
@@ -149,7 +150,11 @@ class OpenRouterEngine implements InferenceEngine {
   id: EngineId = 'openrouter';
 
   async *stream(req: ModelRouterRequest): AsyncGenerator<ModelRouterChunk> {
-    const model = pickModelForDomain(req.domain);
+    // UPR Phase 4 — use routed model if configured, else fall back to domain-based picking
+    const routing = getRoutingForAgent(req.agentId);
+    const model = routing?.providerId === 'openrouter'
+      ? routing.modelId
+      : pickModelForDomain(req.domain);
     const body = {
       model,
       messages: req.messages,
@@ -327,16 +332,15 @@ class ModelRouter {
   }
 
   pickEngine(req: ModelRouterRequest): InferenceEngine {
-    // UPR Phase 1 Step 1 — Policy: Ollama → OpenRouter → Anthropic → Groq → stub
-    // Pre-Step-1: only Ollama + OpenRouter were reachable; Anthropic + Groq
-    // were registered (when API keys were set) but never selected. Now all
-    // four cloud/local engines are reachable through normal routing.
-    //
-    // If Ollama hasn't been checked yet (cold start), try it first.
-    // If it fails mid-stream, the OllamaEngine itself handles auto-start + error.
+    // UPR Phase 4 — consult agent routing config first.
+    // If a routing assignment exists for this agent, use the configured engine.
+    // This replaces the hardcoded preferredEngine cascade for configured agents.
+    const routing = getRoutingForAgent(req.agentId);
+    if (routing && this.engines.has(routing.engine)) {
+      return this.engines.get(routing.engine)!;
+    }
 
-    // Check if the request has a specific engine preference (e.g. from the model picker)
-    // Fix #3: previously read via (req as any).engine — now properly typed on ModelRouterRequest
+    // Legacy fallback: explicit per-request engine override
     const requestedEngine = req.engine;
     if (requestedEngine && this.engines.has(requestedEngine)) {
       return this.engines.get(requestedEngine)!;

@@ -22,6 +22,18 @@ import {
   getAllAgentModels,
 } from '../orchestration/engines/ollama.js';
 import { config } from '../config.js';
+import {
+  getRoutingConfig,
+  setRoutingMode,
+  setOneProvider,
+  setAgentAssignment,
+  getRoutingForAgent,
+  canEnableMixedMode,
+  computeAutoFreeAssignments,
+  getConfiguredLLMProviders,
+  inferTaskType,
+  type RoutingMode,
+} from '../orchestration/agent-routing.js';
 
 export const modelsRouter = Router();
 
@@ -149,4 +161,121 @@ modelsRouter.get('/engines', requireAuth, async (_req, res) => {
     ],
     preferredEngine: ollamaCheck.available ? 'ollama' : (config.OPENROUTER_API_KEY ? 'openrouter' : 'stub'),
   });
+});
+
+// ── UPR Phase 4 — Agent Routing ─────────────────────────────────────────
+//   GET  /api/models/routing              get current routing config + assignments
+//   POST /api/models/routing/mode         set routing mode (one-provider / mixed-provider / auto-free)
+//   POST /api/models/routing/one-provider set the One Provider assignment
+//   POST /api/models/routing/agent        set a per-agent assignment (Mixed mode)
+//   GET  /api/models/routing/auto-free    compute + preview Auto Free assignments
+//   GET  /api/models/routing/agents       list all agents + their inferred task types
+
+modelsRouter.get('/routing', requireAuth, (_req, res) => {
+  const config = getRoutingConfig();
+  const providers = getConfiguredLLMProviders().map(p => ({
+    id: p.id,
+    displayName: p.displayName,
+    modelCount: p.models.length,
+    freeModelCount: p.models.filter(m => m.costTier === 'free').length,
+  }));
+  res.json({ config, providers });
+});
+
+const setModeSchema = z.object({ mode: z.enum(['one-provider', 'mixed-provider', 'auto-free']) });
+
+modelsRouter.post('/routing/mode', requireAuth, (req, res) => {
+  const parsed = setModeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid mode', issues: parsed.error.issues });
+    return;
+  }
+  const result = setRoutingMode(parsed.data.mode as RoutingMode);
+  if (!result.success) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({
+    success: true,
+    config: result.config,
+    shortfalls: result.shortfalls ?? [],
+  });
+});
+
+const setOneProviderSchema = z.object({
+  providerId: z.string().min(1),
+  modelId: z.string().min(1),
+});
+
+modelsRouter.post('/routing/one-provider', requireAuth, (req, res) => {
+  const parsed = setOneProviderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
+  setOneProvider(parsed.data.providerId, parsed.data.modelId);
+  res.json({ success: true });
+});
+
+const setAgentAssignmentSchema = z.object({
+  agentId: z.string().min(1),
+  providerId: z.string().min(1),
+  modelId: z.string().min(1),
+});
+
+modelsRouter.post('/routing/agent', requireAuth, (req, res) => {
+  const parsed = setAgentAssignmentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
+  setAgentAssignment(parsed.data.agentId, parsed.data.providerId, parsed.data.modelId);
+  res.json({ success: true });
+});
+
+modelsRouter.get('/routing/auto-free', requireAuth, (_req, res) => {
+  const { assignments, shortfalls } = computeAutoFreeAssignments();
+  const providers = getConfiguredLLMProviders();
+  const freeModels = providers.flatMap(p =>
+    p.models.filter(m => m.costTier === 'free').map(m => ({
+      providerId: p.id,
+      providerName: p.displayName,
+      modelId: m.id,
+      modelName: m.name,
+      contextWindow: m.contextWindow,
+      supportsToolUse: m.supportsToolUse,
+    }))
+  );
+  res.json({ assignments, shortfalls, freeModels, providerCount: providers.length });
+});
+
+modelsRouter.get('/routing/agents', requireAuth, (_req, res) => {
+  const agents = Object.entries({
+    'architect-agent': 'ARCHITECT',
+    'backend-agent': 'BACKEND',
+    'code-review-agent': 'REVIEW',
+    'database-agent': 'DATABASE',
+    'deployment-agent': 'DEPLOYMENT',
+    'devops-agent': 'DEVOPS',
+    'documentation-agent': 'DOCUMENTATION',
+    'extension-agent': 'EXTENSION',
+    'fabrication-agent': 'FABRICATION',
+    'frontend-agent': 'FRONTEND',
+    'memory-agent': 'MEMORY',
+    'operative-agent': 'OPERATIVE',
+    'performance-agent': 'PERFORMANCE',
+    'prompt-engineer-agent': 'PROMPT',
+    'qa-tester-agent': 'QA',
+    'research-agent': 'RESEARCH',
+    'security-agent': 'SECURITY',
+    'sentinel-agent': 'SENTINEL',
+    'terminal-agent': 'TERMINAL',
+    'ui-designer-agent': 'DESIGN',
+  }).map(([agentId, domain]) => ({
+    agentId,
+    domain,
+    taskType: inferTaskType(agentId),
+    routing: getRoutingForAgent(agentId),
+  }));
+  res.json({ agents });
 });
