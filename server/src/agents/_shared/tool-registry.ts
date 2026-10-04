@@ -301,3 +301,53 @@ toolRegistry.register({
       };
   },
 });
+
+// ── UPR Phase 5 — Image Generation tool ─────────────────────────────────
+// Registered as a standard tool callable by any agent. Routes through the
+// ProviderRegistry to whichever image-video provider is configured.
+// The requesting agent writes its own prompt — no intermediary translation.
+
+toolRegistry.register({
+  name: 'image_gen',
+  description: 'Generate an image from a text prompt using the configured image/video provider (DALL·E, Gemini Imagen, MiniMax, WaveSpeed, or BytePlus Seedream). Args: { "prompt": "description of the image to generate", "size": "1024x1024" (optional) } — the prompt should be a detailed description authored by you as part of your task reasoning. The generated image is returned as base64 data for direct insertion into the file/panel/doc you are working on.',
+  async execute(args) {
+    const prompt = String(args.prompt ?? '').trim();
+    const size = args.size ? String(args.size) : undefined;
+
+    if (!prompt) {
+      return { name: 'image_gen', content: 'Missing required "prompt" arg', success: false };
+    }
+
+    // Dynamic import to avoid circular dependency at module load time
+    const { generateImage } = await import('../../orchestration/image-generation.js');
+
+    const result = await generateImage({ prompt, size });
+
+    if (!result.success) {
+      return {
+        name: 'image_gen',
+        content: result.error ?? 'Image generation failed',
+        success: false,
+        meta: { provider: result.provider, model: result.model },
+      };
+    }
+
+    // Return the image data for direct-to-agent delivery.
+    // The agent inserts it into whatever it's building (file, panel, doc).
+    const imageData = result.imageBase64
+      ? `data:image/${result.format};base64,${result.imageBase64}`
+      : result.imageUrl ?? '';
+
+    return {
+      name: 'image_gen',
+      content: imageData,
+      success: true,
+      meta: {
+        provider: result.provider,
+        model: result.model,
+        format: result.format,
+        prompt: prompt.slice(0, 200),
+      },
+    };
+  },
+});

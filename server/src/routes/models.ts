@@ -279,3 +279,65 @@ modelsRouter.get('/routing/agents', requireAuth, (_req, res) => {
   }));
   res.json({ agents });
 });
+
+// ── UPR Phase 5 — Image Generation ──────────────────────────────────────
+//   GET  /api/models/image-gen/toggle  get the approval toggle state
+//   POST /api/models/image-gen/toggle  set the approval toggle
+//   POST /api/models/image-gen/generate  generate an image (direct API call)
+
+import {
+  getImageGenerationApprovalToggle,
+  setImageGenerationApprovalToggle,
+  generateImage,
+  findImageProvider,
+} from '../orchestration/image-generation.js';
+
+modelsRouter.get('/image-gen/toggle', requireAuth, (_req, res) => {
+  res.json({ allowEveryRequest: getImageGenerationApprovalToggle() });
+});
+
+modelsRouter.post('/image-gen/toggle', requireAuth, (req, res) => {
+  const enabled = req.body?.allowEveryRequest;
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'Missing boolean "allowEveryRequest" in body' });
+    return;
+  }
+  setImageGenerationApprovalToggle(enabled);
+  res.json({ success: true, allowEveryRequest: enabled });
+});
+
+const imageGenSchema = z.object({
+  prompt: z.string().min(1).max(4000),
+  modelId: z.string().optional(),
+  size: z.string().optional(),
+});
+
+modelsRouter.post('/image-gen/generate', requireAuth, async (req, res) => {
+  const parsed = imageGenSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
+
+  const result = await generateImage({
+    prompt: parsed.data.prompt,
+    modelId: parsed.data.modelId,
+    size: parsed.data.size,
+  });
+
+  if (!result.success) {
+    // Honest failure: 503 if no provider configured, 500 for API errors
+    const status = result.error?.includes('No image/video provider') ? 503 : 500;
+    res.status(status).json({ error: result.error, provider: result.provider });
+    return;
+  }
+
+  res.json({
+    success: true,
+    imageBase64: result.imageBase64,
+    imageUrl: result.imageUrl,
+    format: result.format,
+    model: result.model,
+    provider: result.provider,
+  });
+});
