@@ -1210,8 +1210,9 @@ export async function testAndLoadModels(providerId: string): Promise<TestAndLoad
 /**
  * Phase 3 — Suggest a remediation action based on an error.
  * Used by the test-and-load failure path + the background health-check cycle.
+ * Also used by Phase 4 mid-task failure recovery (exported for reuse).
  */
-function suggestRemediation(err: any): string {
+export function suggestRemediation(err: any): string {
   const msg = (err?.message ?? String(err)).toLowerCase();
   if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('api key is not set') || msg.includes('api key is invalid') || msg.includes('rejected the api key')) {
     return 'The API key is invalid, expired, or missing. Generate a new key from the provider\'s dashboard and replace it here.';

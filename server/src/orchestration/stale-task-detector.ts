@@ -24,6 +24,7 @@
 
 import { listTaskStates, markInterrupted, getResumptionPoint, type TaskState } from './task-state.js';
 import { makeEvent, broadcast } from '../ws/events.js';
+import { handleStaleTaskDetection } from './task-recovery.js';
 
 const DEFAULT_STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_SCAN_INTERVAL_MS = 60 * 1000; // 1 minute
@@ -122,6 +123,15 @@ export function scanForStaleTasks(opts?: {
       } catch (err) {
         // broadcast may fail if WS server isn't running (e.g., in tests)
         console.warn(`[stale-detector] failed to broadcast event for ${state.taskId}:`, err);
+      }
+
+      // Phase 4 Step 5: trigger the recovery flow from the stale detection.
+      // This is NOT a separate mechanism — it's the same recovery flow,
+      // triggered by the stale detector's output.
+      try {
+        handleStaleTaskDetection(detection);
+      } catch (err) {
+        console.warn(`[stale-detector] recovery handler failed for ${state.taskId}:`, err);
       }
     }
   }
