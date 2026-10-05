@@ -177,6 +177,7 @@ export type AgentEventName =
   | 'agent:start'
   | 'agent:chunk'
   | 'agent:progress'
+  | 'agent:step'
   | 'agent:complete'
   | 'agent:error'
   | 'agent:status'

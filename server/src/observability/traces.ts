@@ -140,10 +140,29 @@ export function startTrace(opts: {
   return traceId;
 }
 
+// ── Trace step recording ──────────────────────────────────────────────
+
 export function addStep(traceId: string, step: Omit<TraceStep, 'ts'> & { ts?: number }): void {
   const trace = activeTraces.get(traceId);
   if (!trace) return;
-  trace.steps.push({ ts: step.ts ?? Date.now(), ...step });
+  const fullStep: TraceStep = { ts: step.ts ?? Date.now(), ...step };
+  trace.steps.push(fullStep);
+
+  // Phase 5: broadcast the step as a WS event so the UI can show
+  // real-time progress (Planning → Analysis → Editing → Tests → etc.)
+  // This is the "observable window into the execution engine" — the chat
+  // panel renders these as a visual step tracker.
+  try {
+    const { makeEvent, broadcast } = require('../ws/events.js');
+    broadcast(makeEvent('agent:step' as any, {
+      traceId,
+      taskId: trace.taskId,
+      agentId: trace.agentId,
+      step: fullStep,
+    }));
+  } catch {
+    // broadcast may fail if WS server isn't running (e.g., in tests)
+  }
 }
 
 export function incrementTurn(traceId: string): void {

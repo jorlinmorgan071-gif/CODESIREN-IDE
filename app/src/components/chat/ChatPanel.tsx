@@ -16,6 +16,7 @@ import { api } from '@/lib/api';
 import type { AgentEvent } from '@/types';
 import { ChatBubble, type ChatMessage, type BubbleStyle } from './elements/ChatBubble';
 import { ChatInput } from './elements/ChatInput';
+import { TaskProgressPanel } from './TaskProgressPanel';
 import { getActiveEditorContent, getActiveEditorSelection } from '@/components/editor/CodeEditor';
 import { RotatingLoader } from '@/components/ui/loaders';
 import { NotificationContainer, type NotificationItem } from '@/components/ui/notification-alert';
@@ -58,6 +59,7 @@ export function ChatPanel() {
   const activeChat = state.chatSessions.find(c => c.id === state.activeChatId);
   const messages = useMemo(() => activeChat?.messages ?? [], [activeChat?.messages]);
   const requestStartTime = useRef<number>(0);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
   // ── Dismiss notification ──────────────────────────────────────────────
   const dismissNotification = useCallback((id: string) => {
@@ -84,9 +86,11 @@ export function ChatPanel() {
   // (Tier 1 free-chat per directive Section 1.2). The orchestrator:* events
   // have the same payload shape as agent:* so the rendering code is shared.
   useEffect(() => {
-    const offStart = wsClient.on('agent:start', () => {
+    const offStart = wsClient.on('agent:start', (evt: AgentEvent) => {
       setIsGenerating(true);
       requestStartTime.current = Date.now();
+      const payload = evt.payload as { taskId?: string };
+      if (payload?.taskId) setActiveTaskId(payload.taskId);
     });
 
     const handleChunk = (evt: AgentEvent) => {
@@ -112,6 +116,7 @@ export function ChatPanel() {
 
     const handleComplete = () => {
       setIsGenerating(false);
+      setActiveTaskId(null);
       const sessionId = state.activeChatId;
       if (sessionId) {
         const chat = state.chatSessions.find(c => c.id === sessionId);
@@ -133,6 +138,7 @@ export function ChatPanel() {
 
     const handleError = (evt: AgentEvent) => {
       setIsGenerating(false);
+      setActiveTaskId(null);
       const payload = evt.payload as { error: string };
       const sessionId = state.activeChatId;
       if (sessionId) {
@@ -497,6 +503,11 @@ export function ChatPanel() {
             onSpeak={handleSpeak}
           />
         ))}
+
+        {/* Task progress panel — visual step tracker (Phase 5) */}
+        {isGenerating && activeTaskId && (
+          <TaskProgressPanel taskId={activeTaskId} />
+        )}
 
         {/* Thinking indicator (when generating but no content yet) */}
         {isGenerating && messages.length > 0 && !messages[messages.length - 1]?.content && (
