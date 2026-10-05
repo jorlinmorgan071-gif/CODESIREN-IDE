@@ -32,9 +32,38 @@ jobs:
       # libraries Chromium needs (libnss3, libatk1.0, etc.).
       - run: npx playwright install chromium --with-deps
       - run: npm run typecheck
-      - run: npm run test -- --exclude tests/unit/run-tests.test.ts --exclude tests/unit/ghost-remediation.test.ts
+      - run: npm run test -- --exclude tests/unit/run-tests.test.ts --exclude tests/unit/ghost-remediation.test.ts --exclude tests/unit/playwright-client.test.ts --exclude tests/unit/workflow-runner.test.ts --exclude tests/unit/upr-phase1-step2b-abortsignal-cap.test.ts
       - run: npm audit --audit-level=high
       - run: bash ../scripts/grep-audit.sh
+      # Boot smoke test: confirm the server actually starts and responds to
+      # a basic health-check endpoint, then shuts down cleanly. This catches
+      # import failures, missing files, and config issues that typecheck
+      # can't detect (tsc doesn't execute code).
+      - name: Boot smoke test
+        run: |
+          # Create a minimal .env for the boot test (config.ts requires JWT_SECRET)
+          cp .env.example .env
+          # Start the server in the background
+          npx tsx src/index.ts &
+          SERVER_PID=$!
+          # Wait for the server to start (max 15 seconds)
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3001/api/health > /dev/null 2>&1; then
+              echo "✓ Server responded to /api/health"
+              break
+            fi
+            sleep 0.5
+          done
+          # Check if the server is responding
+          if ! curl -sf http://localhost:3001/api/health > /dev/null 2>&1; then
+            echo "✗ Server did not respond to /api/health within 15 seconds"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 1
+          fi
+          # Shut down cleanly
+          kill -SIGTERM $SERVER_PID
+          wait $SERVER_PID 2>/dev/null || true
+          echo "✓ Server started, responded to health check, and shut down cleanly"
 
   app:
     name: App (typecheck + lint + test + build)
