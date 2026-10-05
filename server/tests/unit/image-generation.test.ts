@@ -177,6 +177,185 @@ describe('UPR Phase 5 — Image/Video Generation Routing', () => {
     console.log('  ✓ Response parsed correctly → imageBase64 returned');
   });
 
+  it('TEST 4c: MiniMax provider → calls /v1/image_generation with aspect_ratio', async () => {
+    mockProviders.push({
+      id: 'minimax-image',
+      category: 'image-video',
+      displayName: 'MiniMax (Image/Video Generation)',
+      connectionTested: true,
+      apiKey: 'test-minimax-key',
+      apiUrl: 'https://api.minimax.io/v1',
+      imageModels: [{
+        id: 'image-01',
+        name: 'MiniMax Image Generation',
+        outputType: 'image',
+        resolutions: [],
+        aspectRatios: ['1:1', '16:9', '9:16'],
+        supportsImageToImage: false,
+        supportsVideo: false,
+        costTier: 'paid',
+        pricingNote: 'See MiniMax pricing',
+      }],
+    });
+
+    const fetchSpy = vi.spyOn(global, 'fetch');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        data: { image_urls: ['https://example.com/generated.png'] },
+      }), { status: 200 }),
+    );
+
+    const result = await generateImage({ prompt: 'A red square' });
+
+    expect(result.success).toBe(true);
+    expect(result.imageUrl).toBe('https://example.com/generated.png');
+    expect(result.provider).toBe('minimax-image');
+
+    // Verify the fetch URL uses /image_generation (underscore, not /image/generation)
+    const call = fetchSpy.mock.calls[0];
+    expect(call[0]).toBe('https://api.minimax.io/v1/image_generation');
+
+    // Verify the body has aspect_ratio, NOT size/n
+    const body = JSON.parse((call[1] as any).body);
+    expect(body.model).toBe('image-01');
+    expect(body.prompt).toBe('A red square');
+    expect(body.aspect_ratio).toBe('1:1');
+    expect(body.size).toBeUndefined(); // MiniMax doesn't use size
+    expect(body.n).toBeUndefined();    // MiniMax doesn't use n
+
+    fetchSpy.mockRestore();
+    console.log('  ✓ MiniMax called /v1/image_generation (correct endpoint)');
+    console.log('  ✓ Body uses aspect_ratio (not size/n)');
+  });
+
+  it('TEST 4d: WaveSpeed provider → submit-then-poll async flow', async () => {
+    mockProviders.push({
+      id: 'wavespeed',
+      category: 'image-video',
+      displayName: 'WaveSpeed (Image/Video Generation)',
+      connectionTested: true,
+      apiKey: 'test-wavespeed-key',
+      apiUrl: 'https://api.wavespeed.ai/api/v2',
+      imageModels: [{
+        id: 'flux-schnell',
+        name: 'FLUX.1 [schnell]',
+        outputType: 'image',
+        resolutions: ['1024x1024'],
+        aspectRatios: ['1:1'],
+        supportsImageToImage: false,
+        supportsVideo: false,
+        costTier: 'free',
+        pricingNote: 'Free',
+      }],
+    });
+
+    const fetchSpy = vi.spyOn(global, 'fetch');
+
+    // Mock submit response
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        code: 0,
+        data: { id: 'pred-123', status: 'created' },
+      }), { status: 200 }),
+    );
+
+    // Mock poll response (completed on first poll)
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        code: 0,
+        data: { status: 'completed', image_urls: ['https://example.com/wavespeed.png'] },
+      }), { status: 200 }),
+    );
+
+    const result = await generateImage({ prompt: 'A green triangle' });
+
+    expect(result.success).toBe(true);
+    expect(result.imageUrl).toBe('https://example.com/wavespeed.png');
+    expect(result.provider).toBe('wavespeed');
+
+    // Verify the submit call went to /api/v2/{model_id}
+    const submitCall = fetchSpy.mock.calls[0];
+    expect(submitCall[0]).toBe('https://api.wavespeed.ai/api/v2/flux-schnell');
+    const submitBody = JSON.parse((submitCall[1] as any).body);
+    expect(submitBody.prompt).toBe('A green triangle');
+
+    // Verify the poll call went to /predictions/{id}/result
+    const pollCall = fetchSpy.mock.calls[1];
+    expect(pollCall[0]).toBe('https://api.wavespeed.ai/api/v2/predictions/pred-123/result');
+
+    fetchSpy.mockRestore();
+    console.log('  ✓ WaveSpeed submit to /api/v2/{model_id}');
+    console.log('  ✓ WaveSpeed poll to /predictions/{id}/result');
+    console.log('  ✓ Async submit-then-poll flow works');
+  });
+
+  it('TEST 4e: BytePlus provider → ModelArk task-based async flow', async () => {
+    mockProviders.push({
+      id: 'byteplus-seedream',
+      category: 'image-video',
+      displayName: 'BytePlus Seedream (Image Generation)',
+      connectionTested: true,
+      apiKey: 'test-byteplus-key',
+      apiUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+      imageModels: [{
+        id: 'seedream-3.0',
+        name: 'Seedream 3.0',
+        outputType: 'image',
+        resolutions: ['1024x1024'],
+        aspectRatios: ['1:1'],
+        supportsImageToImage: true,
+        supportsVideo: false,
+        costTier: 'paid',
+        pricingNote: 'See BytePlus pricing',
+      }],
+    });
+
+    const fetchSpy = vi.spyOn(global, 'fetch');
+
+    // Mock submit response
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        id: 'task-456',
+      }), { status: 200 }),
+    );
+
+    // Mock poll response (succeeded on first poll)
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        status: 'succeeded',
+        content: { image_url: 'https://example.com/byteplus.png' },
+      }), { status: 200 }),
+    );
+
+    const result = await generateImage({ prompt: 'A purple circle' });
+
+    expect(result.success).toBe(true);
+    expect(result.imageUrl).toBe('https://example.com/byteplus.png');
+    expect(result.provider).toBe('byteplus-seedream');
+
+    // Verify the submit call went to ModelArk, NOT openspeech.bytedance.com
+    const submitCall = fetchSpy.mock.calls[0];
+    expect(submitCall[0]).toBe('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks');
+    expect(submitCall[0]).not.toContain('openspeech.bytedance.com');
+
+    // Verify the body uses content array (ModelArk format), NOT { model, prompt }
+    const submitBody = JSON.parse((submitCall[1] as any).body);
+    expect(submitBody.model).toBe('seedream-3.0');
+    expect(submitBody.content).toBeDefined();
+    expect(submitBody.content[0].type).toBe('text');
+    expect(submitBody.content[0].text).toBe('A purple circle');
+
+    // Verify the poll call went to the task URL
+    const pollCall = fetchSpy.mock.calls[1];
+    expect(pollCall[0]).toBe('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/task-456');
+
+    fetchSpy.mockRestore();
+    console.log('  ✓ BytePlus uses ModelArk (ark.cn-beijing.volces.com), NOT openspeech.bytedance.com');
+    console.log('  ✓ Submit to /contents/generations/tasks with content array');
+    console.log('  ✓ Poll to /contents/generations/tasks/{id}');
+    console.log('  ✓ Task-based async flow works');
+  });
+
   // ── image_gen tool ─────────────────────────────────────────────────
 
   it('TEST 5: image_gen tool is registered + callable', async () => {

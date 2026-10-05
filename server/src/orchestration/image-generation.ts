@@ -213,23 +213,39 @@ async function callGeminiImage(
 }
 
 // ── MiniMax ────────────────────────────────────────────────────────────
-// POST https://api.minimax.chat/v1/image/generation
-// Body: { model, prompt }
+// POST https://api.minimax.io/v1/image_generation
+// Body: { model, prompt, aspect_ratio }
 // Response: { data: { image_urls: ["..."] } }
+//
+// Real docs (platform.minimax.io):
+//   - Endpoint: POST /v1/image_generation (underscore, not /image/generation)
+//   - Domain: api.minimax.io (not api.minimax.chat)
+//   - Body: { model: "image-01", prompt: "...", aspect_ratio: "1:1" }
+//   - aspect_ratio (not size/n like OpenAI): "1:1", "16:9", "9:16", "4:3", "3:4"
 
 async function callMiniMaxImage(
   provider: ProviderRegistryEntry,
   model: string,
   prompt: string,
 ): Promise<Omit<ImageGenerationResult, 'model' | 'provider'>> {
-  const url = `${provider.apiUrl.replace(/\/+$/, '')}/image/generation`;
+  const base = provider.apiUrl.replace(/\/+$/, '');
+  // Use the correct endpoint — api.minimax.io/v1/image_generation
+  // If the configured URL is api.minimax.chat, redirect to api.minimax.io
+  const url = base.includes('api.minimax.chat')
+    ? `https://api.minimax.io/v1/image_generation`
+    : `${base}/image_generation`;
+
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${provider.apiKey}`,
     },
-    body: JSON.stringify({ model, prompt }),
+    body: JSON.stringify({
+      model,
+      prompt,
+      aspect_ratio: '1:1', // default; MiniMax uses aspect_ratio, NOT size
+    }),
     signal: AbortSignal.timeout(30_000),
   });
 
@@ -249,79 +265,182 @@ async function callMiniMaxImage(
   };
 }
 
-// ── WaveSpeed ──────────────────────────────────────────────────────────
-// POST https://api.wavespeed.ai/api/v2/turbo/generate/image
-// Body: { model, prompt }
-// Response: { data: { image_urls: ["..."] } }
+// ── WaveSpeed (async submit-then-poll) ────────────────────────────────
+// Step 1: POST https://api.wavespeed.ai/api/v3/{model_id}
+//   Body: { prompt }
+//   Response: { code: 0, data: { id: "prediction_id", status: "created" } }
+//
+// Step 2: Poll GET https://api.wavespeed.ai/api/v3/predictions/{id}/result
+//   Response: { code: 0, data: { status: "completed", image_urls: ["..."] } }
+//
+// This is a genuinely different pattern from OpenAI/Gemini/MiniMax (sync).
+// The submit-then-poll loop runs inside the tool call — agents don't see
+// the intermediate steps, just the final image.
 
 async function callWaveSpeedImage(
   provider: ProviderRegistryEntry,
   model: string,
   prompt: string,
 ): Promise<Omit<ImageGenerationResult, 'model' | 'provider'>> {
-  const url = `${provider.apiUrl.replace(/\/+$/, '')}/turbo/generate/image`;
-  const res = await fetch(url, {
+  const base = provider.apiUrl.replace(/\/+$/, '');
+  const submitUrl = `${base}/${model}`;
+
+  // Step 1: Submit the prediction
+  const submitRes = await fetch(submitUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${provider.apiKey}`,
     },
-    body: JSON.stringify({ model, prompt }),
+    body: JSON.stringify({ prompt }),
     signal: AbortSignal.timeout(30_000),
   });
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '(no body)');
-    throw new Error(`WaveSpeed image generation failed (HTTP ${res.status}): ${body.slice(0, 200)}`);
+  if (!submitRes.ok) {
+    const body = await submitRes.text().catch(() => '(no body)');
+    throw new Error(`WaveSpeed submit failed (HTTP ${submitRes.status}): ${body.slice(0, 200)}`);
   }
 
-  const data = await res.json() as { data?: { image_urls?: string[] } };
-  const imageUrl = data.data?.image_urls?.[0];
-  if (!imageUrl) throw new Error('WaveSpeed returned no image data');
-
-  return {
-    success: true,
-    imageUrl,
-    format: 'png',
+  const submitData = await submitRes.json() as {
+    code?: number;
+    data?: { id?: string; status?: string };
   };
+  const predictionId = submitData.data?.id;
+  if (!predictionId) {
+    throw new Error(`WaveSpeed submit returned no prediction ID: ${JSON.stringify(submitData).slice(0, 200)}`);
+  }
+
+  // Step 2: Poll for the result
+  const pollUrl = `${base}/predictions/${predictionId}/result`;
+  const maxPollAttempts = 60; // 60 × 2s = 120s max wait
+  const pollIntervalMs = 2000;
+
+  for (let attempt = 0; attempt < maxPollAttempts; attempt++) {
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+
+    const pollRes = await fetch(pollUrl, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${provider.apiKey}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!pollRes.ok) {
+      const body = await pollRes.text().catch(() => '(no body)');
+      throw new Error(`WaveSpeed poll failed (HTTP ${pollRes.status}): ${body.slice(0, 200)}`);
+    }
+
+    const pollData = await pollRes.json() as {
+      code?: number;
+      data?: {
+        status?: string;
+        image_urls?: string[];
+        error?: string;
+      };
+    };
+
+    const status = pollData.data?.status;
+    if (status === 'completed') {
+      const imageUrl = pollData.data?.image_urls?.[0];
+      if (!imageUrl) throw new Error('WaveSpeed completed but returned no image URL');
+      return { success: true, imageUrl, format: 'png' };
+    }
+    if (status === 'failed') {
+      throw new Error(`WaveSpeed generation failed: ${pollData.data?.error ?? 'unknown error'}`);
+    }
+    // status is 'created' or 'processing' — keep polling
+  }
+
+  throw new Error(`WaveSpeed generation timed out after ${maxPollAttempts * pollIntervalMs / 1000}s`);
 }
 
-// ── BytePlus Seedream ─────────────────────────────────────────────────
-// POST https://openspeech.bytedance.com/api/v1/images/generations
-// Body: { model, prompt }
-// Response: { data: [{ url: "..." }] }
+// ── BytePlus Seedream (ModelArk — async task-based) ────────────────────
+// Step 1: POST https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks
+//   Body: { model: "<endpoint_id>", content: [{ type: "text", text: prompt }] }
+//   Response: { id: "task_id" }
+//
+// Step 2: Poll GET https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{id}
+//   Response: { status: "succeeded", content: { image_url: "..." } }
+//
+// Real docs (docs.byteplus.com/en/docs/modelark/image-generation-api):
+//   - Uses ModelArk (ark.cn-beijing.volces.com), NOT openspeech.bytedance.com
+//   - The "model" is actually an Endpoint ID configured in ModelArk
+//   - Async task-based: submit → get task ID → poll until done
+//   - Content uses the same message-style format as chat completions
 
 async function callBytePlusImage(
   provider: ProviderRegistryEntry,
   model: string,
   prompt: string,
 ): Promise<Omit<ImageGenerationResult, 'model' | 'provider'>> {
-  const url = `${provider.apiUrl.replace(/\/+$/, '')}/images/generations`;
-  const res = await fetch(url, {
+  // Fix the base URL — if still pointing at the speech API domain, use ModelArk
+  const base = provider.apiUrl.includes('openspeech.bytedance.com')
+    ? 'https://ark.cn-beijing.volces.com/api/v3'
+    : provider.apiUrl.replace(/\/+$/, '');
+
+  const submitUrl = `${base}/contents/generations/tasks`;
+
+  // Step 1: Submit the task
+  const submitRes = await fetch(submitUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${provider.apiKey}`,
     },
-    body: JSON.stringify({ model, prompt }),
+    body: JSON.stringify({
+      model, // this is the Endpoint ID in ModelArk
+      content: [{ type: 'text', text: prompt }],
+    }),
     signal: AbortSignal.timeout(30_000),
   });
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '(no body)');
-    throw new Error(`BytePlus image generation failed (HTTP ${res.status}): ${body.slice(0, 200)}`);
+  if (!submitRes.ok) {
+    const body = await submitRes.text().catch(() => '(no body)');
+    throw new Error(`BytePlus task submit failed (HTTP ${submitRes.status}): ${body.slice(0, 200)}`);
   }
 
-  const data = await res.json() as { data?: Array<{ url?: string; b64_json?: string }> };
-  const image = data.data?.[0];
-  if (!image) throw new Error('BytePlus returned no image data');
+  const submitData = await submitRes.json() as { id?: string };
+  const taskId = submitData.id;
+  if (!taskId) {
+    throw new Error(`BytePlus submit returned no task ID: ${JSON.stringify(submitData).slice(0, 200)}`);
+  }
 
-  return {
-    success: true,
-    imageBase64: image.b64_json,
-    imageUrl: image.url,
-    format: 'png',
-  };
+  // Step 2: Poll for the result
+  const pollUrl = `${base}/contents/generations/tasks/${taskId}`;
+  const maxPollAttempts = 60;
+  const pollIntervalMs = 2000;
+
+  for (let attempt = 0; attempt < maxPollAttempts; attempt++) {
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+
+    const pollRes = await fetch(pollUrl, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${provider.apiKey}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!pollRes.ok) {
+      const body = await pollRes.text().catch(() => '(no body)');
+      throw new Error(`BytePlus poll failed (HTTP ${pollRes.status}): ${body.slice(0, 200)}`);
+    }
+
+    const pollData = await pollRes.json() as {
+      status?: string;
+      content?: { image_url?: string; image_urls?: string[] };
+      error?: { message?: string };
+    };
+
+    if (pollData.status === 'succeeded') {
+      const imageUrl = pollData.content?.image_url ?? pollData.content?.image_urls?.[0];
+      if (!imageUrl) throw new Error('BytePlus succeeded but returned no image URL');
+      return { success: true, imageUrl, format: 'png' };
+    }
+    if (pollData.status === 'failed') {
+      throw new Error(`BytePlus generation failed: ${pollData.error?.message ?? 'unknown error'}`);
+    }
+    // status is 'queued' or 'running' — keep polling
+  }
+
+  throw new Error(`BytePlus generation timed out after ${maxPollAttempts * pollIntervalMs / 1000}s`);
 }
 
 // ── OpenAI-compatible (for custom providers) ──────────────────────────
