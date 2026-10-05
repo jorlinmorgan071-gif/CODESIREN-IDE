@@ -136,16 +136,16 @@ describe('UPR Phase 3+ — Local-model installer', () => {
   });
 
   it('install error message is plain-language (no stack trace, no terminal command)', async () => {
-    // Mock spawn to fail (simulate Python not found) — emit error synchronously
-    // to avoid setTimeout leaking past test end.
+    // Mock spawn to fail (simulate Python not found)
     mockSpawn.mockImplementationOnce((_cmd: string, _args: string[]) => {
       const { EventEmitter } = require('node:events');
       const fakeChild = new EventEmitter();
       (fakeChild as any).stdout = new EventEmitter();
       (fakeChild as any).stderr = new EventEmitter();
       (fakeChild as any).kill = vi.fn();
-      // Emit error on next tick (not setTimeout — vitest can't clean that up)
-      process.nextTick(() => fakeChild.emit('error', new Error('spawn python3 ENOENT')));
+      // Emit error synchronously — no process.nextTick (which leaks past
+      // test end and causes vitest to report an unhandled error)
+      fakeChild.emit('error', new Error('spawn python3 ENOENT'));
       return fakeChild;
     });
 

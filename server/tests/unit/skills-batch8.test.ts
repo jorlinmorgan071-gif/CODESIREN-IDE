@@ -285,7 +285,8 @@ describe('Phase D Batch 8 — Science & Data API skills', () => {
     expect(result.outputs[0]).toContain('date');
     expect(result.outputs[0]).toContain('explanation');
     expect(result.outputs[0]).toContain('title');
-    expect(result.outputs[0]).toContain('apod.nasa.gov');
+    // NASA changed their URL from apod.nasa.gov to science.nasa.gov — accept either
+    expect(result.outputs[0]).toMatch(/apod\.nasa\.gov|science\.nasa\.gov/);
     console.log('[live test] NASA APOD returned real data (first 200 chars):', result.outputs[0].slice(0, 200));
   }, 15000);
 
