@@ -3,6 +3,8 @@
 //
 // Same pattern as Step 5's PrinterClient: the interface is the contract, the
 // stub is injected by default, real Playwright impl is deployment-time.
+
+import { createRequire } from 'node:module';
 //
 // Per Step 6 user condition: the Security Sandbox must be proven BEFORE the
 // Operative Agent routes through it. The sandbox catches disallowed calls,
@@ -165,11 +167,13 @@ if (process.env.NODE_ENV === 'test') {
   // Test mode — use the stub (deterministic fixture pages, no real browser)
   activeBrowserClient = new StubBrowserClient();
 } else {
-  // Production mode — use real Playwright (lazy-launched on first use)
-  // Dynamic import to avoid loading playwright in test mode (it's a heavy dep)
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  // Production mode — use real Playwright (lazy-launched on first use).
+  // This file is native ESM — require() doesn't exist here. Use createRequire
+  // (the Node-recommended way to use require() in ESM) — it's synchronous,
+  // so the agent loader can import this file without top-level await.
   try {
-    const { PlaywrightBrowserClient } = require('./playwright-client.js');
+    const esmRequire = createRequire(import.meta.url);
+    const { PlaywrightBrowserClient } = esmRequire('./playwright-client.js');
     activeBrowserClient = new PlaywrightBrowserClient();
   } catch (err: any) {
     console.warn(`[browser-client] Playwright not available (${err.message}), browser execution unavailable until configured safely`);

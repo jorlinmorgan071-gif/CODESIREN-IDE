@@ -291,7 +291,13 @@ class GhostModeMachine {
       return full;
     }
 
-    this.transition('detected');
+    // Only transition to 'detected' on the FIRST finding in a batch.
+    // Subsequent findings in the same scan cycle are still recorded + broadcast
+    // (above), but attempting detected → detected is an illegal transition
+    // that floods logs with warnings.
+    if (this.state === 'scanning') {
+      this.transition('detected');
+    }
     return full;
   }
 

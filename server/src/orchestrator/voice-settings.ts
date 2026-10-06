@@ -239,12 +239,13 @@ export const ELEVENLABS_VOICES: ElevenLabsVoiceOption[] = [
 ];
 
 // ── Defaults ─────────────────────────────────────────────────────────────
-// Default provider is 'zai' — matches the pre-Build-2 behavior so existing
-// users don't get a surprise change. Once Kokoro is signed off as the
-// preferred default, this can be flipped to 'kokoro'.
+// Default provider is 'kokoro' — local neural TTS, no z-ai dependency.
+// This matches the Phase 4 directive: the voice pipeline should work
+// without any z-ai config. Existing dev machines may have a .runtime/
+// voice-settings.json that overrides this — a fresh install gets Kokoro.
 
 const DEFAULT_SETTINGS: VoiceSettings = {
-  provider: 'zai',
+  provider: 'kokoro',
   // Kokoro defaults (per Section 0.1 grading): af_heart is the A-grade
   // American English female voice. Used only when provider='kokoro'.
   kokoroVoice: 'af_heart',

@@ -17,6 +17,7 @@ import type { AgentEvent } from '@/types';
 import { ChatBubble, type ChatMessage, type BubbleStyle } from './elements/ChatBubble';
 import { ChatInput } from './elements/ChatInput';
 import { TaskProgressPanel } from './TaskProgressPanel';
+import { RecoveryPanel } from './RecoveryPanel';
 import { getActiveEditorContent, getActiveEditorSelection } from '@/components/editor/CodeEditor';
 import { RotatingLoader } from '@/components/ui/loaders';
 import { NotificationContainer, type NotificationItem } from '@/components/ui/notification-alert';
@@ -503,6 +504,9 @@ export function ChatPanel() {
             onSpeak={handleSpeak}
           />
         ))}
+
+        {/* Recovery panel — shows when a task stalls or fails (Phase 4/5) */}
+        <RecoveryPanel />
 
         {/* Task progress panel — visual step tracker (Phase 5) */}
         {isGenerating && activeTaskId && (
