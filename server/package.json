@@ -38,6 +38,7 @@
     "multer": "^2.2.0",
     "pg": "^8.13.1",
     "playwright": "^1.62.1",
+    "proxy-addr": "^2.0.8",
     "tweetnacl": "^1.0.3",
     "typescript": "^5.9.3",
     "uuid": "^11.0.3",
