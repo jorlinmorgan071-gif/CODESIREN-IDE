@@ -17,36 +17,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          # Node 22 LTS — required by isolated-vm@6.1.2 (engines.node >= 22).
-          # Code Siren's Security Sandbox (server/src/security/sandbox.ts)
-          # uses isolated-vm for V8-isolate-based code execution. Node 20
-          # fails to compile isolated-vm because V8's SourceLocation API
-          # is incompatible. Bumping to Node 22 matches the dependency's
-          # declared engines requirement and resolves the build failure.
           node-version: 22
-      - run: npm install
-      # Phase A Section 5: install Chromium binaries for Playwright tests.
-      # playwright-client.test.ts requires real headless Chromium — without
-      # this step, the tests fail with "Executable doesn't exist at
-      # ~/.cache/ms-playwright/". --with-deps installs OS-level shared
-      # libraries Chromium needs (libnss3, libatk1.0, etc.).
+      - run: npm ci
       - run: npx playwright install chromium --with-deps
       - run: npm run typecheck
       - run: npm run test -- --exclude tests/unit/run-tests.test.ts --exclude tests/unit/ghost-remediation.test.ts --exclude tests/unit/playwright-client.test.ts --exclude tests/unit/workflow-runner.test.ts --exclude tests/unit/upr-phase1-step2b-abortsignal-cap.test.ts
-      - run: npm audit --audit-level=high
       - run: bash ../scripts/grep-audit.sh
-      # Boot smoke test: confirm the server actually starts and responds to
-      # a basic health-check endpoint, then shuts down cleanly. This catches
-      # import failures, missing files, and config issues that typecheck
-      # can't detect (tsc doesn't execute code).
       - name: Boot smoke test
         run: |
-          # Create a minimal .env for the boot test (config.ts requires JWT_SECRET)
           cp .env.example .env
-          # Start the server in the background
           npx tsx src/index.ts &
           SERVER_PID=$!
-          # Wait for the server to start (max 15 seconds)
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3001/api/health > /dev/null 2>&1; then
               echo "✓ Server responded to /api/health"
@@ -54,13 +35,11 @@ jobs:
             fi
             sleep 0.5
           done
-          # Check if the server is responding
           if ! curl -sf http://localhost:3001/api/health > /dev/null 2>&1; then
             echo "✗ Server did not respond to /api/health within 15 seconds"
             kill $SERVER_PID 2>/dev/null || true
             exit 1
           fi
-          # Shut down cleanly
           kill -SIGTERM $SERVER_PID
           wait $SERVER_PID 2>/dev/null || true
           echo "✓ Server started, responded to health check, and shut down cleanly"
@@ -75,11 +54,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          # Match server job — Node 22 LTS (no native modules in app, but
-          # keeping the versions aligned avoids drift and surprises later).
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - run: npx tsc --noEmit -p tsconfig.app.json
       - run: npx eslint . --max-warnings 0
       - run: npx vitest run
       - run: npm run build
+
+  audit:
+    name: Security Audit (npm audit --audit-level=high)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Server audit
+        working-directory: server
+        run: npm ci && npm audit --audit-level=high
+      - name: App audit
+        working-directory: app
+        run: npm ci && npm audit --audit-level=high
