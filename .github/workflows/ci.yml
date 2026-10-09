@@ -17,32 +17,59 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
       - run: npm ci
       - run: npx playwright install chromium --with-deps
       - run: npm run typecheck
       - run: npm run test -- --exclude tests/unit/run-tests.test.ts --exclude tests/unit/ghost-remediation.test.ts --exclude tests/unit/playwright-client.test.ts --exclude tests/unit/workflow-runner.test.ts --exclude tests/unit/upr-phase1-step2b-abortsignal-cap.test.ts
       - run: bash ../scripts/grep-audit.sh
-      - name: Boot smoke test
+      - name: Boot smoke test (health + Express 5 route integrity)
+        # Boots the real server and confirms:
+        #   1. GET /api/health returns 200 (server is up and routing works)
+        #   2. POST /api/auth/login with an empty body returns 400 (zod schema
+        #      validation rejects the missing email/password), NOT 500.
+        # This is the cheapest possible regression guard for the Express 4→5
+        # upgrade: if v5's body-parser / error-handler / route matching changes
+        # silently break input validation, an empty POST would fall through to
+        # the catch-all 500 handler instead of the zod 400 path.
         run: |
           cp .env.example .env
           npx tsx src/index.ts &
           SERVER_PID=$!
+          cleanup() { kill -SIGTERM $SERVER_PID 2>/dev/null || true; wait $SERVER_PID 2>/dev/null || true; }
+          trap cleanup EXIT
+
+          # 1. Wait for /api/health to respond 200
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3001/api/health > /dev/null 2>&1; then
-              echo "✓ Server responded to /api/health"
+              echo "✓ GET /api/health → 200"
               break
             fi
             sleep 0.5
           done
           if ! curl -sf http://localhost:3001/api/health > /dev/null 2>&1; then
             echo "✗ Server did not respond to /api/health within 15 seconds"
-            kill $SERVER_PID 2>/dev/null || true
             exit 1
           fi
-          kill -SIGTERM $SERVER_PID
-          wait $SERVER_PID 2>/dev/null || true
-          echo "✓ Server started, responded to health check, and shut down cleanly"
+
+          # 2. POST /api/auth/login with an empty body — expect 400 (zod reject), not 500
+          STATUS=$(curl -s -o /tmp/login_body.txt -w '%{http_code}' \
+            -X POST http://localhost:3001/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{}')
+          echo "POST /api/auth/login (empty body) → HTTP $STATUS"
+          cat /tmp/login_body.txt; echo
+          if [ "$STATUS" = "500" ]; then
+            echo "✗ FAIL: empty login POST returned 500 (Express 5 route/error-handler regression)"
+            exit 1
+          fi
+          if [ "$STATUS" != "400" ] && [ "$STATUS" != "401" ]; then
+            echo "✗ FAIL: expected 400 or 401, got $STATUS"
+            exit 1
+          fi
+          echo "✓ POST /api/auth/login (empty body) → $STATUS (validation working, no 500)"
+
+          echo "✓ Server started, /api/health=200, /api/auth/login validation intact, shut down cleanly"
 
   app:
     name: App (typecheck + lint + test + build)
@@ -54,12 +81,40 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
       - run: npm ci
       - run: npx tsc --noEmit -p tsconfig.app.json
       - run: npx eslint . --max-warnings 0
       - run: npx vitest run
       - run: npm run build
+
+  lockfile-hygiene:
+    name: Lockfile hygiene (no mirror registries)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if any lockfile references a mirror registry
+        run: |
+          set -e
+          # package-lock.json must resolve every tarball against the official
+          # npm registry. A mirror leak (e.g. registry.npmmirror.com from a
+          # dev sandbox) breaks installs in regions that block the mirror and
+          # does not belong in a public repo. Integrity hashes protect content,
+          # but the resolved URL must still point at the canonical registry.
+          hits=0
+          for f in app/package-lock.json server/package-lock.json package-lock.json; do
+            if [ -f "$f" ]; then
+              n=$(grep -c 'registry\.npmmirror\.com' "$f" || true)
+              if [ "$n" -gt 0 ]; then
+                echo "✗ FAIL: $f contains $n npmmirror reference(s)"
+                grep -n 'registry\.npmmirror\.com' "$f" | head -5
+                hits=$((hits+1))
+              else
+                echo "✓ PASS: $f has 0 npmmirror references"
+              fi
+            fi
+          done
+          exit $hits
 
   audit:
     name: Security Audit (npm audit --audit-level=high)
@@ -68,12 +123,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
       - name: Server audit
         working-directory: server
         run: npm ci && npm audit --audit-level=high
-      - name: App audit
+      - name: App audit (production deps only)
+        # The app's 5 high advisories (braces, chokidar, fast-glob, micromatch,
+        # tailwindcss) all live in the Tailwind v3 build tooling chain
+        # (devDependencies). They never ship to users and have no non-breaking
+        # fix until the Tailwind v4 migration (tracked as a post-launch task —
+        # see app/SECURITY-NOTES.md). We audit only what ships (--omit=dev) at
+        # --audit-level=high so the gate catches real runtime vulnerabilities
+        # without failing on build-only dev tooling.
         working-directory: app
         # Build-only toolchain advisories must not block a deployable static app;
         # production dependency advisories remain a blocking high-severity gate.
+        # See app/SECURITY-NOTES.md for the full advisory table and the
+        # Tailwind v4 migration (post-launch task).
         run: npm ci && npm audit --omit=dev --audit-level=high
