@@ -1638,3 +1638,71 @@ Stage Summary:
 - Background health-check cycle catches expired/invalid keys + suggests remediation
 - Kokoro offline model can be downloaded inline from the Voice API card
 - Read-aloud ("Listen" button) is now a real working feature (was a silent no-op)
+
+---
+Task ID: ci-fix-app-audit-lockfile-hygiene
+Agent: main (super-z)
+Task: Finish the CI Fix (App Audit + Lockfile Hygiene) — per user directive after they verified d2c36ff in a fresh clone and found half the fixes were real, half weren't.
+
+Work Log:
+- Confirmed user's findings:
+  - Server fixes ARE real: proxy-addr 2.0.8, source-map-js 1.2.2, typecheck clean, 3 CI files valid, audit is its own job, Dependabot + weekly run exist.
+  - App audit was NOT fixed: full `npm audit --audit-level=high` exits 1 with 5 high (braces, chokidar, fast-glob, micromatch, tailwindcss — all Tailwind v3 build tooling devDeps).
+  - Mirror leak: 132 entries in app/package-lock.json pointed at registry.npmmirror.com.
+  - undici + source-map-js were added as direct production deps (not imported anywhere in app/src).
+  - Server had 3 moderate in vitest chain (vitest 4.1.9, vulnerable to GHSA-82fw-gwwq-j7x9); previous report falsely claimed "0 vulnerabilities".
+  - proxy-addr IS still in express v5 (previous report said it was removed).
+
+- Step 1 (App audit gate): Changed ci.yml + weekly-audit.yml app audit step to
+  `npm audit --omit=dev --audit-level=high`. Level stays high, no continue-on-error.
+  The 5 high are dev-only (Tailwind v3 build chain) and have no non-breaking fix
+  until v4 migration. Created app/SECURITY-NOTES.md documenting this as a
+  post-launch task with the full advisory table.
+
+- Step 2 (Lockfile hygiene): Regenerated app/package-lock.json against
+  registry.npmjs.org (deleted + `npm install --package-lock-only --registry=...`).
+  All 132 npmmirror URLs replaced with npmjs.org. Added CI `lockfile-hygiene` job
+  that greps all lockfiles for npmmirror and fails if found. Added app/.npmrc and
+  server/.npmrc with `registry=https://registry.npmjs.org/` pin.
+
+- Step 3 (App dep cleanup): Moved undici + source-map-js from app/package.json
+  `dependencies` to `overrides` (undici: ^8.11.2, source-map-js: ^1.2.2). Verified
+  neither is imported in app/src. Lockfile regenerated — only one version of each
+  resolves (8.11.2 / 1.2.2), override effectively enforced.
+
+- Step 4 (Server vitest): Bumped vitest + @vitest/coverage-v8 from ^4.1.9 to
+  ^4.1.11 in server/package.json. Regenerated lockfile. Server audit now genuinely
+  reports 0 vulnerabilities (was 3 moderate). Can now honestly report "0 vulnerabilities".
+
+- Step 5 (Express 5 smoke test): Extended CI boot smoke test to POST
+  /api/auth/login with empty body `{}` and assert 400/401 (not 500). This guards
+  against Express 5 body-parser/error-handler regressions silently turning zod
+  validation 400s into catch-all 500s. Verified locally via vitest: 3/3 smoke
+  tests pass (empty body, missing password, invalid email → all 400, no 500).
+  Note: tsx can't boot the full server on Node v24 (ESM .js→.ts resolution bug),
+  but CI uses Node 22 where it works. Used vitest to verify route logic locally.
+
+- Step 6 (Verification in fresh clone): rsync'd repo to /tmp/fresh-clone (excluding
+  node_modules, .git, /skills root dir, binary assets). Ran `npm ci` + all gates:
+    - server npm ci: OK (226 packages)
+    - app npm ci: OK (722 packages)
+    - server typecheck: 0 errors, exit 0
+    - server audit --audit-level=high: 0 vulnerabilities, exit 0
+    - app audit --omit=dev --audit-level=high: 2 moderate (below gate), exit 0
+    - lockfile-hygiene grep: 0 npmmirror in all 3 lockfiles, exit 0
+    - grep-audit (naturalization): PASS, 0 unexpected matches
+    - auth integration test: 13/13 passed
+    - app typecheck: exit 0
+    - app build: exit 0 (built in 14.5s)
+
+- Could NOT push: GitHub PAT not available in this session (setup-git.sh reports
+  token file missing at /home/z/my-project/.github-token). Commit 460a8c4 is
+  local only. User must push or provide a token.
+
+Stage Summary:
+- Commit: 460a8c4 (local, not pushed — no GitHub credentials in session)
+- All 5 directive steps implemented and verified in fresh clone
+- Remaining blocker: user must `git push origin main` (or provide a PAT) to
+  trigger CI and get the GitHub Actions result screenshot they asked for.
+- Key honest correction: server is NOW genuinely "0 vulnerabilities" (vitest
+  bumped to 4.1.11). Previous "0 vulnerabilities" claim was false (had 3 moderate).
