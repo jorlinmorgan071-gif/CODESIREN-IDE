@@ -53,12 +53,15 @@ check('Node version', () => {
   return { name: 'Node version', status: 'pass', detail: `Node ${v}` };
 });
 
-// ── 2. .env file ─────────────────────────────────────────────────────────
+// ── 2. .env file or managed environment ──────────────────────────────────
 
 check('.env file', () => {
   const envPath = join(SERVER_DIR, '.env');
   if (!existsSync(envPath)) {
-    return { name: '.env file', status: 'fail', detail: 'missing — copy .env.example to .env' };
+    if (process.env.JWT_SECRET) {
+      return { name: '.env file', status: 'pass', detail: 'not required — using process environment (managed deployment)' };
+    }
+    return { name: '.env file', status: 'fail', detail: 'missing and no managed environment variables detected' };
   }
   const content = readFileSync(envPath, 'utf8');
   if (content.length < 10) {
@@ -70,17 +73,18 @@ check('.env file', () => {
 // ── 3. Required env vars ─────────────────────────────────────────────────
 
 check('JWT_SECRET', () => {
-  // Load .env manually (don't import config.ts — it would exit on failure)
+  // Prefer the process environment used by Render/CI. Fall back to the local
+  // .env file for developer machines without ever logging the secret itself.
   const envPath = join(SERVER_DIR, '.env');
-  if (!existsSync(envPath)) {
-    return { name: 'JWT_SECRET', status: 'fail', detail: '.env missing' };
+  let secret = process.env.JWT_SECRET?.trim() ?? '';
+  if (!secret && existsSync(envPath)) {
+    const content = readFileSync(envPath, 'utf8');
+    const match = content.match(/^JWT_SECRET=(.+)$/m);
+    secret = match?.[1].trim().replace(/^["']|["']$/g, '') ?? '';
   }
-  const content = readFileSync(envPath, 'utf8');
-  const match = content.match(/^JWT_SECRET=(.+)$/m);
-  if (!match) {
-    return { name: 'JWT_SECRET', status: 'fail', detail: 'JWT_SECRET not set in .env' };
+  if (!secret) {
+    return { name: 'JWT_SECRET', status: 'fail', detail: 'JWT_SECRET not set in process environment or .env' };
   }
-  const secret = match[1].trim().replace(/^["']|["']$/g, '');
   if (secret.length < 32) {
     return { name: 'JWT_SECRET', status: 'fail', detail: `${secret.length} chars — need ≥ 32. Generate: openssl rand -hex 32` };
   }

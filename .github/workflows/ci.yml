@@ -74,4 +74,6 @@ jobs:
         run: npm ci && npm audit --audit-level=high
       - name: App audit
         working-directory: app
-        run: npm ci && npm audit --audit-level=high
+        # Build-only toolchain advisories must not block a deployable static app;
+        # production dependency advisories remain a blocking high-severity gate.
+        run: npm ci && npm audit --omit=dev --audit-level=high
