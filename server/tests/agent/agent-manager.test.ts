@@ -8,6 +8,7 @@ import cors from 'cors';
 import { agentsRouter } from '../../src/routes/agents.js';
 import { healthRouter } from '../../src/routes/health.js';
 import { orchestratorRouter } from '../../src/routes/orchestrator.js';
+import { authRouter } from '../../src/auth/routes.js';
 import { agentManager } from '../../src/orchestration/agent-manager.js';
 import { ghostMode } from '../../src/orchestration/ghost-mode.js';
 import { initDb, closeDb } from '../../src/db/client.js';
@@ -24,6 +25,7 @@ function startTestServer(): Promise<void> {
     const app = express();
     app.use(express.json());
     app.use(cors());
+    app.use('/api/auth', authRouter);
     app.use('/api/agents', agentsRouter);
     app.use('/api/orchestrator', orchestratorRouter);
     app.use('/api/health', healthRouter);
@@ -49,32 +51,21 @@ describe('AgentManager', () => {
     agentManager.register(new BackendAgent());
     await startTestServer();
 
-    // Register a user
-    const res = await fetch(`http://localhost:3001/api/auth/register`, {
+    // Register a user via the test server's auth route (now mounted).
+    const res = await fetch(`${BASE}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password: 'test-password-123', name: 'Agent Test' }),
     }).catch(() => null);
 
-    // If server:3001 isn't running, register via direct auth route
-    if (!res || !res.ok) {
-      const { authRouter } = await import('../../src/auth/routes.js');
-      // Already mounted — just use the test server's auth
-      const res2 = await fetch(`${BASE}/api/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: 'test-password-123', name: 'Agent Test' }),
-      }).catch(() => null);
-      if (res2 && res2.ok) {
-        const body = await res2.json() as any;
-        token = body.token;
-      }
-    } else {
+    if (res && res.ok) {
       const body = await res.json() as any;
       token = body.token;
     }
 
-    // If no token, create one manually via JWT
+    // Fallback: if registration failed (e.g. DB unavailable), sign a
+    // token manually. The auth middleware verifies it with config.JWT_SECRET,
+    // which is the same secret signToken() uses.
     if (!token) {
       const { signToken } = await import('../../src/auth/jwt.js');
       token = signToken({ id: 'test-user', email, name: 'Agent Test', plan: 'free' });

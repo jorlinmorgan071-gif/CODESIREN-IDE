@@ -40,7 +40,7 @@ For verified Code Siren releases, download details, platform builds, checksums, 
 
 | Tool | Version | Why |
 |---|---|---|
-| Node.js | **≥ 22.x** (22 LTS recommended) | Server + app runtime. Pinned via `.nvmrc` (run `nvm use` in the repo root). CI runs on Node 22. Node 24 is not supported for the server boot path (tsx ESM resolution regression on v24). |
+| Node.js | **≥ 22.x** (22 LTS recommended) | Server + app runtime. Pinned via `.nvmrc` (run `nvm use` in the repo root). CI runs on Node 22. Node 24 also works (verified via fresh-clone boot smoke test). |
 | npm | ≥ 10.x | Package manager |
 | (optional) PostgreSQL | ≥ 14 | Persistent storage (server runs in degraded in-memory mode without it) |
 | (optional) Ollama | any | Local LLM (server falls back to stub if absent) |
