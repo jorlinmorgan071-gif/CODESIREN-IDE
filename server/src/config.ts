@@ -40,6 +40,29 @@ if (!parsed.success) {
   process.exit(1);
 }
 
+// ── Production JWT secret guard ────────────────────────────────────────
+// The .env.example ships with a known dev-only JWT_SECRET so the server
+// boots out of the box for local development. If NODE_ENV=production and
+// the secret is still the dev default (or any other known ≥32-char weak
+// default that passes zod's min(32) check), refuse to start. A leaked dev
+// secret means anyone who reads the public repo can forge JWTs — this guard
+// turns that footgun into a hard crash.
+//
+// Note: only ≥32-char strings need to be listed here. Shorter weak strings
+// like "change-me" are already rejected by zod's .min(32) above.
+const KNOWN_DEV_SECRETS = new Set([
+  'dev-only-change-me-in-production-32-chars-min',
+  'test-secret-32-chars-minimum-padding',
+  'dev-only-change-me-in-production-32-chars!',
+]);
+if (parsed.data.NODE_ENV === 'production' && KNOWN_DEV_SECRETS.has(parsed.data.JWT_SECRET)) {
+  console.error('\n[config] FATAL: NODE_ENV=production but JWT_SECRET is a known dev default.');
+  console.error('[config]   Anyone with repo access can forge JWTs with this secret.');
+  console.error('[config]   Generate a strong secret: openssl rand -hex 32');
+  console.error('[config]   Then set JWT_SECRET in your production .env / environment.\n');
+  process.exit(1);
+}
+
 export const config = {
   ...parsed.data,
   corsOrigins: parsed.data.CORS_ORIGINS.split(',').map((s) => s.trim()),

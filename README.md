@@ -40,7 +40,7 @@ For verified Code Siren releases, download details, platform builds, checksums, 
 
 | Tool | Version | Why |
 |---|---|---|
-| Node.js | ≥ 20.x | Server + app runtime |
+| Node.js | **≥ 22.x** (22 LTS recommended) | Server + app runtime. Pinned via `.nvmrc` (run `nvm use` in the repo root). CI runs on Node 22. Node 24 is not supported for the server boot path (tsx ESM resolution regression on v24). |
 | npm | ≥ 10.x | Package manager |
 | (optional) PostgreSQL | ≥ 14 | Persistent storage (server runs in degraded in-memory mode without it) |
 | (optional) Ollama | any | Local LLM (server falls back to stub if absent) |
@@ -50,6 +50,9 @@ For verified Code Siren releases, download details, platform builds, checksums, 
 ```bash
 git clone <repo-url> code-siren
 cd code-siren
+
+# Use the correct Node version (22 LTS)
+nvm use        # reads .nvmrc → installs/switches to Node 22
 
 # Install server deps
 cd server
