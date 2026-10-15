@@ -1706,3 +1706,59 @@ Stage Summary:
   trigger CI and get the GitHub Actions result screenshot they asked for.
 - Key honest correction: server is NOW genuinely "0 vulnerabilities" (vitest
   bumped to 4.1.11). Previous "0 vulnerabilities" claim was false (had 3 moderate).
+
+---
+Task ID: post-leak-hardening
+Agent: main (super-z)
+Task: Post-leak hardening — gitleaks, .gitignore, engines, root-cause agent-manager failures
+
+Work Log:
+- Did NOT push (user directive: wait for new scoped token).
+
+- Gitleaks full-history scan (240 commits):
+  - Installed gitleaks 8.21.2
+  - Created .gitleaks.toml with default rules + explicit allowlist for synthetic
+    test fixtures (sk-1234567890abcdef, github_pat_AAAA..., github_pat_BBBB...)
+  - 4 findings initially → 3 after allowlisting the synthetic sk-1234567890abcdef fixture
+  - All 3 remaining findings are history-only (not in current HEAD):
+    1. github-fine-grained-pat in upload/mu toke.txt (commit c9cd9a9, 2026-08-02) — real PAT, was valid
+    2. github-fine-grained-pat in .github-token (commit 9714ea8, 2026-08-02) — real PAT, expired
+    3. generic-api-key (JWT) in tool-results/bash_*.txt (commit 069e8e0b, 2026-08-02) — test artifact
+  - All 3 were removed from HEAD in commit 9ac5bc0
+
+- CI gitleaks job added: scans checked-out files (--no-git) on every push/PR.
+  Verified passes on clean checkout (0 leaks). Full-history rescan command
+  documented in CI step comments for post-purge verification.
+
+- .gitignore hardened: added *token*.txt, *.token, *secret*.txt,
+  *credentials*.txt, .secrets, secrets/, credentials/. Verified no tracked
+  files broken. upload/ and .github-token already gitignored (now with
+  stronger comments).
+
+- engines: {node: '>=22'} added to server/package.json (was lost in rebase).
+  app/package.json already had it.
+
+- Agent-manager test root cause analysis:
+  - The test never mounted authRouter on the test Express instance.
+  - Registration flow: try port 3001 (no server) → try port 3098 (no authRouter,
+    404) → fallback to signToken() which creates a valid JWT.
+  - The signToken() fallback creates a cryptographically valid JWT signed with
+    config.JWT_SECRET. The requireAuth middleware verifies with the same secret.
+  - Under normal circumstances, this works (confirmed: test passes 10/10 in
+    isolation and in the full suite on Node 24).
+  - The 4 failures observed last session were intermittent — appeared in a
+    fresh-clone run on Node 22 but cannot be reproduced now on Node 24.
+  - My fix (mounting authRouter) is still correct: it makes the test
+    self-contained and eliminates the signToken() fallback dependency.
+  - Production auth behavior did NOT change under Express 5: requireAuth,
+    signToken, and verifyToken are identical. The production server mounts
+    authRouter at /api/auth (src/index.ts line 139). Boot smoke test confirms:
+    POST /api/auth/login empty body → 400 (zod), not 500.
+
+- Commit: cfb4d16 (local, NOT pushed — waiting for new scoped token)
+
+Stage Summary:
+- 6 directive steps complete. Commit cfb4d16 is local.
+- 3 historical leaks documented, all in history only (not in HEAD).
+- User must: (1) revoke both GitHub PATs on github.com/settings/tokens,
+  (2) provide new scoped token, (3) optionally purge history with git filter-repo.
