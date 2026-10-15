@@ -15,12 +15,25 @@ coverage/
 .env
 .env.local
 .env.*.local
+server/.env
+server/.env.local
+server/.env.*.local
 
-# GitHub token (used by setup-git.sh for credential restoration — must stay
-# on disk but NEVER in git)
+# ── Secrets — NEVER keep tokens inside the repo directory ──────────────
+# These patterns catch credential files that must never be tracked.
+# If `git add` ever stages one of these, something is wrong — stop and
+# move the file OUT of the repo tree before committing.
 .github-token
+*.token
+*token*.txt
+*secret*.txt
+*credentials*.txt
+.secrets
+secrets/
+credentials/
 
-# IM gateway file attachments (user-uploaded via chat — not source code)
+# IM gateway file attachments (user-uploaded via chat — not source code).
+# This directory has contained real GitHub PATs in the past — never track it.
 upload/
 
 # Tool results (captured bash/command outputs — not source code)

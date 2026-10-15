@@ -4,6 +4,9 @@
   "version": "0.6.0-phase6",
   "type": "module",
   "description": "Code Siren backend — single Express + WS server, single JWT auth, single Model Router.",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
