@@ -9,7 +9,7 @@ on:
 jobs:
   server:
     name: Server (typecheck + tests + grep-audit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: server
@@ -73,7 +73,7 @@ jobs:
 
   app:
     name: App (typecheck + lint + test + build)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: app
@@ -90,7 +90,7 @@ jobs:
 
   lockfile-hygiene:
     name: Lockfile hygiene (no mirror registries)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Fail if any lockfile references a mirror registry
@@ -118,35 +118,55 @@ jobs:
 
   gitleaks:
     name: Secret scan (gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history — gitleaks scans all commits
       - name: Install gitleaks
         run: |
           curl -sL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
             | tar xzf - -C /usr/local/bin gitleaks
           gitleaks version
-      - name: Scan checked-out files for secrets
-        # Uses --no-git so gitleaks scans only the files present in the
-        # checkout (tracked files). This catches NEW secrets before they
-        # reach main without re-failing on the 3 known historical leaks
-        # (in .github-token, upload/mu toke.txt, tool-results/) that were
-        # committed before this job existed and have since been removed
-        # from HEAD. Those historical leaks are documented in worklog.md
-        # and the tokens must be revoked on GitHub.
-        #
-        # The .gitleaks.toml config allowlists synthetic test fixtures
-        # (e.g. 'sk-1234567890abcdef' in project-files.test.ts, and
-        # 'github_pat_' + 'A'.repeat(60) in secret-detection.test.ts).
-        #
-        # To re-scan the full git history (e.g. after purging a leak):
-        #   gitleaks detect --config .gitleaks.toml --source . \
-        #     --log-opts="--all" --verbose --redact=0
-        run: gitleaks detect --config .gitleaks.toml --source . --no-git --verbose --redact=0
+      - name: Scan full git history for NEW secrets (baseline-aware)
+        # ┌──────────────────────────────────────────────────────────────────┐
+        # │ Baseline mode: catches committed-then-deleted secrets             │
+        # │                                                                  │
+        # │ gitleaks runs in git mode (--log-opts="--all") scanning every    │
+        # │ commit reachable from HEAD. The .gitleaks-baseline.json file    │
+        # │ contains the fingerprints of the 7 known historical findings     │
+        # │ (all redacted — no secret values in the baseline). Findings      │
+        # │ whose fingerprint matches the baseline are suppressed.           │
+        # │                                                                  │
+        # │ Effect: any NEW secret introduced in any commit — even one that  │
+        # │ is later deleted — fails the build. The baseline only suppresses │
+        # │ the 7 pre-existing historical leaks; everything new is caught.  │
+        # │                                                                  │
+        # │ IMPORTANT: --redact=100 is REQUIRED on both the baseline and    │
+        # │ the scan. gitleaks baseline matching compares the full finding    │
+        # │ object (including the Secret field), not just the fingerprint.   │
+        # │ If the baseline has Secret="REDACTED" but the scan has the real  │
+        # │ secret, they won't match and the baseline won't suppress. Using  │
+        # │ --redact=100 on both sides ensures they match. This also means  │
+        # │ real secrets are never printed in CI logs (good security).       │
+        # │                                                                  │
+        # │ To regenerate the baseline after purging history:                │
+        # │   gitleaks detect --config .gitleaks.toml --source . \           │
+        # │     --log-opts="--all" --verbose --redact=100 \                  │
+        # │     --report-format json --report-path .gitleaks-baseline.json   │
+        # └──────────────────────────────────────────────────────────────────┘
+        run: |
+          gitleaks detect \
+            --config .gitleaks.toml \
+            --source . \
+            --log-opts="--all" \
+            --baseline-path .gitleaks-baseline.json \
+            --verbose \
+            --redact=100
 
   audit:
     name: Security Audit (npm audit --audit-level=high)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
