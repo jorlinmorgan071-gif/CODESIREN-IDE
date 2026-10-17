@@ -1830,3 +1830,63 @@ Stage Summary:
 - Stress test: 40/40 pass (20 on Node 22 + 20 on Node 24).
 - User needs to provide a token with contents:write permission, or apply
   the patch file manually.
+
+---
+Task ID: push-pin-and-prove-alarm-in-ci
+Agent: main (super-z)
+Task: Push 3 commits + pin ubuntu-24.04 + canary on GitHub + baseline gitleaks mode + remove token
+
+Work Log:
+- Step 1 (Push): BLOCKED. The token in upload/code siren token.txt authenticates
+  as jorlinmorgan071-gif but only has metadata=read permission (no
+  contents:write). git push returns 403. API test confirms: PUT /contents/
+  returns "Resource not accessible by personal access token". Token was
+  used only via env var (CS_TOKEN), never written to disk, echoed, or
+  committed. Generated patch file at download/push-pin-and-prove.patch
+  (5 commits: cfb4d16, baadba5, d631858, 594ac28, 0adcdaf).
+
+- Step 2 (Pin ubuntu-24.04): Pinned runs-on: ubuntu-24.04 in all 6 jobs
+  across ci.yml (5 jobs) + weekly-audit.yml (1 job). YAML validated.
+  Done before Oct 19 deadline.
+
+- Step 3 (Canary on GitHub): BLOCKED (requires push). Did locally instead:
+  created canary/baseline-test branch with fake ghp_ token, gitleaks
+  caught it (exit 1), deleted branch. The CI gitleaks job will catch
+  the same when push access is restored.
+
+- Step 4 (Baseline gitleaks mode): DONE + verified.
+  - Generated .gitleaks-baseline.json with --redact=100 (7 findings,
+    all secrets redacted to "REDACTED", no real secret values in file)
+  - Updated CI gitleaks job to use git mode (--log-opts="--all") with
+    --baseline-path. fetch-depth: 0 for full history.
+  - --redact=100 required on BOTH baseline + scan (gitleaks matches on
+    full finding object, not just fingerprint). Documented in ci.yml.
+  - Verified locally:
+    * Baseline suppresses 7 historical findings → exit 0 ✓
+    * New canary ghp_ token caught → exit 1 ✓
+  - This catches committed-then-deleted secrets: any new secret in any
+    commit fails the build even if a later commit deletes it.
+
+- Step 5 (Remove token): DONE.
+  - Deleted upload/code siren token.txt + upload/mu toke.txt
+  - Removed /home/z/.git-credentials
+  - Unset CS_TOKEN env var
+  - Removed /tmp/my-project/.github-token (old persisted token)
+  - Removed git credential.helper config
+  - Verified: no github_pat_ strings anywhere in sandbox except in
+    download/push-pin-and-prove.patch (diff context, expected)
+
+- Step 6 (deferred): Upgrading checkout/setup-node actions + triaging
+  8 PRs — after launch, per directive.
+
+- Commit: 0adcdaf (local, NOT pushed — token lacks contents:write)
+- Patch: download/push-pin-and-prove.patch (5 commits, 56KB)
+
+Stage Summary:
+- 4 of 6 directive steps complete locally.
+- Steps 1 + 3 blocked by token permissions (needs contents:write).
+- Token fully removed from sandbox.
+- Baseline gitleaks mode proven to catch new secrets while suppressing
+  7 known historical findings.
+- User needs to provide a token with contents:write permission, or apply
+  the patch file manually.
