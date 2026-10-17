@@ -1762,3 +1762,71 @@ Stage Summary:
 - 3 historical leaks documented, all in history only (not in HEAD).
 - User must: (1) revoke both GitHub PATs on github.com/settings/tokens,
   (2) provide new scoped token, (3) optionally purge history with git filter-repo.
+
+---
+Task ID: fix-broken-alarm-then-push
+Agent: main (super-z)
+Task: Fix the broken alarm, then push (gitleaks detector, token literal removal, stress test)
+
+Work Log:
+- Step 1 (Prove detector sees the token): Ran gitleaks with corrected config
+  (no path-based allowlist). Found 6 findings on working tree, including
+  secret-detection.test.ts:319 (github-fine-grained-pat, 93 chars, real PAT
+  literal in test source). code-review-tier1.test.ts:262 was NOT flagged
+  because its token suffix ("fake_token_for_testing_xxx") dropped Shannon
+  entropy to 4.37, below gitleaks' entropy threshold.
+
+- Step 2 (Remove token literals): Created server/tests/helpers/fake-tokens.ts
+  with a seeded LCG PRNG that builds high-entropy token-shaped strings at
+  runtime. Replaced all github_pat_ / ghp_ literals in both test files with
+  runtime-built strings. Alphabet matches regex character classes:
+  - ghp_ uses [A-Za-z0-9] (no underscores, matching /ghp_[A-Za-z0-9]{36}/)
+  - github_pat_ uses [A-Za-z0-9_] (matching /github_pat_[A-Za-z0-9_]{40,}/)
+  Verified: 0 token literals remain in test source.
+
+- Step 3 (Fix gitleaks config): Rewrote .gitleaks.toml — removed ALL
+  path-based allowlists for test files. Allowlist now contains ONLY:
+  - 3 exact regex strings for dev-default JWT_SECRETs
+  - 3 inline gitleaks:allow comments on the exact lines with synthetic
+    fixtures (sk-1234567890abcdef, sk_live_Xk7mPq3..., PEM block)
+
+- Step 4 (Full-history scan, 243 commits): 7 findings:
+  1. private-key (synthetic PEM) — 1 commit (1a33672, secret-detection.test.ts:92)
+  2. stripe-access-token (synthetic) — 1 commit (1a33672, :108)
+  3. github-fine-grained-pat (REAL PAT) — 3 commits:
+     - 1a33672 (secret-detection.test.ts:319) — test fixture had real PAT!
+     - c9cd9a9 (upload/mu toke.txt:1) — uploaded token file
+     - 9714ea8 (.github-token:1) — credential helper file
+  4. generic-api-key (JWT test artifact) — 1 commit (069e8e0b, tool-results/)
+  5. generic-api-key (synthetic sk-1234567890abcdef) — 1 commit (33181d2, project-files.test.ts:61)
+  The real PAT appears in 3 commits. Token prefix: github_pat_11B5IXITY0...
+  suffix: ...7WPJH7LikjIb8LU (93 chars).
+
+- Step 5 (Canary test): Created throwaway branch canary/leak-test, added
+  server/src/canary-leak-test.ts with a fake ghp_ token (ghp_ + 36 random
+  alphanumerics). Gitleaks flagged it immediately (RuleID=github-pat,
+  File=server/src/canary-leak-test.ts:4). Deleted the branch. The CI
+  gitleaks job would go red on this.
+
+- Step 6 (Push): BLOCKED. The token provided via upload/code siren token.txt
+  authenticates as jorlinmorgan071-gif but only has metadata=read permission
+  (no contents:write). API test: PUT /repos/.../contents/_permtest.txt
+  returns "Resource not accessible by personal access token". Generated
+  patch file at download/post-leak-hardening.patch (31KB, 3 commits).
+
+- Step 7 (Stress test): 20 runs each:
+  - Node 22 (v22.23.3): 20/20 PASS — unreproduced, monitoring
+  - Node 24 (v24.22.0): 20/20 PASS — unreproduced, monitoring
+  All 40 runs passed. The 4 failures from the earlier session cannot be
+  reproduced. Logged as "unreproduced, monitoring".
+
+- Commit: d631858 (local, NOT pushed — token lacks write permission)
+- Patch: download/post-leak-hardening.patch (cfb4d16 + baadba5 + d631858)
+
+Stage Summary:
+- 6 of 7 directive steps complete. Step 6 (push) blocked by token permissions.
+- Token literal removal + gitleaks config fix verified on clean checkout (0 leaks).
+- Canary test proves the alarm fires on a new fake token.
+- Stress test: 40/40 pass (20 on Node 22 + 20 on Node 24).
+- User needs to provide a token with contents:write permission, or apply
+  the patch file manually.
