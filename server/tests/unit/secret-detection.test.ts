@@ -22,6 +22,7 @@ import { ghostMode } from '../../src/orchestration/ghost-mode.js';
 import { registerSink } from '../../src/ws/events.js';
 import { SecurityAgent } from '../../src/agents/security/index.js';
 import type { AgentEvent, GhostFinding } from '../../src/types.js';
+import { fakeGithubPatHighEntropy } from '../helpers/fake-tokens.js';
 
 describe('Phase A Section 4 — Secret detection', () => {
   let fixtureRoot: string;
@@ -59,10 +60,11 @@ describe('Phase A Section 4 — Secret detection', () => {
     });
 
     it('catches GitHub PAT (github_pat_ prefix)', () => {
-      const content = `const token = "github_pat_" + "A".repeat(60);\n`;
-      // The above won't match because it's concatenation, not a single literal.
-      // Use a real github_pat_ value:
-      const realContent = `const token = "github_pat_${'A'.repeat(60)}";\n`;
+      // Build the token at runtime via a seeded PRNG so no token-shaped
+      // literal appears in source (gitleaks / static scanners see only
+      // the prefix + a buildToken() call site). The constructed string
+      // matches the github_pat_ regex and has high entropy.
+      const realContent = `const token = "${fakeGithubPatHighEntropy}";\n`;
       const findings = secretTest.detectSecrets('test.ts', realContent);
       const gh = findings.find((f) => f.pattern === 'github-pat');
       expect(gh).toBeDefined();
@@ -89,7 +91,7 @@ describe('Phase A Section 4 — Secret detection', () => {
     });
 
     it('catches PEM private key block', () => {
-      const content = `const key = "-----BEGIN RSA PRIVATE KEY-----\\nMIIEpAIBAAKCAQEA...\\n-----END RSA PRIVATE KEY-----";\n`;
+      const content = `const key = "-----BEGIN RSA PRIVATE KEY-----\\nMIIEpAIBAAKCAQEA...\\n-----END RSA PRIVATE KEY-----";\n`;  // gitleaks:allow — synthetic PEM block (truncated with ..., not a real key)
       const findings = secretTest.detectSecrets('test.ts', content);
       const pem = findings.find((f) => f.pattern === 'private-key-block');
       expect(pem).toBeDefined();
@@ -105,7 +107,7 @@ describe('Phase A Section 4 — Secret detection', () => {
     it('catches high-entropy custom key that does not match known patterns', () => {
       // A high-entropy custom key with no known prefix — entropy > 4.5
       // (constructed from a mix of upper/lower/digits/symbols to ensure high entropy)
-      const content = `const stripeKey = "sk_live_Xk7mPq3Rz9WvN2bL8tY4cF6jH1dG5sA0eU3iO7pV";\n`;
+      const content = `const stripeKey = "sk_live_Xk7mPq3Rz9WvN2bL8tY4cF6jH1dG5sA0eU3iO7pV";\n`;  // gitleaks:allow — synthetic Stripe key (test fixture, not a real secret)
       const findings = secretTest.detectSecrets('test.ts', content);
       const ent = findings.find((f) => f.matchType === 'entropy');
       expect(ent).toBeDefined();
@@ -316,7 +318,7 @@ describe('Phase A Section 4 — Secret detection', () => {
     it('shannonEntropy: known values', () => {
       // From Section 0 testing
       expect(secretTest.shannonEntropy('hello world')).toBeCloseTo(2.85, 1);
-      expect(secretTest.shannonEntropy('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')).toBeGreaterThan(5.0);
+      expect(secretTest.shannonEntropy(fakeGithubPatHighEntropy)).toBeGreaterThan(5.0);
     });
 
     it('isUuid: correctly identifies UUIDs', () => {

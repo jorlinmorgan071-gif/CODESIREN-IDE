@@ -1,0 +1,22 @@
+# gitleaks.toml — corrected config (no path-based allowlist for tests).
+#
+# This config is used to PROVE gitleaks can see the token literals in the test
+# files. It removes the path-based allowlist for test files so every file in
+# the tree is scanned. Only specific synthetic strings are allowlisted via
+# exact regexes.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Only specific synthetic strings are allowlisted (no path-based allowlist)"
+
+# Allowlist ONLY exact synthetic strings. No path-based allowlist for tests.
+regexes = [
+  # .env.example dev default (not a real secret) — 43 chars
+  '''dev-only-change-me-in-production-32-chars-min''',
+  # Test-only JWT secret — 32 chars
+  '''test-secret-32-chars-minimum-padding''',
+  # Test-only JWT secret variant used in vitest.config.ts — 36 chars
+  '''test-secret-at-least-32-chars-long''',
+]

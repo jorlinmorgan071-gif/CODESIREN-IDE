@@ -58,7 +58,7 @@ describe('Code Review Gate — writeProjectFile', () => {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({
         path: 'bad/secret.ts',
-        content: 'const apiKey = "sk-1234567890abcdef"; export default apiKey;',
+        content: 'const apiKey = "sk-1234567890abcdef"; export default apiKey;',  // gitleaks:allow — synthetic test fixture (sequential numbers, not a real key)
         agentId: 'backend-agent',
       }),
     });

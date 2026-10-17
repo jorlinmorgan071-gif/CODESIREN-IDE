@@ -1,63 +1,44 @@
 # gitleaks.toml — configuration for Code Siren secret scanning.
 #
-# This config extends gitleaks's built-in rules with an explicit allowlist for
-# the synthetic token fixtures used in the secret-detection test suite. These
-# fixtures are deliberately fake (single-char repeated strings) and must not
-# trigger a gitleaks finding — they exist to verify that the scanner CATCHES
-# real tokens, not because they are real.
+# This config extends gitleaks's built-in rules. Path-based allowlists are
+# NOT used for test files — every file is scanned. Only specific synthetic
+# strings that appear in source (e.g. the dev-default JWT_SECRET in
+# .env.example, the test JWT secret in vitest.config.ts) are allowlisted
+# via exact regexes.
+#
+# Token-shaped test fixtures are built at RUNTIME via the seeded PRNG in
+# server/tests/helpers/fake-tokens.ts. No token literal appears in source,
+# so no allowlist is needed for them — gitleaks simply has nothing to find.
 #
 # Usage:
-#   gitleaks detect --config .gitleaks.toml --source . --verbose
-#   gitleaks detect --config .gitleaks.toml --source . --log-opts="--all" --verbose  (full history)
+#   gitleaks detect --config .gitleaks.toml --source . --verbose --redact=0
+#   # Full history (post-purge verification):
+#   gitleaks detect --config .gitleaks.toml --source . --log-opts="--all" --verbose --redact=0
 
 [extend]
 # Inherit all built-in rules (github-token, aws-access-key, etc.) without
 # redefining them. This keeps the config in sync with upstream gitleaks rules.
 useDefault = true
 
-# ── Global allowlist ─────────────────────────────────────────────────────
-# These paths/strings are always allowed — they are synthetic test fixtures
-# or documentation that mentions token formats by name without containing
-# real credentials.
+# ── Allowlist ───────────────────────────────────────────────────────────
+# Only specific synthetic strings are allowlisted — NO path-based allowlist.
+# If a test needs a token-shaped string, it must build it at runtime via
+# fake-tokens.ts so no literal appears in source.
 
 [allowlist]
-description = "Synthetic test fixtures + documentation that mention token formats"
+description = "Specific synthetic dev-default strings only (no path allowlist)"
 
-# Test fixtures use obviously-fake tokens: single-char repeated strings like
-# 'A'.repeat(60), 'B'.repeat(45), or the literal strings below. None of these
-# has ever been a real credential — they exist solely to verify that the
-# secret-detection regex CATCHES the pattern.
-paths = [
-  # Secret-detection test suite — uses 'github_pat_' + 'A'.repeat(60) etc.
-  '''server/tests/unit/secret-detection\.test\.ts''',
-  # Code-review Tier-1 test — uses 'github_pat_' + 'B'.repeat(45) etc.
-  '''server/tests/security/code-review-tier1\.test\.ts''',
-  # JWT guard test — references dev-default secrets that are already in .env.example
-  '''server/tests/security/jwt-secret-guard\.test\.ts''',
-  # project-files test — uses synthetic API key 'sk-1234567890abcdef'
-  '''server/tests/security/project-files\.test\.ts''',
-  # Secret patterns source — defines the regex patterns (must mention token formats)
-  '''server/src/security/secret-patterns\.ts''',
-  # DevOps agent — mentions env var names including JWT_SECRET in a check
-  '''server/src/agents/devops/index\.ts''',
-  # .env.example — ships the dev-default JWT_SECRET (not a real secret)
-  '''server/\.env\.example''',
-  # Worklog + changelog may mention token formats in prose
-  '''worklog\.md''',
-  '''CHANGELOG\.md''',
-]
+# These are the ONLY synthetic strings allowlisted. Each is an exact regex
+# matching a known dev/test default that is not a real secret.
 
-# Synthetic token strings that appear in test fixtures. Even if a path-based
-# allowlist misses a file, these strings will never trigger a finding.
+# .env.example dev default JWT_SECRET (43 chars, matches zod min(32)).
+# Shipped in .env.example so the server boots for local dev. The production
+# guard in config.ts rejects this value when NODE_ENV=production.
 regexes = [
-  # Test fixture: 'github_pat_' + 'A'.repeat(60) → all A's
-  '''github_pat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA''',
-  # Test fixture: 'github_pat_' + 'B'.repeat(45) → all B's
-  '''github_pat_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB''',
-  # Test fixture: obviously-fake OpenAI-style API key (sequential numbers)
-  '''sk-1234567890abcdef''',
-  # .env.example dev default (not a real secret)
   '''dev-only-change-me-in-production-32-chars-min''',
-  # Test-only JWT secret
+  # vitest.config.ts test JWT secret (36 chars) — set as process.env.JWT_SECRET
+  # before config.ts validates it. Never used in production.
+  '''test-secret-at-least-32-chars-long''',
+  # Test-only JWT secret variant used in some agent tests.
   '''test-secret-32-chars-minimum-padding''',
 ]

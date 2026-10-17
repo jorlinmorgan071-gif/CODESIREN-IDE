@@ -19,6 +19,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { CodeReviewAgent } from '../../src/agents/code-review/index.js';
+import { fakeGithubPatHighEntropy, fakeGhpTokenHighEntropy } from '../helpers/fake-tokens.js';
 
 describe('Phase C — CodeReviewAgent Tier 1 NEW checks (additive)', () => {
   let agent: CodeReviewAgent;
@@ -239,8 +240,8 @@ describe('Phase C — CodeReviewAgent Tier 1 NEW checks (additive)', () => {
     // the sandbox's own secret scanner. These are synthetically constructed
     // to match the regex patterns but are obviously fake.
     const fakeAwsKey = 'AKIA' + 'IOSFODNN7EXAMPLE';
-    const fakeGhpToken = 'ghp_' + 'A'.repeat(36);
-    const fakeGithubPat = 'github_pat_' + 'B'.repeat(45);
+    const fakeGhpToken = fakeGhpTokenHighEntropy; // runtime-built, high entropy
+    const fakeGithubPat = fakeGithubPatHighEntropy; // runtime-built, high entropy
     const fakeJwt = 'eyJ' + 'hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature';
 
     it('REJECTS: AWS access key ID (AKIA prefix)', async () => {
@@ -252,14 +253,14 @@ describe('Phase C — CodeReviewAgent Tier 1 NEW checks (additive)', () => {
 
     it('REJECTS: GitHub PAT (ghp_ prefix)', async () => {
       await expectReject(
-        `const token = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";`,
+        `const token = "${fakeGhpToken}";`,
         'github',
       );
     });
 
     it('REJECTS: GitHub fine-grained PAT (github_pat_ prefix)', async () => {
       await expectReject(
-        `const token = "github_pat_11B5IXITY0CqoibpmKreEH_fake_token_for_testing_xxxxxxxxxxxx";`,
+        `const token = "${fakeGithubPat}";`,
         'github',
       );
     });
