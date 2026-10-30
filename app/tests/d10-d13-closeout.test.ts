@@ -53,11 +53,15 @@ describe('D10 #2 — fake terminal output no longer rendered', () => {
     expect(stripped).not.toMatch(/^\s*const activeSession\s*=/m);
   });
 
-  it('Terminal.tsx still renders the honest "Terminal unavailable" banner', () => {
-    // The honest banner must remain — we're removing the FAKE output below it,
-    // not removing the honest disclosure that the terminal is unavailable.
-    expect(terminalSource).toContain('Terminal unavailable');
-    expect(terminalSource).toContain('Commands are not executed and no output is generated');
+  it('Terminal.tsx now has a real PTY terminal (no longer "unavailable")', () => {
+    // The terminal was previously an honest stub ("Terminal unavailable").
+    // It now uses node-pty + xterm.js for a real interactive shell.
+    // This test verifies the real terminal is wired up correctly.
+    expect(terminalSource).toContain('@xterm/xterm');
+    expect(terminalSource).toContain('wsClient.send');
+    expect(terminalSource).toContain('terminal:create');
+    expect(terminalSource).not.toContain('Terminal unavailable');
+    expect(terminalSource).not.toContain('Commands are not executed');
   });
 
   it('sampleTerminalSessions is now empty (no fabricated npm/git/vite output)', () => {
