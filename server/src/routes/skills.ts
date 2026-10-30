@@ -65,7 +65,7 @@ skillsRouter.get('/', requireAuth, async (_req, res) => {
 });
 
 const invokeSchema = z.object({
-  context: z.record(z.unknown()).default({}),
+  context: z.record(z.string(), z.unknown()).default({}),
 });
 
 skillsRouter.post('/:name/invoke', requireAuth, async (req, res) => {

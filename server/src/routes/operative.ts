@@ -32,7 +32,7 @@ async function resolveOperativeScope(req: any, projectId?: string) {
 // ── Browser (Step 6) ─────────────────────────────────────────────────────
 
 const browseSchema = z.object({
-  actions: z.union([z.array(z.record(z.unknown())), z.record(z.unknown())]).optional(),
+  actions: z.union([z.array(z.record(z.string(), z.unknown())), z.record(z.string(), z.unknown())]).optional(),
   prompt: z.string().optional(),
   projectId: z.string().uuid().optional(),
 });

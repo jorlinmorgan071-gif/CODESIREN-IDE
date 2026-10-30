@@ -27,7 +27,7 @@ sentinelRouter.use(requireAuth, (_req, res) => {
 
 const watchSchema = z.object({
   watchType: z.string().min(1),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
 });
 
 sentinelRouter.post('/watch', requireAuth, (req, res) => {

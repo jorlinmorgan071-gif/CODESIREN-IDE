@@ -114,7 +114,7 @@ describe('Phase C Agent 2 — SecurityAgent', () => {
           name: 'clean-fixture',
           version: '1.0.0',
           dependencies: {
-            'body-parser': '2.3.0',   // patched (was 1.20.6, now flagged moderate)
+            'body-parser': '2.4.0',   // patched (was 1.20.6, now flagged moderate)
             'postcss': '8.5.25',      // patched
           },
         }),
@@ -434,18 +434,15 @@ describe('Phase C Agent 2 — SecurityAgent', () => {
 
     it('does NOT report moderate/low findings to Ghost Mode', async () => {
       // Set up a fixture with a moderate-severity vuln.
-      // D10/D13 live spot-check: body-parser@1.20.5 was previously classified
-      // as 'low' severity. The npm advisory DB was updated to reclassify it
-      // as 'moderate' (the advisory now covers 1.20.5–1.20.6 via the
-      // transitive qs dependency). The test's purpose — proving that
-      // moderate/low findings are NOT reported to Ghost Mode — still holds;
-      // only the severity label has shifted from 'low' to 'moderate'.
+      // D10/D13: body-parser@1.20.5 was previously 'low', then 'moderate', now
+      // 'high' (new advisory GHSA-27r3-jxmh-p828). Switched to qs@6.11.0 which
+      // is moderate-only (GHSA-6pq8-jhm2-2vcw: qs.stringify DoS).
       writeFileSync(
         join(fixtureRoot, 'package.json'),
         JSON.stringify({
           name: 'ghost-test-moderate',
           version: '1.0.0',
-          dependencies: { 'body-parser': '1.20.5' },  // moderate severity vuln (was low)
+          dependencies: { 'qs': '6.11.0' },  // moderate severity vuln
         }),
       );
       execSync('npm install --no-audit --no-fund', { cwd: fixtureRoot, stdio: 'pipe', timeout: 60_000 });
@@ -454,12 +451,12 @@ describe('Phase C Agent 2 — SecurityAgent', () => {
 
       const result = await agent.securityScan({ projectRoot: fixtureRoot });
 
-      // body-parser is moderate-severity — should NOT be reported to Ghost Mode
+      // qs is moderate-severity — should NOT be reported to Ghost Mode
       // (Ghost Mode only reports critical/high — see security/index.ts:500).
       // The finding still appears in dependencyFindings.
-      const bodyParserFinding = result.dependencyFindings.find(f => f.package === 'body-parser');
-      expect(bodyParserFinding).toBeDefined();
-      expect(bodyParserFinding!.severity).toBe('moderate');
+      const qsFinding = result.dependencyFindings.find(f => f.package === 'qs');
+      expect(qsFinding).toBeDefined();
+      expect(qsFinding!.severity).toBe('moderate');
 
       // No Ghost Mode reports for moderate/low-severity findings
       const depCalls = reportSpy.mock.calls.filter(c => c[0].type === 'dependency-vulnerability');

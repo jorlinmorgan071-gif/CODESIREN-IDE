@@ -81,7 +81,7 @@ avatarRouter.get('/settings', requireAuth, (_req, res) => {
 // POST /api/avatar/settings
 const settingsSchema = z.object({
   selectedAvatarId: z.string().optional(),
-  customNames: z.record(z.string()).optional(),
+  customNames: z.record(z.string(), z.string()).optional(),
   pipEnabled: z.boolean().optional(),
   pipPosition: z.object({ x: z.number(), y: z.number() }).optional(),
 });

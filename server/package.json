@@ -47,7 +47,7 @@
     "uuid": "^11.0.3",
     "ws": "^8.18.0",
     "z-ai-web-dev-sdk": "^0.0.18",
-    "zod": "^3.23.8"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -60,9 +60,9 @@
     "@types/supertest": "^7.2.1",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.5.13",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "supertest": "^7.3.0",
     "tsx": "^4.19.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }
