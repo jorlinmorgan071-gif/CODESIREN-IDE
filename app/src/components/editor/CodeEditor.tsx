@@ -732,7 +732,7 @@ export function CodeEditor() {
               suggestSelection: 'first',
               parameterHints: { enabled: true },
               inlineSuggest: { enabled: true },
-              hover: { enabled: true, delay: 300 },
+              hover: { enabled: 'on' as const, delay: 300 },
               codeLens: false,  // too noisy for now
               foldingStrategy: 'indentation',
               showUnused: true,
