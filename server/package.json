@@ -43,6 +43,7 @@
     "isolated-vm": "^6.1.2",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.2.0",
+    "node-pty": "^1.1.0",
     "pg": "^8.13.1",
     "playwright": "^1.62.1",
     "proxy-addr": "^2.0.8",

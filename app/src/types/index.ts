@@ -195,7 +195,7 @@ export type AgentEventName =
   | 'ghost:detection' | 'ghost:plan' | 'ghost:fix' | 'ghost:rollback'
   | 'editor:open' | 'editor:typing' | 'editor:save' | 'editor:cursor'
   | 'collab:cursor' | 'collab:join' | 'collab:leave'
-  | 'terminal:input' | 'terminal:output' | 'terminal:suggest' | 'terminal:resize'
+  | 'terminal:input' | 'terminal:output' | 'terminal:suggest' | 'terminal:resize' | 'terminal:ready' | 'terminal:kill'
   | 'preview:reload' | 'preview:regression'
   | 'fabrication:progress' | 'presence:gesture' | 'presence:faceauth' | 'sentinel:alert';
 

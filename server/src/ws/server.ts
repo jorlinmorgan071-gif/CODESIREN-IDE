@@ -17,11 +17,13 @@ import { logSecurityEvent } from '../monitoring/security-log.js';
 import { voiceProxy } from '../systems/voice/voice-proxy.js';
 import { isVoiceEventForRecipient } from './voice-event-isolation.js';
 import { resolveTenantScope } from '../tenancy/scope.js';
+import { ptyManager } from '../terminal/pty-manager.js';
 
 interface SessionState {
   ws: WebSocket;
   claims: JwtClaims;
   projectId: string;
+  terminalSessionId?: string;
 }
 
 const sessions = new Set<SessionState>();
@@ -152,6 +154,79 @@ export function attachWsServer(server: HttpServer): void {
           }
           return;
         }
+
+        // ── Terminal events ──────────────────────────────────────────────
+        // Real PTY terminal — create session, write input, resize, kill.
+        // All commands go through validateShellCommand() in pty-manager.
+        if (msg.event === 'terminal:create') {
+          const cwd = msg.payload?.cwd || process.cwd();
+          const termId = ptyManager.createSession(state.claims.sub, cwd);
+          state.terminalSessionId = termId;
+
+          // Listen for output from this PTY and stream it to the client
+          const outputHandler = (sessionId: string, userId: string, data: string) => {
+            if (sessionId === termId && userId === state.claims.sub) {
+              if (state.ws.readyState === WebSocket.OPEN) {
+                state.ws.send(JSON.stringify(makeEvent('terminal:output', {
+                  sessionId: termId,
+                  data,
+                }, { userId: state.claims.sub, projectId: state.projectId })));
+              }
+            }
+          };
+          ptyManager.on('output', outputHandler);
+
+          // Clean up listener on disconnect
+          ws.on('close', () => ptyManager.off('output', outputHandler));
+
+          // Send the session ID + any existing buffer back to the client
+          const buffer = ptyManager.getBuffer(termId);
+          ws.send(JSON.stringify(makeEvent('terminal:ready', {
+            sessionId: termId,
+            buffer,
+          }, { userId: state.claims.sub, projectId: state.projectId })));
+          return;
+        }
+
+        if (msg.event === 'terminal:input') {
+          const termId = msg.payload?.sessionId;
+          const data = msg.payload?.data;
+          if (typeof termId === 'string' && typeof data === 'string') {
+            // Verify the session belongs to this user
+            const session = ptyManager.getSession(termId, state.claims.sub);
+            if (session) {
+              ptyManager.writeInput(termId, data);
+            }
+          }
+          return;
+        }
+
+        if (msg.event === 'terminal:resize') {
+          const termId = msg.payload?.sessionId;
+          const cols = msg.payload?.cols;
+          const rows = msg.payload?.rows;
+          if (typeof termId === 'string' && typeof cols === 'number' && typeof rows === 'number') {
+            const session = ptyManager.getSession(termId, state.claims.sub);
+            if (session) {
+              ptyManager.resize(termId, cols, rows);
+            }
+          }
+          return;
+        }
+
+        if (msg.event === 'terminal:kill') {
+          const termId = msg.payload?.sessionId;
+          if (typeof termId === 'string') {
+            const session = ptyManager.getSession(termId, state.claims.sub);
+            if (session) {
+              ptyManager.killSession(termId);
+              if (state.terminalSessionId === termId) {
+                state.terminalSessionId = undefined;
+              }
+            }
+          }
+          return;
+        }
       } catch {
         console.warn('[ws] non-JSON message from client');
         ws.send(JSON.stringify({
@@ -165,6 +240,10 @@ export function attachWsServer(server: HttpServer): void {
 
     ws.on('close', () => {
       sessions.delete(state);
+      // Kill the user's PTY terminal sessions on disconnect
+      if (state.terminalSessionId) {
+        ptyManager.killSession(state.terminalSessionId);
+      }
       console.log(`[ws] Disconnected: user=${state.claims.email}`);
     });
 

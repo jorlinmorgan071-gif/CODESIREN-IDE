@@ -114,7 +114,7 @@ describe('Phase C Agent 2 — SecurityAgent', () => {
           name: 'clean-fixture',
           version: '1.0.0',
           dependencies: {
-            'body-parser': '2.4.0',   // patched (was 1.20.6, now flagged moderate)
+            'body-parser': '2.4.0',   // patched (2.3.0 now vulnerable to GHSA-27r3-jxmh-p828)
             'postcss': '8.5.25',      // patched
           },
         }),

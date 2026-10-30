@@ -203,6 +203,8 @@ export type AgentEventName =
   | 'terminal:output'
   | 'terminal:suggest'
   | 'terminal:resize'
+  | 'terminal:ready'
+  | 'terminal:kill'
   // Preview events
   | 'preview:reload'
   | 'preview:regression'
