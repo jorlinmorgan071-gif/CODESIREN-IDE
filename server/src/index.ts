@@ -8,6 +8,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
+import compression from 'compression';
 import { config } from './config.js';
 import { initDb, closeDb } from './db/client.js';
 import { authRouter } from './auth/routes.js';
@@ -123,9 +125,13 @@ async function main() {
   // 4. Express app
   const app = express();
   app.use(express.json({ limit: '2mb' }));
+  // Security: httpOnly cookie parsing for JWT auth tokens
+  app.use(cookieParser());
+  // Performance: gzip/brotli compression for API responses
+  app.use(compression({ threshold: 1024 })); // only compress responses > 1KB
   app.use(cors({
     origin: config.corsOrigins,
-    credentials: true,
+    credentials: true, // required for httpOnly cookies
   }));
 
   // Phase 3: Rate limiting + request timeout on all API routes
@@ -135,6 +141,37 @@ async function main() {
   // Placed AFTER performanceMiddleware so cache hits are still timed, but BEFORE
   // route handlers so cache hits skip the handler entirely.
   app.use('/api', cacheMiddleware);
+
+  // ── Security headers (CSP, XSS protection, frame-options, etc.) ──────
+  app.use((_req, res, next) => {
+    // Content-Security-Policy: restrict resource loading to prevent XSS
+    res.setHeader('Content-Security-Policy', [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:", // unsafe-eval for Monaco/Vite
+      "style-src 'self' 'unsafe-inline'", // inline styles for Monaco/shadcn
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data:",
+      "connect-src 'self' ws: wss: https:", // WS for dev, HTTPS for API
+      "media-src 'self' blob:",
+      "object-src 'none'", // no Flash/Java
+      "frame-ancestors 'none'", // clickjacking protection
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; '));
+    // Prevent MIME-type sniffing
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Prevent clickjacking
+    res.setHeader('X-Frame-Options', 'DENY');
+    // XSS protection (legacy browsers)
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    // Referrer policy
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    // HSTS (only in production, only over HTTPS)
+    if (config.isProd) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+  });
 
   app.use('/api/auth', authRouter);
   app.use('/api/agents', agentsRouter);

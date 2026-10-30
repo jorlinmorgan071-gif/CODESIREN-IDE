@@ -1,0 +1,9 @@
+{
+  "label": "after",
+  "timestamp": "2026-06-21T10:18:02.685Z",
+  "buildDurationMs": 11531,
+  "bundleJsBytes": 606404,
+  "bundleCssBytes": 86720,
+  "bundleJsHuman": "592.2KB",
+  "bundleCssHuman": "84.7KB"
+}

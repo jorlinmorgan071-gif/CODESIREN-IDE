@@ -1,0 +1,16 @@
+# Numbers API — Number Facts
+# Fetches a fact about a number (or "random" for a random number).
+# No API key required — public API.
+# Input: { "number": "42" } → returns a fact about 42
+# Input: { "number": "random" } → returns a fact about a random number
+
+name = "numbers-api"
+version = "0.1.0"
+description = "Fetch a fact about a number. Input: { \"number\": \"42\" } or { \"number\": \"random\" }"
+author = "code-siren-phase-d"
+required_capabilities = ["http_request"]
+
+[[steps]]
+tool_name = "http_request"
+arguments_template = '{"url": "http://numbersapi.com/{{number}}", "method": "GET"}'
+output_key = "fact"

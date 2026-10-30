@@ -9,13 +9,16 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { v4 as uuid } from 'uuid';
-import { query, isDbAvailable, memSet, memGet } from '../db/client.js';
+import { query, isDbAvailable, memSet, memGet, memDelete } from '../db/client.js';
 import { signToken } from './jwt.js';
 import { requireAuth } from './middleware.js';
 import { verifyFace, enableFaceAuth, disableFaceAuth, getProfile, isFaceAuthEnabled } from './face-factor.js';
 import type { AuthUser } from '../types.js';
 
 export const authRouter = Router();
+
+// Store email verification tokens in memory (short-lived, 10 min TTL)
+const verificationTokens = new Map<string, string>(); // token → userId
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -80,7 +83,25 @@ authRouter.post('/register', async (req, res) => {
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await createUser({ email, name, passwordHash });
   const token = signToken(user);
-  res.status(201).json({ token, user });
+
+  // Set httpOnly cookie (XSS-safe — JavaScript cannot access it)
+  res.cookie('code_siren_token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days (matches JWT_EXPIRES_IN)
+  });
+
+  // Generate email verification token (dev: returned in response; prod: sent via email)
+  const verifyToken = uuid();
+  verificationTokens.set(verifyToken, user.id);
+  setTimeout(() => verificationTokens.delete(verifyToken), 10 * 60 * 1000);
+
+  res.status(201).json({
+    token, // still returned for API clients that use Bearer auth
+    user,
+    verificationToken: process.env.NODE_ENV === 'production' ? undefined : verifyToken,
+  });
 });
 
 authRouter.post('/login', async (req, res) => {
@@ -137,6 +158,15 @@ authRouter.post('/login', async (req, res) => {
 
   const { passwordHash, ...safe } = user;
   const token = signToken(safe);
+
+  // Set httpOnly cookie (XSS-safe — JavaScript cannot access it)
+  res.cookie('code_siren_token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  });
+
   res.json({ token, user: safe });
 });
 
@@ -177,4 +207,75 @@ authRouter.get('/face/status', requireAuth, (req, res) => {
 
 authRouter.get('/me', requireAuth, (req, res) => {
   res.json({ user: req.user });
+});
+
+// ── Email verification ────────────────────────────────────────────────
+// Users can verify their email by submitting a verification token.
+// In a production deployment, this token would be sent via email. For local
+// dev / degraded mode, the token is returned in the register response and
+// can also be retrieved via /api/auth/verification-token (dev only).
+
+authRouter.post('/verify-email', async (req, res) => {
+  const schema = z.object({ token: z.string().min(1) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
+  const { token } = parsed.data;
+  const userId = verificationTokens.get(token);
+  if (!userId) {
+    res.status(400).json({ error: 'Invalid or expired verification token' });
+    return;
+  }
+  verificationTokens.delete(token); // one-time use
+
+  // Mark email as verified
+  if (isDbAvailable()) {
+    await query('UPDATE users SET email_verified = true WHERE id = $1', [userId]);
+  } else {
+    const user = await memGet<AuthUser & { passwordHash: string }>(`userById:${userId}`);
+    if (user) {
+      memSet(`userById:${userId}`, { ...user, emailVerified: true });
+      memSet(`user:${user.email}`, { ...user, emailVerified: true });
+    }
+  }
+  res.json({ verified: true });
+});
+
+// Dev-only: get a verification token (in production, this goes via email)
+authRouter.get('/verification-token', requireAuth, (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    res.status(403).json({ error: 'Not available in production' });
+    return;
+  }
+  const token = uuid();
+  verificationTokens.set(token, req.user!.id);
+  // Auto-expire after 10 minutes
+  setTimeout(() => verificationTokens.delete(token), 10 * 60 * 1000);
+  res.json({ token, message: 'Use POST /api/auth/verify-email with this token' });
+});
+
+// ── Account deletion (GDPR right to erasure) ──────────────────────────
+authRouter.delete('/account', requireAuth, async (req, res) => {
+  const userId = req.user!.id;
+  const email = req.user!.email;
+
+  if (isDbAvailable()) {
+    // Delete user and cascade-dependent records
+    await query('DELETE FROM users WHERE id = $1', [userId]);
+  } else {
+    memDelete(`user:${email}`);
+    memDelete(`userById:${userId}`);
+  }
+
+  // Clear the auth cookie if present
+  res.clearCookie('code_siren_token');
+  res.json({ deleted: true, message: 'Account and all associated data have been permanently deleted' });
+});
+
+// ── Logout (clear httpOnly cookie) ─────────────────────────────────────
+authRouter.post('/logout', (_req, res) => {
+  res.clearCookie('code_siren_token');
+  res.json({ loggedOut: true });
 });

@@ -4,6 +4,7 @@ import { AppProvider } from '@/store/AppContext';
 import { VoiceSessionProvider } from '@/store/VoiceSessionContext';
 import { RelayProvider } from '@/store/RelayContext';
 import { LocalVrmaRegistryProvider } from '@/store/LocalVrmaRegistryContext';
+import { CookieConsent } from '@/components/legal/CookieConsent';
 import Home from './pages/Home';
 
 // Phase 5 — lazy-load the Dashboard + Brain routes.
@@ -64,6 +65,7 @@ export default function App() {
                 }
               />
             </Routes>
+            <CookieConsent />
           </RelayProvider>
         </LocalVrmaRegistryProvider>
       </VoiceSessionProvider>

@@ -1,0 +1,47 @@
+{
+  "label": "baseline-dashboard",
+  "timestamp": "2026-06-21T09:46:02.701Z",
+  "dashboardLoadMs": 35,
+  "perEndpoint": [
+    {
+      "endpoint": "/api/dashboard/system",
+      "ms": 4
+    },
+    {
+      "endpoint": "/api/dashboard/agents",
+      "ms": 2
+    },
+    {
+      "endpoint": "/api/dashboard/execution",
+      "ms": 2
+    },
+    {
+      "endpoint": "/api/dashboard/memory",
+      "ms": 2
+    },
+    {
+      "endpoint": "/api/dashboard/security",
+      "ms": 2
+    },
+    {
+      "endpoint": "/api/dashboard/models",
+      "ms": 4
+    },
+    {
+      "endpoint": "/api/dashboard/tools",
+      "ms": 2
+    },
+    {
+      "endpoint": "/api/dashboard/traces",
+      "ms": 2
+    },
+    {
+      "endpoint": "/api/dashboard/traces-file/info",
+      "ms": 12
+    },
+    {
+      "endpoint": "/api/dashboard/performance",
+      "ms": 3
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "label": "baseline-bundle",
+  "timestamp": "2026-06-21T09:47:38.621Z",
+  "buildDurationMs": 9419,
+  "bundleJsBytes": 601597,
+  "bundleCssBytes": 86720,
+  "bundleJsHuman": "587.5KB",
+  "bundleCssHuman": "84.7KB"
+}

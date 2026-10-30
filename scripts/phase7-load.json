@@ -1,0 +1,101 @@
+{
+  "timestamp": "2026-06-21T11:02:56.224Z",
+  "tiers": [
+    {
+      "concurrentUsers": 100,
+      "totalRequests": 500,
+      "successful": 500,
+      "failed": 0,
+      "errorRate": 0,
+      "durationMs": 297,
+      "requestsPerSec": 1683.5016835016836,
+      "latency": {
+        "avgMs": 52.946823693999974,
+        "p50Ms": 40.56270100000006,
+        "p95Ms": 115.18287899999996,
+        "p99Ms": 224.43052399999988,
+        "maxMs": 234.1277080000002
+      },
+      "serverMemory": {
+        "beforeRss": 103768064,
+        "peakRss": 123973632,
+        "afterRss": 123973632,
+        "beforeHeap": 21564064,
+        "peakHeap": 24656712,
+        "afterHeap": 24753032
+      },
+      "serverCpu": {
+        "userMs": 287.446,
+        "systemMs": 82.686
+      },
+      "recoveryTimeMs": 1003,
+      "errors": []
+    },
+    {
+      "concurrentUsers": 500,
+      "totalRequests": 2500,
+      "successful": 2500,
+      "failed": 0,
+      "errorRate": 0,
+      "durationMs": 748,
+      "requestsPerSec": 3342.245989304813,
+      "latency": {
+        "avgMs": 57.46683950560002,
+        "p50Ms": 45.5405099999989,
+        "p95Ms": 141.47242200000073,
+        "p99Ms": 301.4124460000003,
+        "maxMs": 393.83809199999905
+      },
+      "serverMemory": {
+        "beforeRss": 123973632,
+        "peakRss": 138866688,
+        "afterRss": 138866688,
+        "beforeHeap": 25269032,
+        "peakHeap": 31777808,
+        "afterHeap": 32914464
+      },
+      "serverCpu": {
+        "userMs": 678.754,
+        "systemMs": 193.702
+      },
+      "recoveryTimeMs": -1,
+      "errors": []
+    },
+    {
+      "concurrentUsers": 1000,
+      "totalRequests": 5000,
+      "successful": 5000,
+      "failed": 0,
+      "errorRate": 0,
+      "durationMs": 1488,
+      "requestsPerSec": 3360.215053763441,
+      "latency": {
+        "avgMs": 58.492687883199906,
+        "p50Ms": 56.34389200000078,
+        "p95Ms": 92.04830299999958,
+        "p99Ms": 167.46912599999996,
+        "maxMs": 181.0490400000017
+      },
+      "serverMemory": {
+        "beforeRss": 138866688,
+        "peakRss": 141561856,
+        "afterRss": 141561856,
+        "beforeHeap": 32959976,
+        "peakHeap": 36230912,
+        "afterHeap": 36307296
+      },
+      "serverCpu": {
+        "userMs": 1478.301,
+        "systemMs": 372.635
+      },
+      "recoveryTimeMs": 1003,
+      "errors": []
+    }
+  ],
+  "summary": {
+    "allTiersPassed": true,
+    "maxP95Ms": 141.47242200000073,
+    "maxErrorRate": 0,
+    "maxRssGrowthPct": 19.471856003789373
+  }
+}

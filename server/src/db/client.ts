@@ -75,3 +75,6 @@ export function memSet<T>(key: string, value: T): void {
 export function memHas(key: string): boolean {
   return inMemoryStore.has(key);
 }
+export function memDelete(key: string): void {
+  inMemoryStore.delete(key);
+}

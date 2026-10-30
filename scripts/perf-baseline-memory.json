@@ -1,0 +1,14 @@
+{
+  "label": "baseline-memory",
+  "timestamp": "2026-06-21T09:42:05.335Z",
+  "memory": {
+    "rss": 108453888,
+    "rssHuman": "103.43MB",
+    "heapUsed": 26348224,
+    "heapUsedHuman": "25.13MB",
+    "heapTotal": 38313984,
+    "heapTotalHuman": "36.54MB",
+    "external": 6573513,
+    "externalHuman": "6.27MB"
+  }
+}

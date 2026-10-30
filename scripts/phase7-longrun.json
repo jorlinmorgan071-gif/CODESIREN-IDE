@@ -1,0 +1,93 @@
+{
+  "timestamp": "2026-06-21T11:13:35.761Z",
+  "durationMs": 60000,
+  "samplesCount": 6,
+  "summary": {
+    "totalRequests": 1153,
+    "totalErrors": 0,
+    "errorRate": 0,
+    "reconnectCount": 0,
+    "memory": {
+      "startRss": 105529344,
+      "endRss": 124055552,
+      "peakRss": 124055552,
+      "rssGrowthPct": 17.56,
+      "startHeap": 21842976,
+      "endHeap": 23610352,
+      "peakHeap": 27072704,
+      "heapGrowthPct": 8.09
+    },
+    "stability": {
+      "stabilityPct": 100,
+      "errorSamples": 0,
+      "maxAvgLatencyMs": 5.81
+    }
+  },
+  "targetMet": {
+    "memoryGrowthUnder20pct": true,
+    "stabilityAbove99pct": true,
+    "errorsUnder1pct": true
+  },
+  "samples": [
+    {
+      "timestamp": 1782040324643,
+      "elapsedMs": 2,
+      "rss": 105529344,
+      "heapUsed": 21842976,
+      "requests": 1,
+      "errors": 0,
+      "avgLatencyMs": 5.814146999999593,
+      "wsConnected": true
+    },
+    {
+      "timestamp": 1782040334646,
+      "elapsedMs": 10009,
+      "rss": 114995200,
+      "heapUsed": 27072704,
+      "requests": 190,
+      "errors": 0,
+      "avgLatencyMs": 2.303880578947433,
+      "wsConnected": true
+    },
+    {
+      "timestamp": 1782040344648,
+      "elapsedMs": 20011,
+      "rss": 120942592,
+      "heapUsed": 23217592,
+      "requests": 192,
+      "errors": 0,
+      "avgLatencyMs": 2.0858784010414126,
+      "wsConnected": true
+    },
+    {
+      "timestamp": 1782040354650,
+      "elapsedMs": 30013,
+      "rss": 121036800,
+      "heapUsed": 23404664,
+      "requests": 192,
+      "errors": 0,
+      "avgLatencyMs": 1.9579661718749815,
+      "wsConnected": true
+    },
+    {
+      "timestamp": 1782040364652,
+      "elapsedMs": 40016,
+      "rss": 124055552,
+      "heapUsed": 23268256,
+      "requests": 193,
+      "errors": 0,
+      "avgLatencyMs": 1.6500633989637086,
+      "wsConnected": true
+    },
+    {
+      "timestamp": 1782040374654,
+      "elapsedMs": 50018,
+      "rss": 124055552,
+      "heapUsed": 23610352,
+      "requests": 193,
+      "errors": 0,
+      "avgLatencyMs": 1.7155136321243798,
+      "wsConnected": true
+    }
+  ]
+}

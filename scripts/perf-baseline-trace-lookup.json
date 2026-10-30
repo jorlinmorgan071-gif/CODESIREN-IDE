@@ -1,0 +1,13 @@
+{
+  "label": "baseline-trace-lookup",
+  "timestamp": "2026-06-21T09:41:47.898Z",
+  "traceLookupMs": 2,
+  "traceLookupSamples": [
+    3,
+    3,
+    1,
+    2,
+    1
+  ],
+  "taskId": "42e4a04f-34e4-4811-8cec-ce17275c23eb"
+}

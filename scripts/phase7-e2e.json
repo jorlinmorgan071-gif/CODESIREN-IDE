@@ -1,0 +1,77 @@
+{
+  "timestamp": "2026-06-21T10:58:27.903Z",
+  "total": 11,
+  "passed": 11,
+  "failed": 0,
+  "passRate": 100,
+  "targetPassRate": 95,
+  "targetMet": true,
+  "results": [
+    {
+      "name": "1. Fresh install — server boots",
+      "passed": true,
+      "durationMs": 4,
+      "detail": "ok"
+    },
+    {
+      "name": "2. Login — register + login + me",
+      "passed": true,
+      "durationMs": 133,
+      "detail": "ok"
+    },
+    {
+      "name": "3. Voice — start + transcript",
+      "passed": true,
+      "durationMs": 9,
+      "detail": "ok"
+    },
+    {
+      "name": "4. Chat — send + WS chunks",
+      "passed": true,
+      "durationMs": 9,
+      "detail": "ok"
+    },
+    {
+      "name": "5. Agent execution — trace persisted",
+      "passed": true,
+      "durationMs": 504,
+      "detail": "ok"
+    },
+    {
+      "name": "6. Memory recall — agent stores + recalls",
+      "passed": true,
+      "durationMs": 1018,
+      "detail": "ok"
+    },
+    {
+      "name": "7. Dashboard — all 10 endpoints",
+      "passed": true,
+      "durationMs": 32,
+      "detail": "ok"
+    },
+    {
+      "name": "8. Trace export — npm run export-traces",
+      "passed": true,
+      "durationMs": 620,
+      "detail": "ok"
+    },
+    {
+      "name": "9. Backup — npm run backup",
+      "passed": true,
+      "durationMs": 440,
+      "detail": "ok"
+    },
+    {
+      "name": "10. Restore — script loads + help works",
+      "passed": true,
+      "durationMs": 703,
+      "detail": "ok"
+    },
+    {
+      "name": "11. Safe reset — script loads + dry-run info",
+      "passed": true,
+      "durationMs": 712,
+      "detail": "ok"
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "label": "after",
+  "timestamp": "2026-06-21T10:03:38.049Z",
+  "concurrentLoad": {
+    "totalRequests": 100,
+    "successful": 100,
+    "failed": 0,
+    "durationMs": 96,
+    "requestsPerSec": 1041.6666666666667,
+    "avgLatencyMs": 72.79984510999999,
+    "p50Ms": 77.43418199999996,
+    "p95Ms": 80.56428900000014,
+    "p99Ms": 80.65575100000001,
+    "maxLatencyMs": 80.65575100000001,
+    "errors": []
+  },
+  "longSession": {
+    "durationMs": 592,
+    "successful": 1000,
+    "failed": 0,
+    "memoryBefore": {
+      "rss": 109027328,
+      "rssHuman": "103.98MB",
+      "heapUsed": 26249800,
+      "heapUsedHuman": "25.03MB",
+      "heapTotal": 38838272,
+      "heapTotalHuman": "37.04MB",
+      "external": 6366243,
+      "externalHuman": "6.07MB"
+    },
+    "memoryAfter": {
+      "rss": 129286144,
+      "rssHuman": "123.30MB",
+      "heapUsed": 33711664,
+      "heapUsedHuman": "32.15MB",
+      "heapTotal": 58236928,
+      "heapTotalHuman": "55.54MB",
+      "external": 7261557,
+      "externalHuman": "6.93MB"
+    },
+    "heapGrowthPct": 28.42636515325831,
+    "rssGrowthPct": 18.581411075212262
+  },
+  "memoryLeak": {
+    "before": {
+      "rss": 128724992,
+      "rssHuman": "122.76MB",
+      "heapUsed": 33775712,
+      "heapUsedHuman": "32.21MB",
+      "heapTotal": 58236928,
+      "heapTotalHuman": "55.54MB",
+      "external": 7261557,
+      "externalHuman": "6.93MB"
+    },
+    "after": {
+      "rss": 128991232,
+      "rssHuman": "123.02MB",
+      "heapUsed": 35105432,
+      "heapUsedHuman": "33.48MB",
+      "heapTotal": 58499072,
+      "heapTotalHuman": "55.79MB",
+      "external": 6874441,
+      "externalHuman": "6.56MB"
+    },
+    "heapGrowthPct": 3.9369118258706135,
+    "rssGrowthPct": 0.20682852324434403,
+    "leakDetected": false
+  }
+}

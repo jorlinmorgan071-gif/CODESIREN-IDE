@@ -320,7 +320,8 @@ export interface AuthUser {
   email: string;
   name: string;
   avatarUrl?: string;
-  plan: 'free' | 'pro' | 'team' | 'enterprise';
+  plan: 'free' | 'pro' | 'team' | 'enterprise' | 'admin';
+  emailVerified?: boolean;
 }
 
 export interface JwtClaims {

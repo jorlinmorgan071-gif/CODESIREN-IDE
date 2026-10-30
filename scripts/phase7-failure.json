@@ -1,0 +1,65 @@
+{
+  "timestamp": "2026-06-21T11:06:20.078Z",
+  "total": 6,
+  "contained": 6,
+  "recovered": 6,
+  "containmentRate": 100,
+  "recoveryRate": 100,
+  "targetMet": true,
+  "results": [
+    {
+      "name": "1. Model unavailable — Ollama unreachable, stub fallback",
+      "simulated": true,
+      "contained": true,
+      "recovered": true,
+      "detail": "agent task accepted (taskId=c08a9358), preferred engine=stub",
+      "containmentEvidence": "OLLAMA_HOST=invalid → router fell back to stub",
+      "recoveryEvidence": "agent task accepted + responding normally"
+    },
+    {
+      "name": "2. Sidecar crash — fabrication crash-test endpoint",
+      "simulated": true,
+      "contained": true,
+      "recovered": true,
+      "detail": "sidecar spawned, crashed (caught=true), recovered=true",
+      "containmentEvidence": "SidecarCrashedError caught: sidecar 'build123d' died: exited with code 1",
+      "recoveryEvidence": "ping after crash: ok=true"
+    },
+    {
+      "name": "3. Memory unavailable — degraded in-memory mode (no PG)",
+      "simulated": true,
+      "contained": true,
+      "recovered": true,
+      "detail": "memory mode=in-memory, entries=2",
+      "containmentEvidence": "PG unavailable → memoryEngine fell back to in-memory",
+      "recoveryEvidence": "memorize() + recall() still work (2 entries stored)"
+    },
+    {
+      "name": "4. Invalid auth — bad token → 401",
+      "simulated": true,
+      "contained": true,
+      "recovered": true,
+      "detail": "bad token → 401, good token → 200",
+      "containmentEvidence": "401 Unauthorized returned",
+      "recoveryEvidence": "valid token still works (200)"
+    },
+    {
+      "name": "5. WS flood — rate limit kicks in",
+      "simulated": true,
+      "contained": true,
+      "recovered": true,
+      "detail": "sent 20 msgs, 15 rate-limited, 1 normal; server after=200",
+      "containmentEvidence": "15 WS_RATE_LIMIT responses",
+      "recoveryEvidence": "server responds 200 after flood"
+    },
+    {
+      "name": "6. Tool rejection — unknown tool → graceful failure",
+      "simulated": true,
+      "contained": true,
+      "recovered": true,
+      "detail": "require('fs') rejected=true, 1+1 ok=true",
+      "containmentEvidence": "sandbox violation caught: blocked",
+      "recoveryEvidence": "valid sandbox call returns 200"
+    }
+  ]
+}

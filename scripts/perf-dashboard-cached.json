@@ -1,0 +1,111 @@
+{
+  "timestamp": "2026-06-21T10:14:07.231Z",
+  "coldLoadMs": 40.45891800000004,
+  "warmLoadMs": 12.834288000000015,
+  "speedup": 3.1524084546022335,
+  "improvementPct": 68.2782223686753,
+  "coldPerEndpoint": [
+    {
+      "endpoint": "/api/dashboard/system",
+      "ms": 4.408684999999878,
+      "cache": "MISS"
+    },
+    {
+      "endpoint": "/api/dashboard/agents",
+      "ms": 2.986311999999998,
+      "cache": "MISS"
+    },
+    {
+      "endpoint": "/api/dashboard/execution",
+      "ms": 2.121024999999918,
+      "cache": "MISS"
+    },
+    {
+      "endpoint": "/api/dashboard/memory",
+      "ms": 2.0635859999999866,
+      "cache": "MISS"
+    },
+    {
+      "endpoint": "/api/dashboard/security",
+      "ms": 2.2749619999999595,
+      "cache": "MISS"
+    },
+    {
+      "endpoint": "/api/dashboard/models",
+      "ms": 4.180866999999807,
+      "cache": "MISS"
+    },
+    {
+      "endpoint": "/api/dashboard/tools",
+      "ms": 1.915747999999894,
+      "cache": "MISS"
+    },
+    {
+      "endpoint": "/api/dashboard/traces",
+      "ms": 1.94887000000017,
+      "cache": "MISS"
+    },
+    {
+      "endpoint": "/api/dashboard/traces-file/info",
+      "ms": 14.474845999999843,
+      "cache": "MISS"
+    },
+    {
+      "endpoint": "/api/dashboard/performance",
+      "ms": 3.3060789999999542,
+      "cache": "MISS"
+    }
+  ],
+  "warmPerEndpoint": [
+    {
+      "endpoint": "/api/dashboard/system",
+      "ms": 1.3116869999998926,
+      "cache": "HIT"
+    },
+    {
+      "endpoint": "/api/dashboard/agents",
+      "ms": 1.4645459999999275,
+      "cache": "HIT"
+    },
+    {
+      "endpoint": "/api/dashboard/execution",
+      "ms": 1.097878000000037,
+      "cache": "HIT"
+    },
+    {
+      "endpoint": "/api/dashboard/memory",
+      "ms": 1.0371870000001309,
+      "cache": "HIT"
+    },
+    {
+      "endpoint": "/api/dashboard/security",
+      "ms": 1.1658870000001116,
+      "cache": "HIT"
+    },
+    {
+      "endpoint": "/api/dashboard/models",
+      "ms": 1.0052930000001652,
+      "cache": "HIT"
+    },
+    {
+      "endpoint": "/api/dashboard/tools",
+      "ms": 1.432418000000098,
+      "cache": "HIT"
+    },
+    {
+      "endpoint": "/api/dashboard/traces",
+      "ms": 1.1989020000000892,
+      "cache": "HIT"
+    },
+    {
+      "endpoint": "/api/dashboard/traces-file/info",
+      "ms": 1.2352939999998398,
+      "cache": "HIT"
+    },
+    {
+      "endpoint": "/api/dashboard/performance",
+      "ms": 1.3133450000000266,
+      "cache": "HIT"
+    }
+  ]
+}

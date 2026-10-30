@@ -109,3 +109,7 @@ server/sidecars/whisper/*.pth
 download/
 app/public/models/avatars/custom/
 .task-states/
+
+# Scratch/extracted dirs (sandbox artifacts, never commit — contains large venvs)
+scratch/
+extracted/
