@@ -113,3 +113,23 @@ app/public/models/avatars/custom/
 # Scratch/extracted dirs (sandbox artifacts, never commit — contains large venvs)
 scratch/
 extracted/
+
+# Test/benchmark scripts (not part of the app)
+scripts/phase7-*.ts
+scripts/phase7-*.json
+scripts/test-dashboard-endpoints.ts
+scripts/verify-tier1-models.ts
+
+# Test/benchmark scripts (not part of the app)
+scripts/phase7-*.ts
+scripts/phase7-*.json
+scripts/test-dashboard-endpoints.ts
+scripts/verify-tier1-models.ts
+scripts/secret-scan-donors.sh
+
+# Scratch/extracted dirs (sandbox artifacts, contains large venvs)
+scratch/
+extracted/
+
+# Extra skill files not part of the server Skills Vault
+server/src/skills/library/numbers-api.toml
