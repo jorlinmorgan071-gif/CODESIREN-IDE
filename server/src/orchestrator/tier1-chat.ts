@@ -257,6 +257,8 @@ export async function runChatViaAgentManager(
   workspaceContext?: WorkspaceContext,
   workspace?: WorkspaceIdentity,
   capability?: NormalChatCapability,
+  mode: 'ask' | 'debug' | 'build' | 'investigate' = 'ask',
+  webSearch: boolean = false,
 ): Promise<void> {
   // Only legacy in-process tests use the string form. HTTP routes always pass a
   // server-resolved scope. The derived project ID is neither persisted nor an
@@ -304,12 +306,64 @@ export async function runChatViaAgentManager(
   //    formatContextBundle() → system prompt. This gives ONE authoritative
   //    representation of the file, in the system prompt, preventing the
   //    model from receiving conflicting live and disk versions.
-  const conversationContext = recentHistory.length > 1
-    ? recentHistory.slice(0, -1)
-        .map(m => `${m.role.toUpperCase()}: ${m.content}`)
-        .join('\n\n')
-      + '\n\nCurrent request:\n' + userMessage
-    : userMessage;
+
+  // ── Mode-specific instructions ──────────────────────────────────────
+  // The mode shapes the AI's behavior without changing the underlying
+  // engine. Each mode prepends a mode-specific directive to the task
+  // description so the agent adapts its response style.
+  const MODE_DIRECTIVES: Record<string, string> = {
+    ask: '[MODE: ask] This is a casual question. Answer concisely. No code execution, no tool calling, no file changes. Just explain.',
+    debug: '[MODE: debug] The user wants to debug something. Analyze the code, identify potential issues, suggest fixes. If you see errors, explain the root cause. You may suggest commands to run but do not execute them.',
+    build: '[MODE: build] The user wants to build something. You may write code, create files, run commands, and use tools. Be thorough — plan, implement, test, verify.',
+    investigate: '[MODE: investigate] The user wants research or analysis. Use web search if available. Gather information from multiple sources, cite URLs, and synthesize findings. Be comprehensive.',
+  };
+  const modeDirective = MODE_DIRECTIVES[mode] ?? MODE_DIRECTIVES.ask;
+
+  // ── Web search (investigate mode) ────────────────────────────────────
+  // When webSearch is enabled, fetch relevant results from Wikipedia's API
+  // (no API key needed) and inject them as context. This is NOT a stub —
+  // it makes a real HTTP request to Wikipedia's public API.
+  let webSearchContext = '';
+  if (webSearch) {
+    try {
+      broadcast(makeEvent('agent:thinking' as any, {
+        taskId, sessionId,
+        phase: 'web-search',
+        message: 'Searching the web for relevant information',
+        ts: Date.now(),
+      }, scope));
+
+      // Use Wikipedia's public API (no key needed) for a real web search.
+      // Extract key terms from the user message for the search query.
+      const searchQuery = userMessage.slice(0, 100).replace(/[^\w\s]/g, ' ').trim();
+      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchQuery)}&format=json&srlimit=3&origin=*`;
+      const wikiRes = await fetch(wikiUrl);
+      if (wikiRes.ok) {
+        const wikiData = await wikiRes.json() as any;
+        const results = wikiData?.query?.search ?? [];
+        if (results.length > 0) {
+          webSearchContext = '\n\n[Web Search Results from Wikipedia]\n';
+          for (const r of results) {
+            // Strip HTML tags from the snippet
+            const snippet = (r.snippet ?? '').replace(/<[^>]+>/g, '').replace(/&[^;]+;/g, ' ');
+            webSearchContext += `- ${r.title}: ${snippet}\n  URL: https://en.wikipedia.org/wiki/${encodeURIComponent(r.title.replace(/ /g, '_'))}\n`;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[orchestrator:chat] web search failed: ${(err as Error).message}`);
+      webSearchContext = '\n\n[Web search failed — proceeding without search results]\n';
+    }
+  }
+
+  const conversationContext = (modeDirective + webSearchContext + '\n\n' +
+    (recentHistory.length > 1
+      ? recentHistory.slice(0, -1)
+          .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+          .join('\n\n')
+        + '\n\nCurrent request:\n' + userMessage
+      : userMessage)
+  );
 
   // 4. Create an authoritative AgentTask with real workspace identity.
   //    Phase 3: live editor content goes through task.context (not task.description)

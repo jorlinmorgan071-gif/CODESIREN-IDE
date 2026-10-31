@@ -167,13 +167,13 @@ export const api = {
       endLine: number;
       endColumn: number;
     };
-  }): Promise<
+  }, mode?: 'ask' | 'debug' | 'build' | 'investigate', webSearch?: boolean): Promise<
     | { taskId: string; sessionId: string; projectId: string; status: 'accepted'; capability: 'general-chat' | 'read-explain' }
     | { sessionId: string; projectId: string; status: 'plan-ready'; capability: 'change-plan'; planId: string; plan: OrchestratorPlan; verificationStatus: 'unverified' }
   > {
     return request('/orchestrator/chat', {
       method: 'POST',
-      body: JSON.stringify({ sessionId, message, context }),
+      body: JSON.stringify({ sessionId, message, context, mode, webSearch }),
     });
   },
 

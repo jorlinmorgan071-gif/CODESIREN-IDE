@@ -9,7 +9,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Send, Paperclip, Camera, Mic, Radio, Folder, X, ChevronDown,
-  Play, Loader2,
+  Play, Loader2, Globe, Brain, Bug, Hammer, Search,
 } from 'lucide-react';
 import { GlowButton } from '@/components/ui/glow-button';
 import { PremiumTooltip } from '@/components/ui/premium-tooltip';
@@ -38,8 +38,10 @@ interface ModelSelection {
   model: string;
 }
 
+export type ChatMode = 'ask' | 'debug' | 'build' | 'investigate';
+
 interface ChatInputProps {
-  onSend: (text: string, attachments: Attachment[], model: ModelSelection) => void;
+  onSend: (text: string, attachments: Attachment[], model: ModelSelection, mode: ChatMode, webSearch: boolean) => void;
   disabled?: boolean;
   placeholder?: string;
   /** Optional callback for the "Start Project" button (directive Section 2.1). */
@@ -81,6 +83,11 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Siren�
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+
+  // Chat mode + web search toggle state
+  const [chatMode, setChatMode] = useState<ChatMode>('ask');
+  const [webSearch, setWebSearch] = useState(false);
+  const [modeDropdown, setModeDropdown] = useState(false);
 
   // Model selector state
   const [engines, setEngines] = useState<EngineInfo[]>([]);
@@ -158,11 +165,11 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Siren�
   // ── Send handler ──────────────────────────────────────────────────────
   const handleSend = useCallback(() => {
     if (!text.trim() || disabled) return;
-    onSend(text.trim(), attachments, { provider: selectedProvider, model: selectedModel });
+    onSend(text.trim(), attachments, { provider: selectedProvider, model: selectedModel }, chatMode, webSearch);
     setText('');
     setAttachments([]);
     adjustHeight();
-  }, [text, attachments, disabled, onSend, selectedProvider, selectedModel, adjustHeight]);
+  }, [text, attachments, disabled, onSend, selectedProvider, selectedModel, adjustHeight, chatMode, webSearch]);
 
   // ── Key handler: Enter to send, Shift+Enter for newline ───────────────
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -266,7 +273,7 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Siren�
         if (finalTranscript.trim()) {
           setText(finalTranscript.trim());
           setTimeout(() => {
-            onSend(finalTranscript.trim(), attachments, { provider: selectedProvider, model: selectedModel });
+            onSend(finalTranscript.trim(), attachments, { provider: selectedProvider, model: selectedModel }, chatMode, webSearch);
             setText('');
             setAttachments([]);
           }, 200);
@@ -411,6 +418,82 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Siren�
                 style={{ color: isRecording ? 'var(--siren-red)' : 'var(--steel-silver)' }}
               >
                 {isRecording ? <VoiceVisualizer active /> : <Mic className="w-4 h-4" />}
+              </button>
+            </PremiumTooltip>
+          </div>
+
+          {/* Center: Mode selector + Web search toggle */}
+          <div className="flex items-center gap-1.5">
+            {/* Mode selector dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => { setModeDropdown(!modeDropdown); setProviderDropdown(false); setModelDropdown(false); }}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-[var(--surface-raised)]"
+                style={{
+                  color: chatMode !== 'ask' ? 'var(--siren-red)' : 'var(--steel-silver)',
+                  border: '1px solid var(--border-subtle)',
+                  backgroundColor: chatMode !== 'ask' ? 'rgba(238, 28, 28, 0.05)' : 'transparent',
+                }}
+              >
+                {chatMode === 'ask' && <Brain className="w-3 h-3" />}
+                {chatMode === 'debug' && <Bug className="w-3 h-3" />}
+                {chatMode === 'build' && <Hammer className="w-3 h-3" />}
+                {chatMode === 'investigate' && <Search className="w-3 h-3" />}
+                <span className="capitalize">{chatMode}</span>
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              <AnimatePresence>
+                {modeDropdown && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 min-w-[160px] rounded-md overflow-hidden z-50"
+                    style={{
+                      backgroundColor: 'var(--surface-raised)',
+                      border: '1px solid var(--border-subtle)',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                    }}
+                  >
+                    {([
+                      { id: 'ask', label: 'Ask', icon: <Brain className="w-3 h-3" />, desc: 'Casual Q&A, no tools' },
+                      { id: 'debug', label: 'Debug', icon: <Bug className="w-3 h-3" />, desc: 'Analyze + fix code' },
+                      { id: 'build', label: 'Build', icon: <Hammer className="w-3 h-3" />, desc: 'Write code + run commands' },
+                      { id: 'investigate', label: 'Investigate', icon: <Search className="w-3 h-3" />, desc: 'Research + web search' },
+                    ] as const).map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => { setChatMode(m.id); setModeDropdown(false); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-[11px] transition-colors hover:bg-[var(--surface-dark)]"
+                        style={{
+                          color: chatMode === m.id ? 'var(--siren-red)' : 'var(--steel-silver)',
+                          backgroundColor: chatMode === m.id ? 'rgba(238, 28, 28, 0.05)' : 'transparent',
+                        }}
+                      >
+                        {m.icon}
+                        <div className="flex flex-col">
+                          <span className="font-medium">{m.label}</span>
+                          <span className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>{m.desc}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Web search toggle */}
+            <PremiumTooltip text={webSearch ? 'Web search ON' : 'Web search OFF'} position="top">
+              <button
+                onClick={() => setWebSearch(!webSearch)}
+                className="p-1.5 rounded-md transition-colors hover:bg-[var(--surface-raised)]"
+                style={{
+                  color: webSearch ? 'var(--siren-red)' : 'var(--muted-silver)',
+                  backgroundColor: webSearch ? 'rgba(238, 28, 28, 0.08)' : 'transparent',
+                }}
+              >
+                <Globe className={`w-4 h-4 ${webSearch ? 'animate-pulse' : ''}`} />
               </button>
             </PremiumTooltip>
           </div>

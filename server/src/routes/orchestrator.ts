@@ -104,6 +104,8 @@ const chatSchema = z.object({
   message: z.string().min(1).max(8000),
   projectId: z.string().uuid().optional(),
   context: chatContextSchema,
+  mode: z.enum(['ask', 'debug', 'build', 'investigate']).default('ask'),
+  webSearch: z.boolean().default(false),
 });
 
 orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
@@ -169,6 +171,8 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
     parsed.data.context,
     workspace,
     capability,
+    parsed.data.mode,
+    parsed.data.webSearch,
   ).catch((err) => {
     console.error('[orchestrator:chat] task failed:', err);
   });

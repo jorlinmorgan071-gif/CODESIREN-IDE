@@ -168,7 +168,7 @@ export function ChatPanel() {
   }, [state.activeChatId, state.chatSessions, updateChatMessage, addNotification]);
 
   // ── Send message ──────────────────────────────────────────────────────
-  const handleSend = useCallback(async (text: string, _attachments: unknown[], _model: { provider: string; model: string }) => {
+  const handleSend = useCallback(async (text: string, _attachments: unknown[], _model: { provider: string; model: string }, mode: 'ask' | 'debug' | 'build' | 'investigate' = 'ask', webSearch: boolean = false) => {
     void _attachments; void _model;
     const sessionId = state.activeChatId;
 
@@ -217,7 +217,7 @@ export function ChatPanel() {
           openFiles: openFiles.length > 0 ? openFiles : undefined,
           activeFileContent: liveContent ?? undefined,
           selection: selection ?? undefined,
-        });
+        }, mode, webSearch);
         if (result.status === 'plan-ready') {
           updateChatMessage(sessionId, assistantMsg.id, {
             isStreaming: false,
@@ -242,7 +242,7 @@ export function ChatPanel() {
 
   // ── Follow-up click: send as next message ─────────────────────────────
   const handleFollowUp = useCallback((text: string) => {
-    handleSend(text, [], { provider: '', model: '' });
+    handleSend(text, [], { provider: '', model: '' }, 'ask', false);
   }, [handleSend]);
 
   // ── Read aloud (Listen button) ──────────────────────────────────────────
@@ -321,7 +321,7 @@ export function ChatPanel() {
   const handleRegenerate = useCallback(() => {
     const lastUser = [...messages].reverse().find(m => m.role === 'user');
     if (lastUser) {
-      handleSend(lastUser.content, [], { provider: '', model: '' });
+      handleSend(lastUser.content, [], { provider: '', model: '' }, 'ask', false);
     }
   }, [messages, handleSend]);
 
