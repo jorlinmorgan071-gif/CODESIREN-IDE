@@ -35,6 +35,12 @@ export interface AppState {
   chatPanelVisible: boolean;
   bottomPanelVisible: boolean;
   activeBottomTab: BottomPanelTab;
+  // Layout mode: 'full-chat' = chat fills the screen, 'split' = chat + view
+  // side-by-side with a drag handle, 'full-view' = view fills the screen
+  // (chat hidden). Set by the Dock or by dragging from the chat edges.
+  layoutMode: 'full-chat' | 'split' | 'full-view';
+  // When in 'split' mode, which view occupies the non-chat side.
+  splitView: 'editor' | 'terminal' | 'face' | 'dashboard' | 'brain';
 
   // Content
   fileTree: FileNode[];
@@ -86,6 +92,8 @@ export type AppAction =
   | { type: 'TOGGLE_CHAT_PANEL' }
   | { type: 'TOGGLE_BOTTOM_PANEL' }
   | { type: 'SET_BOTTOM_TAB'; payload: BottomPanelTab }
+  | { type: 'SET_LAYOUT_MODE'; payload: 'full-chat' | 'split' | 'full-view' }
+  | { type: 'SET_SPLIT_VIEW'; payload: AppState['splitView'] }
   | { type: 'TOGGLE_FOLDER'; payload: string }
   | { type: 'OPEN_FILE'; payload: string }
   | { type: 'CLOSE_TAB'; payload: string }
@@ -128,6 +136,8 @@ export const initialState: AppState = {
   chatPanelVisible: true,
   bottomPanelVisible: true,
   activeBottomTab: 'terminal',
+  layoutMode: 'full-chat',
+  splitView: 'editor',
 
   fileTree: sampleFileTree,
   editorTabs: sampleEditorTabs,
@@ -182,6 +192,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, bottomPanelVisible: !state.bottomPanelVisible };
     case 'SET_BOTTOM_TAB':
       return { ...state, activeBottomTab: action.payload };
+    case 'SET_LAYOUT_MODE':
+      return { ...state, layoutMode: action.payload };
+    case 'SET_SPLIT_VIEW':
+      return { ...state, splitView: action.payload, layoutMode: 'split' };
 
     case 'TOGGLE_FOLDER': {
       const toggleInTree = (nodes: FileNode[]): FileNode[] =>
@@ -466,6 +480,8 @@ interface AppContextValue {
   setInlineAIRequest: (req: { action: string; code: string; language?: string } | null) => void;
   toggleAgentPanel: () => void;
   toggleSettings: () => void;
+  setLayoutMode: (mode: 'full-chat' | 'split' | 'full-view') => void;
+  setSplitView: (view: AppState['splitView']) => void;
   setActiveTerminal: (id: string) => void;
   addTerminalLine: (sessionId: string, line: TerminalSession['history'][0]) => void;
   // Auth helpers
@@ -526,6 +542,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'SET_INLINE_AI_REQUEST', payload: req }), []);
   const toggleAgentPanel = useCallback(() => dispatch({ type: 'TOGGLE_AGENT_PANEL' }), []);
   const toggleSettings = useCallback(() => dispatch({ type: 'TOGGLE_SETTINGS' }), []);
+  const setLayoutMode = useCallback((mode: 'full-chat' | 'split' | 'full-view') =>
+    dispatch({ type: 'SET_LAYOUT_MODE', payload: mode }), []);
+  const setSplitView = useCallback((view: AppState['splitView']) =>
+    dispatch({ type: 'SET_SPLIT_VIEW', payload: view }), []);
   const setActiveTerminal = useCallback((id: string) => dispatch({ type: 'SET_ACTIVE_TERMINAL', payload: id }), []);
   const addTerminalLine = useCallback((sessionId: string, line: TerminalSession['history'][0]) =>
     dispatch({ type: 'ADD_TERMINAL_LINE', payload: { sessionId, line } }), []);
@@ -696,6 +716,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setInlineAIRequest,
         toggleAgentPanel,
         toggleSettings,
+        setLayoutMode,
+        setSplitView,
         setActiveTerminal,
         addTerminalLine,
         login,

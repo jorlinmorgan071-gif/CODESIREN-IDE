@@ -44,9 +44,10 @@ import { ApprovalDialog } from '@/components/modals/ApprovalDialog';
 // be available the moment a relay:awaiting-user event arrives.
 import { RelayBanner } from '@/components/panels/RelayBanner';
 import { useRelay } from '@/store/RelayContext';
+import { SplitViewPicker, SplitViewContent } from '@/components/layout/SplitView';
 
 export default function Home() {
-  const { state, toggleInlineAI, toggleAgentPanel, toggleSettings, dispatch, createChatSession } = useApp();
+  const { state, toggleInlineAI, toggleAgentPanel, toggleSettings, dispatch, createChatSession, setLayoutMode, setSplitView } = useApp();
   const navigate = useNavigate();
   const relay = useRelay();
   const { isActive: voiceActive, toggleVoiceSession } = useVoiceSession();
@@ -312,7 +313,7 @@ export default function Home() {
   const deriveActiveView = (): string => {
     if (state.settingsVisible) return 'settings';
     if (state.agentPanelVisible) return 'agents';
-    if (state.chatPanelVisible) return 'chat';
+    if (state.layoutMode === 'full-chat' || state.layoutMode === 'split') return 'chat';
     if (state.bottomPanelVisible) return 'terminal';
     return 'editor';
   };
@@ -320,13 +321,21 @@ export default function Home() {
   const handleDockNavigate = (target: string) => {
     switch (target) {
       case 'chat':
-        // Show chat panel. If hidden, toggle it on. If already visible, do
-        // nothing (don't toggle off — that would leave no center panel).
-        if (!state.chatPanelVisible) dispatch({ type: 'TOGGLE_CHAT_PANEL' });
+        // Cycle through layout modes: full-view → full-chat → split → full-view
+        if (state.layoutMode === 'full-chat') {
+          setLayoutMode('split');
+        } else if (state.layoutMode === 'split') {
+          setLayoutMode('full-view');
+        } else {
+          // full-view or any other → go to full-chat
+          setLayoutMode('full-chat');
+          if (!state.chatPanelVisible) dispatch({ type: 'TOGGLE_CHAT_PANEL' });
+        }
         break;
       case 'editor':
-        // Hide chat panel so editor is fully visible, ensure explorer is open.
-        if (state.chatPanelVisible) dispatch({ type: 'TOGGLE_CHAT_PANEL' });
+        // Switch to full-view with editor
+        setLayoutMode('full-view');
+        setSplitView('editor');
         if (!state.explorerVisible) dispatch({ type: 'TOGGLE_EXPLORER' });
         break;
       case 'terminal':
@@ -424,25 +433,99 @@ export default function Home() {
         {/* File Explorer */}
         {state.explorerVisible && <FileExplorer />}
 
-        {/* Center Area: Editor + Terminal */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Editor + Chat Panel — both lazy-loaded (monaco + motion/react) */}
-          <div className="flex-1 flex overflow-hidden">
-            <Suspense fallback={null}>
-              <CodeEditor />
-            </Suspense>
-            {state.chatPanelVisible && (
-              <Suspense fallback={null}>
-                <ChatPanel />
-              </Suspense>
-            )}
-          </div>
+        {/* Center Area: layout-mode-aware */}
+        <div className="flex-1 flex flex-col overflow-hidden relative">
+          {/* Drag handles on chat edges — only visible in full-chat mode.
+              Dragging from the left or right edge splits the chat and
+              opens a view picker. */}
+          {state.layoutMode === 'full-chat' && (
+            <>
+              <div
+                className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/30 transition-colors z-30"
+                title="Drag to split — opens view picker"
+                onPointerDown={() => {
+                  // Split from the left: chat goes right, view goes left
+                  setSplitView('editor');
+                }}
+              />
+              <div
+                className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-red-500/30 transition-colors z-30"
+                title="Drag to split — opens view picker"
+                onPointerDown={() => {
+                  // Split from the right: chat goes left, view goes right
+                  setSplitView('editor');
+                }}
+              />
+            </>
+          )}
 
-          {/* Bottom Panel — lazy-loaded (xterm is heavy) */}
-          {state.bottomPanelVisible && (
+          {/* View picker overlay — shows when splitting, lets the user
+              choose what goes in the non-chat side. */}
+          {state.layoutMode === 'split' && (
+            <SplitViewPicker
+              currentView={state.splitView}
+              onSelect={(view) => setSplitView(view)}
+              onClose={() => setLayoutMode('full-chat')}
+            />
+          )}
+
+          {/* ── full-chat mode: chat fills the screen ── */}
+          {state.layoutMode === 'full-chat' && state.chatPanelVisible && (
             <Suspense fallback={null}>
-              <Terminal />
+              <ChatPanel />
             </Suspense>
+          )}
+
+          {/* ── full-view mode: view fills the screen (chat hidden) ── */}
+          {state.layoutMode === 'full-view' && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <SplitViewContent
+                view={state.splitView}
+                bottomPanelVisible={state.bottomPanelVisible}
+              />
+            </div>
+          )}
+
+          {/* ── split mode: chat + view side-by-side with resizable handle ── */}
+          {state.layoutMode === 'split' && state.chatPanelVisible && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 flex overflow-hidden">
+                {/* Chat on the left */}
+                <div className="flex-1 overflow-hidden" style={{ minWidth: 300 }}>
+                  <Suspense fallback={null}>
+                    <ChatPanel />
+                  </Suspense>
+                </div>
+
+                {/* Resizable drag handle */}
+                <div
+                  className="w-1 cursor-col-resize hover:bg-red-500/50 transition-colors flex-shrink-0"
+                  style={{ backgroundColor: 'var(--border-subtle)' }}
+                />
+
+                {/* View on the right */}
+                <div className="flex-1 overflow-hidden" style={{ minWidth: 300 }}>
+                  <SplitViewContent
+                    view={state.splitView}
+                    bottomPanelVisible={false}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Fallback: if chat is hidden and not in full-view mode, show editor */}
+          {state.layoutMode === 'full-chat' && !state.chatPanelVisible && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <Suspense fallback={null}>
+                <CodeEditor />
+              </Suspense>
+              {state.bottomPanelVisible && (
+                <Suspense fallback={null}>
+                  <Terminal />
+                </Suspense>
+              )}
+            </div>
           )}
         </div>
       </div>
