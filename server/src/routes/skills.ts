@@ -118,3 +118,30 @@ skillsRouter.post('/discover', requireAuth, async (req, res) => {
   const result = await ext.handleAction({ kind: 'discover', config: parsed.data });
   res.json(result);
 });
+
+// ── Import skills from GitHub repos ────────────────────────────────────
+// POST /api/skills/import
+//   { repo: "charlie947/social-media-skills", branch: "main" }
+//   → fetches skills/ directory, imports each SKILL.md as a TOML skill
+skillsRouter.post('/import', requireAuth, async (req, res) => {
+  const importSchema = z.object({
+    repo: z.string().min(1),
+    branch: z.string().default('main'),
+  });
+  const parsed = importSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid input', issues: parsed.error.issues });
+    return;
+  }
+  try {
+    const { importSkillsFromRepo } = await import('../skills/importer.js');
+    const results = await importSkillsFromRepo(parsed.data.repo, parsed.data.branch);
+    res.json({
+      imported: results.filter((r) => r.installed).length,
+      total: results.length,
+      skills: results,
+    });
+  } catch (err) {
+    res.status(500).json({ error: `Import failed: ${(err as Error).message}` });
+  }
+});

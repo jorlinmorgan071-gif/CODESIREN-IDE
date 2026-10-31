@@ -15,6 +15,7 @@ import { GlowButton } from '@/components/ui/glow-button';
 import { PremiumTooltip } from '@/components/ui/premium-tooltip';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { AttachmentSpinner } from '@/components/ui/loaders';
+import { api } from '@/lib/api';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -88,6 +89,18 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Siren�
   const [chatMode, setChatMode] = useState<ChatMode>('ask');
   const [webSearch, setWebSearch] = useState(false);
   const [modeDropdown, setModeDropdown] = useState(false);
+
+  // Skill autocomplete state — when the user types "/" at the start of
+  // the input, show a filterable list of installed skills. Clicking a
+  // skill auto-types "/skill-name " into the input.
+  const [skills, setSkills] = useState<{ name: string; description: string }[]>([]);
+  const [showSkillAutocomplete, setShowSkillAutocomplete] = useState(false);
+  const [skillFilter, setSkillFilter] = useState('');
+
+  // Load installed skills on mount (for / command autocomplete)
+  useEffect(() => {
+    api.listSkills().then(setSkills).catch(() => {});
+  }, []);
 
   // Model selector state
   const [engines, setEngines] = useState<EngineInfo[]>([]);
@@ -354,7 +367,20 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Siren�
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => { setText(e.target.value); }}
+          onChange={(e) => {
+            const newText = e.target.value;
+            setText(newText);
+            // Show skill autocomplete when user types "/" at the start
+            // or after a space. Extract the filter from the text after "/".
+            const slashMatch = newText.match(/(?:^|\s)\/(\w*)$/);
+            if (slashMatch) {
+              setShowSkillAutocomplete(true);
+              setSkillFilter(slashMatch[1].toLowerCase());
+            } else {
+              setShowSkillAutocomplete(false);
+              setSkillFilter('');
+            }
+          }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder={isRecording ? 'Listening…' : placeholder}
@@ -363,6 +389,57 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Siren�
           className="w-full bg-transparent text-[13px] leading-relaxed resize-none outline-none px-4 pt-3 pb-2"
           style={{ color: 'var(--bright-silver)', minHeight: 42, maxHeight: 200 }}
         />
+
+        {/* Skill autocomplete — shows when user types "/" */}
+        <AnimatePresence>
+          {showSkillAutocomplete && skills.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 4 }}
+              transition={{ duration: 0.15 }}
+              className="absolute bottom-full mb-2 left-0 right-0 max-h-48 overflow-y-auto rounded-lg z-50"
+              style={{
+                backgroundColor: 'var(--surface-raised)',
+                border: '1px solid var(--border-subtle)',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+              }}
+            >
+              <div className="px-3 py-1.5 text-[9px] uppercase tracking-wider" style={{ color: 'var(--muted-silver)', borderBottom: '1px solid var(--border-subtle)' }}>
+                Skills — click to insert
+              </div>
+              {skills
+                .filter((s) => !skillFilter || s.name.toLowerCase().includes(skillFilter) || s.description.toLowerCase().includes(skillFilter))
+                .slice(0, 8)
+                .map((skill) => (
+                  <button
+                    key={skill.name}
+                    onClick={() => {
+                      // Replace the "/filter" with the full skill name
+                      const newText = text.replace(/(?:^|\s)\/(\w*)$/, ` /${skill.name} `);
+                      setText(newText);
+                      setShowSkillAutocomplete(false);
+                      setSkillFilter('');
+                      textareaRef.current?.focus();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-[11px] transition-colors hover:bg-[var(--surface-dark)]"
+                  >
+                    <span className="font-mono font-medium" style={{ color: 'var(--siren-red)' }}>
+                      /{skill.name}
+                    </span>
+                    <span className="flex-1 truncate" style={{ color: 'var(--muted-silver)' }}>
+                      {skill.description}
+                    </span>
+                  </button>
+                ))}
+              {skills.filter((s) => !skillFilter || s.name.toLowerCase().includes(skillFilter)).length === 0 && (
+                <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--muted-silver)' }}>
+                  No skills match "{skillFilter}"
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Footer: action icons + model selector + send */}
         <div className="flex items-center justify-between px-3 pb-2.5 pt-1">

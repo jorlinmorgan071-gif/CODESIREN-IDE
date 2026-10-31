@@ -351,3 +351,28 @@ toolRegistry.register({
     };
   },
 });
+
+// ── ai-prompt tool ─────────────────────────────────────────────────────
+// Used by imported GitHub skills (SKILL.md format). The skill's markdown
+// instructions are passed as the "instructions" arg. The tool returns
+// the instructions so the agent receives them as context — the agent
+// then follows the instructions to complete the task.
+toolRegistry.register({
+  name: 'ai-prompt',
+  description: 'Execute a prompt-based skill. Args: { "instructions": "the full markdown instructions from the skill" } — the instructions are returned as context for the agent to follow.',
+  async execute(args) {
+    const instructions = String(args.instructions ?? '').trim();
+    if (!instructions) {
+      return { name: 'ai-prompt', content: 'Missing "instructions" arg', success: false };
+    }
+    // Return the instructions as content — the agent receives them and
+    // follows the skill's guidance. This is how prompt-based skills work:
+    // they're instructions, not code.
+    return {
+      name: 'ai-prompt',
+      content: `[Skill Instructions]\n${instructions}`,
+      success: true,
+      meta: { skillType: 'prompt-based', length: instructions.length },
+    };
+  },
+});

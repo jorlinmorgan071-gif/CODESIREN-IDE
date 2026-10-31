@@ -181,6 +181,14 @@ export const api = {
     return request('/orchestrator/complete', { method: 'POST', body: JSON.stringify(input), signal: options.signal });
   },
 
+  // ── Skills Vault ──────────────────────────────────────────────────────
+  listSkills(): Promise<{ name: string; version: string; description: string }[]> {
+    return request('/skills');
+  },
+  importSkills(repo: string, branch: string = 'main'): Promise<{ imported: number; total: number; skills: { name: string; description: string; source: string; installed: boolean }[] }> {
+    return request('/skills/import', { method: 'POST', body: JSON.stringify({ repo, branch }) });
+  },
+
   editorExplain(input: { code: string; language?: string; sessionId: string; projectId?: string }): Promise<{ explanation: string; evidence: DirectEditorEvidence }> {
     return request('/orchestrator/explain', { method: 'POST', body: JSON.stringify(input) });
   },
