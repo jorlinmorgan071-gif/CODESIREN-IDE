@@ -46,14 +46,14 @@ describe('UPR Phase 5 — Image/Video Generation Routing', () => {
     mockProviders.length = 0;
     mockGhostState.state = 'inactive';
     mockGhostState.resolution = null;
-    setImageGenerationApprovalToggle(true); // reset to default (on)
+    setImageGenerationApprovalToggle('test-user', true); // reset to default (on)
   });
 
   // ── Toggle behavior ────────────────────────────────────────────────
 
   it('TEST 1: toggle ON → approval returns immediately (zero friction)', async () => {
-    setImageGenerationApprovalToggle(true);
-    expect(getImageGenerationApprovalToggle()).toBe(true);
+    setImageGenerationApprovalToggle('test-user', true);
+    expect(getImageGenerationApprovalToggle('test-user')).toBe(true);
 
     // checkImageGenerationApproval should return 'approved' without going through Ghost Mode
     const mockTask = {
@@ -69,8 +69,8 @@ describe('UPR Phase 5 — Image/Video Generation Routing', () => {
   });
 
   it('TEST 2: toggle OFF → approval goes through Ghost Mode (blocks until resolved)', async () => {
-    setImageGenerationApprovalToggle(false);
-    expect(getImageGenerationApprovalToggle()).toBe(false);
+    setImageGenerationApprovalToggle('test-user', false);
+    expect(getImageGenerationApprovalToggle('test-user')).toBe(false);
 
     // Simulate Ghost Mode approving after a moment
     mockGhostState.state = 'awaiting_approval';

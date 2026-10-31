@@ -292,8 +292,9 @@ import {
   findImageProvider,
 } from '../orchestration/image-generation.js';
 
-modelsRouter.get('/image-gen/toggle', requireAuth, (_req, res) => {
-  res.json({ allowEveryRequest: getImageGenerationApprovalToggle() });
+modelsRouter.get('/image-gen/toggle', requireAuth, (req, res) => {
+  const userId = req.user!.id;
+  res.json({ allowEveryRequest: getImageGenerationApprovalToggle(userId) });
 });
 
 modelsRouter.post('/image-gen/toggle', requireAuth, (req, res) => {
@@ -302,7 +303,8 @@ modelsRouter.post('/image-gen/toggle', requireAuth, (req, res) => {
     res.status(400).json({ error: 'Missing boolean "allowEveryRequest" in body' });
     return;
   }
-  setImageGenerationApprovalToggle(enabled);
+  const userId = req.user!.id;
+  setImageGenerationApprovalToggle(userId, enabled);
   res.json({ success: true, allowEveryRequest: enabled });
 });
 

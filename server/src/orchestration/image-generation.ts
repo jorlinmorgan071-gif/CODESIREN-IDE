@@ -21,17 +21,21 @@ import { ghostMode } from './ghost-mode.js';
 import { addStep } from '../observability/traces.js';
 import type { AgentTask } from '../types.js';
 
-// ── Toggle state (in-memory, per-session) ──────────────────────────────
+// ── Toggle state (in-memory, per-user session) ────────────────────────
+// Each user can independently control whether image generation requests
+// require approval each time or are auto-approved for the session.
+// Default: ON (zero friction) — agents generate images without asking.
 
-let allowEveryRequest = true; // default: on (zero friction)
+const userToggleState = new Map<string, boolean>(); // userId → allowEveryRequest
 
-export function setImageGenerationApprovalToggle(enabled: boolean): void {
-  allowEveryRequest = enabled;
-  console.log(`[image-gen] approval toggle: ${enabled ? 'ON (allow every request)' : 'OFF (require approval)'}`);
+export function setImageGenerationApprovalToggle(userId: string, enabled: boolean): void {
+  userToggleState.set(userId, enabled);
+  console.log(`[image-gen] approval toggle for user ${userId}: ${enabled ? 'ON (allow every request)' : 'OFF (require approval)'}`);
 }
 
-export function getImageGenerationApprovalToggle(): boolean {
-  return allowEveryRequest;
+export function getImageGenerationApprovalToggle(userId: string): boolean {
+  // Default: ON (zero friction) if no per-user state exists
+  return userToggleState.get(userId) ?? true;
 }
 
 // ── Find a configured image-video provider ────────────────────────────
@@ -468,7 +472,8 @@ export async function checkImageGenerationApproval(
   prompt: string,
   signal: AbortSignal,
 ): Promise<'approved' | 'rejected' | 'timeout' | 'aborted'> {
-  if (allowEveryRequest) {
+  const userId = task.context.userId ?? 'unknown';
+  if (getImageGenerationApprovalToggle(userId)) {
     return 'approved';
   }
 

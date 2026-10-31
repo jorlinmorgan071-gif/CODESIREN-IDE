@@ -9,7 +9,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Send, Paperclip, Camera, Mic, Radio, Folder, X, ChevronDown,
-  Play, Loader2, Globe, Brain, Bug, Hammer, Search,
+  Play, Loader2, Globe, Brain, Bug, Hammer, Search, Image as ImageIcon,
 } from 'lucide-react';
 import { GlowButton } from '@/components/ui/glow-button';
 import { PremiumTooltip } from '@/components/ui/premium-tooltip';
@@ -97,9 +97,13 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Sirenâ
   const [showSkillAutocomplete, setShowSkillAutocomplete] = useState(false);
   const [skillFilter, setSkillFilter] = useState('');
 
-  // Load installed skills on mount (for / command autocomplete)
+  // Image generation auto-approve toggle state (per-session)
+  const [imageGenAuto, setImageGenAuto] = useState(true);
+
+  // Load installed skills + image gen toggle state on mount
   useEffect(() => {
     api.listSkills().then(setSkills).catch(() => {});
+    api.getImageGenToggle().then((res) => setImageGenAuto(res.allowEveryRequest)).catch(() => {});
   }, []);
 
   // Model selector state
@@ -571,6 +575,32 @@ export function ChatInput({ onSend, disabled, placeholder = 'Message Code Sirenâ
                 }}
               >
                 <Globe className={`w-4 h-4 ${webSearch ? 'animate-pulse' : ''}`} />
+              </button>
+            </PremiumTooltip>
+
+            {/* Image generation auto-approve toggle (per-session)
+                When ON: agents can generate images without asking each time.
+                When OFF: each image generation request goes through the
+                approval gate (Ghost Mode's reportFinding + waitForApproval). */}
+            <PremiumTooltip text={imageGenAuto ? 'Image gen: auto-approve ON' : 'Image gen: approve each'} position="top">
+              <button
+                onClick={async () => {
+                  const newVal = !imageGenAuto;
+                  setImageGenAuto(newVal);
+                  try {
+                    await api.setImageGenToggle(newVal);
+                  } catch {
+                    // Revert on error
+                    setImageGenAuto(!newVal);
+                  }
+                }}
+                className="p-1.5 rounded-md transition-colors hover:bg-[var(--surface-raised)]"
+                style={{
+                  color: imageGenAuto ? 'var(--siren-red)' : 'var(--muted-silver)',
+                  backgroundColor: imageGenAuto ? 'rgba(238, 28, 28, 0.08)' : 'transparent',
+                }}
+              >
+                <ImageIcon className={`w-4 h-4 ${imageGenAuto ? 'animate-pulse' : ''}`} />
               </button>
             </PremiumTooltip>
           </div>

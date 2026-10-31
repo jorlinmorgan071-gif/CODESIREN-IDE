@@ -189,6 +189,14 @@ export const api = {
     return request('/skills/import', { method: 'POST', body: JSON.stringify({ repo, branch }) });
   },
 
+  // ── Image generation approval toggle (per-session) ───────────────────
+  getImageGenToggle(): Promise<{ allowEveryRequest: boolean }> {
+    return request('/models/image-gen/toggle');
+  },
+  setImageGenToggle(allowEveryRequest: boolean): Promise<{ success: boolean; allowEveryRequest: boolean }> {
+    return request('/models/image-gen/toggle', { method: 'POST', body: JSON.stringify({ allowEveryRequest }) });
+  },
+
   editorExplain(input: { code: string; language?: string; sessionId: string; projectId?: string }): Promise<{ explanation: string; evidence: DirectEditorEvidence }> {
     return request('/orchestrator/explain', { method: 'POST', body: JSON.stringify(input) });
   },
