@@ -189,7 +189,7 @@ export type ExecutionMode = 'single-shot' | 'react' | 'codeact';
 
 export type AgentEventName =
   | 'agent:start' | 'agent:chunk' | 'agent:progress' | 'agent:step' | 'agent:complete'
-  | 'agent:error' | 'agent:status'
+  | 'agent:error' | 'agent:status' | 'agent:thinking' | 'agent:tool-call'
   | 'task:stale-detected' | 'task:recovery-needed' | 'task:recovery-switch'
   | 'meeting:start' | 'meeting:proposal' | 'meeting:decision'
   | 'ghost:detection' | 'ghost:plan' | 'ghost:fix' | 'ghost:rollback'

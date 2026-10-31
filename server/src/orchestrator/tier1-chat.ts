@@ -120,6 +120,16 @@ export async function streamTier1Chat(
 
   console.log(`[orchestrator:tier1] streaming chat via ${model} (session ${sessionId})`);
 
+  // Broadcast thinking events so the UI can show the AI's process in real-time.
+  // This mirrors the reference UX: "Thought Process → Analyzing input →
+  // Retrieving context → Generating response" with a live spinner.
+  broadcast(makeEvent('agent:thinking' as any, {
+    taskId, sessionId,
+    phase: 'analyzing',
+    message: 'Analyzing your message',
+    ts: Date.now(),
+  }, scope));
+
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -141,6 +151,14 @@ export async function streamTier1Chat(
       return;
     }
 
+    // Broadcast: context retrieved, now generating
+    broadcast(makeEvent('agent:thinking' as any, {
+      taskId, sessionId,
+      phase: 'generating',
+      message: 'Generating response',
+      ts: Date.now(),
+    }, scope));
+
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -159,6 +177,13 @@ export async function streamTier1Chat(
         if (data === '[DONE]') {
           // Append the assistant response to history for future turns
           appendSessionMessage(sessionId, { role: 'assistant', content: fullResponse }, scope);
+          // Broadcast thinking complete so the UI can fade out the panel
+          broadcast(makeEvent('agent:thinking' as any, {
+            taskId, sessionId,
+            phase: 'complete',
+            message: 'Response ready',
+            ts: Date.now(),
+          }, scope));
           broadcast(makeEvent('orchestrator:complete' as any, { taskId, sessionId }, scope));
           return;
         }

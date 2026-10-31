@@ -17,6 +17,7 @@ import type { AgentEvent } from '@/types';
 import { ChatBubble, type ChatMessage, type BubbleStyle } from './elements/ChatBubble';
 import { ChatInput } from './elements/ChatInput';
 import { TaskProgressPanel } from './TaskProgressPanel';
+import { ThoughtProcessPanel } from './ThoughtProcessPanel';
 import { RecoveryPanel } from './RecoveryPanel';
 import { getActiveEditorContent, getActiveEditorSelection } from '@/components/editor/CodeEditor';
 import { RotatingLoader } from '@/components/ui/loaders';
@@ -508,7 +509,13 @@ export function ChatPanel() {
         {/* Recovery panel — shows when a task stalls or fails (Phase 4/5) */}
         <RecoveryPanel />
 
-        {/* Task progress panel — visual step tracker (Phase 5) */}
+        {/* Thought Process panel — shows AI thinking + tool calls in real-time.
+            Renders for EVERY chat message (normal chat + agent tasks). */}
+        {isGenerating && activeTaskId && (
+          <ThoughtProcessPanel taskId={activeTaskId} />
+        )}
+
+        {/* Task progress panel — visual step tracker (Phase 5, agent tasks only) */}
         {isGenerating && activeTaskId && (
           <TaskProgressPanel taskId={activeTaskId} />
         )}

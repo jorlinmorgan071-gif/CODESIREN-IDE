@@ -181,6 +181,8 @@ export type AgentEventName =
   | 'agent:complete'
   | 'agent:error'
   | 'agent:status'
+  | 'agent:thinking'
+  | 'agent:tool-call'
   | 'meeting:start'
   | 'meeting:proposal'
   | 'meeting:decision'
