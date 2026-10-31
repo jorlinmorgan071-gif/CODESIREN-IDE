@@ -26,6 +26,7 @@ import { defaultTheme, applyTheme } from './themes';
 import { api } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import { getToken, getUser, setAuth, clearAuth } from '@/lib/auth';
+import { saveChats, loadChats, saveActiveChatId, loadActiveChatId, generateChatTitle, needsAutoName, clearSavedChats } from '@/lib/chat-persistence';
 
 export interface AppState {
   // Navigation
@@ -100,6 +101,8 @@ export type AppAction =
   | { type: 'SET_ACTIVE_FILE'; payload: string }
   | { type: 'SET_ACTIVE_CHAT'; payload: string }
   | { type: 'CREATE_CHAT_SESSION'; payload: { session: ChatSession } }
+  | { type: 'RENAME_CHAT_SESSION'; payload: { sessionId: string; name: string } }
+  | { type: 'DELETE_CHAT_SESSION'; payload: { sessionId: string } }
   | { type: 'ADD_CHAT_MESSAGE'; payload: { sessionId: string; message: ChatMessage } }
   | { type: 'SET_GHOST_MODE'; payload: GhostMode }
   | { type: 'SET_THEME'; payload: ThemeName }
@@ -327,6 +330,28 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         chatSessions: [...state.chatSessions, action.payload.session],
       };
 
+    case 'RENAME_CHAT_SESSION':
+      return {
+        ...state,
+        chatSessions: state.chatSessions.map((s) =>
+          s.id === action.payload.sessionId
+            ? { ...s, name: action.payload.name }
+            : s
+        ),
+      };
+
+    case 'DELETE_CHAT_SESSION': {
+      const remaining = state.chatSessions.filter((s) => s.id !== action.payload.sessionId);
+      const newActiveId = state.activeChatId === action.payload.sessionId
+        ? (remaining[0]?.id ?? '')
+        : state.activeChatId;
+      return {
+        ...state,
+        chatSessions: remaining,
+        activeChatId: newActiveId,
+      };
+    }
+
     case 'ADD_CHAT_MESSAGE': {
       const { sessionId, message } = action.payload;
       return {
@@ -467,6 +492,8 @@ interface AppContextValue {
   setActiveFile: (id: string) => void;
   setActiveChat: (id: string) => void;
   createChatSession: (session: ChatSession) => void;
+  renameChatSession: (sessionId: string, name: string) => void;
+  deleteChatSession: (sessionId: string) => void;
   addChatMessage: (sessionId: string, message: ChatMessage) => void;
   updateChatMessage: (sessionId: string, messageId: string, patch: Partial<ChatMessage>) => void;
   // Phase A — Monaco IDE Intelligence: live diagnostics.
@@ -492,7 +519,62 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(appReducer, initialState);
+  // ── Load saved chats on boot (before useReducer init) ────────────────
+  // We lazy-init the reducer with saved chats merged into the initial state
+  // so the user sees their previous conversations immediately on launch.
+  const [state, dispatch] = useReducer(appReducer, initialState, (init) => {
+    try {
+      const saved = loadChats();
+      const savedActiveId = loadActiveChatId();
+      if (saved && saved.length > 0) {
+        const restoredSessions = saved.map((s) => ({
+          id: s.id,
+          name: s.name,
+          messages: s.messages,
+          isActive: false,
+        }));
+        // Merge: keep sample sessions only if no saved ones exist
+        const activeId = savedActiveId && restoredSessions.some((s) => s.id === savedActiveId)
+          ? savedActiveId
+          : restoredSessions[0]?.id ?? init.activeChatId;
+        return {
+          ...init,
+          chatSessions: restoredSessions,
+          activeChatId: activeId,
+        };
+      }
+    } catch {
+      // ignore — fall through to default initial state
+    }
+    return init;
+  });
+
+  // ── Auto-save chats to localStorage on every change (debounced) ─────
+  useEffect(() => {
+    saveChats(state.chatSessions);
+  }, [state.chatSessions]);
+
+  // ── Save active chat ID when it changes ──────────────────────────────
+  useEffect(() => {
+    if (state.activeChatId) {
+      saveActiveChatId(state.activeChatId);
+    }
+  }, [state.activeChatId]);
+
+  // ── Auto-name chats: when a "New Chat" session gets its first user
+  //    message, generate a title from the message. This runs after every
+  //    chatSessions change and dispatches a rename if needed. ──────────
+  useEffect(() => {
+    for (const session of state.chatSessions) {
+      if (needsAutoName(session)) {
+        const firstUserMsg = session.messages.find((m) => m.role === 'user' && m.content.trim());
+        if (firstUserMsg) {
+          const title = generateChatTitle(firstUserMsg.content);
+          dispatch({ type: 'RENAME_CHAT_SESSION', payload: { sessionId: session.id, name: title } });
+        }
+      }
+    }
+  }, [state.chatSessions]);
 
   const toggleFolder = useCallback((id: string) => dispatch({ type: 'TOGGLE_FOLDER', payload: id }), []);
   const openFile = useCallback((id: string) => {
@@ -517,6 +599,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setActiveChat = useCallback((id: string) => dispatch({ type: 'SET_ACTIVE_CHAT', payload: id }), []);
   const createChatSession = useCallback((session: ChatSession) =>
     dispatch({ type: 'CREATE_CHAT_SESSION', payload: { session } }), []);
+  const renameChatSession = useCallback((sessionId: string, name: string) =>
+    dispatch({ type: 'RENAME_CHAT_SESSION', payload: { sessionId, name } }), []);
+  const deleteChatSession = useCallback((sessionId: string) =>
+    dispatch({ type: 'DELETE_CHAT_SESSION', payload: { sessionId } }), []);
   const addChatMessage = useCallback((sessionId: string, message: ChatMessage) =>
     dispatch({ type: 'ADD_CHAT_MESSAGE', payload: { sessionId, message } }), []);
   // D10 #3 closeout — setGhostMode now ALSO calls POST /api/ghost-mode/level
@@ -609,6 +695,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(() => {
     clearAuth();
+    clearSavedChats();
     wsClient.disconnect();
     dispatch({ type: 'LOGOUT' });
   }, []);
@@ -704,6 +791,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setActiveFile,
         setActiveChat,
         createChatSession,
+        renameChatSession,
+        deleteChatSession,
         addChatMessage,
         updateChatMessage,
         updateProblems,
