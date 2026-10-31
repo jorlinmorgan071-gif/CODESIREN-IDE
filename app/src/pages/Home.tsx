@@ -353,6 +353,9 @@ export default function Home() {
       case 'dashboard':
         navigate('/dashboard');
         break;
+      case 'models':
+        navigate('/models');
+        break;
       case 'settings':
         toggleSettings();
         break;

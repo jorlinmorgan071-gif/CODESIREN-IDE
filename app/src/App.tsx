@@ -12,6 +12,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const BrainView = lazy(() => import('./pages/BrainView'));
 const FaceView = lazy(() => import('./pages/FaceView'));
 const AvatarShowcase = lazy(() => import('./pages/AvatarShowcase'));
+const ModelRouter = lazy(() => import('./pages/ModelRouter'));
 
 function Fallback() {
   return (
@@ -61,6 +62,14 @@ export default function App() {
                 element={
                   <Suspense fallback={<Fallback />}>
                     <AvatarShowcase />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/models"
+                element={
+                  <Suspense fallback={<Fallback />}>
+                    <ModelRouter />
                   </Suspense>
                 }
               />

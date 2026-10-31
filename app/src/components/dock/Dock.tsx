@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
 import {
-  MessageSquare, Code, TerminalSquare, Bot, LayoutDashboard, Settings, Brain, Radio,
+  MessageSquare, Code, TerminalSquare, Bot, LayoutDashboard, Settings, Brain, Radio, Cpu,
 } from 'lucide-react';
 import { PremiumTooltip } from '@/components/ui/premium-tooltip';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
@@ -42,6 +42,7 @@ export function Dock({ onNavigate, activeView }: DockProps) {
     { id: 'editor', label: 'Editor', icon: Code, onClick: () => onNavigate('editor') },
     { id: 'terminal', label: 'Terminal', icon: TerminalSquare, onClick: () => onNavigate('terminal') },
     { id: 'agents', label: 'Agents', icon: Bot, onClick: () => onNavigate('agents') },
+    { id: 'models', label: 'Model Router', icon: Cpu, onClick: () => onNavigate('models') },
     { id: 'brain', label: 'Brain', icon: Brain, onClick: () => onNavigate('brain') },
     { id: 'face', label: 'Face', icon: Radio, onClick: () => onNavigate('face') },
     { id: 'dashboard', label: 'Mission Control', icon: LayoutDashboard, onClick: () => onNavigate('dashboard') },
