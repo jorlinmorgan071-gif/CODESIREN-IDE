@@ -208,6 +208,43 @@ class AgentManager {
     const bundle = await this.assembleContextBundle(task);
     if (bundle) {
       task.contextBundle = bundle;
+
+      // ── Context limit detection ───────────────────────────────────────
+      // When the context budget HARD FLOOR is hit (used > max), broadcast
+      // task:context-exceeded so the RecoveryPanel can show the user the
+      // problem + offer two fixes: (1) switch to a provider with a larger
+      // context window, (2) manually pick a provider+model for this agent.
+      if (bundle.tokenBudget.used > bundle.tokenBudget.max) {
+        const { broadcast, makeEvent } = await import('../ws/events.js');
+        const { listProviders } = await import('../provider-registry/registry.js');
+        const { getRoutingForAgent } = await import('./agent-routing.js');
+
+        const routing = getRoutingForAgent(agent.id);
+        const currentProvider = routing?.providerId ?? 'default';
+        const currentModel = routing?.modelId ?? 'default';
+        const allProviders = listProviders().filter((p: any) => p.category === 'llm' && p.apiKey);
+
+        broadcast(makeEvent('task:context-exceeded' as any, {
+          taskId: task.id,
+          agentId: agent.id,
+          haltReason: 'Context window exceeded',
+          errorMessage: `Context used ${bundle.tokenBudget.used} tokens but the model window is ${bundle.tokenBudget.max}. Context was truncated but may be insufficient.`,
+          remediation: 'Switch to a provider with a larger context window, or reduce the amount of context.',
+          currentProvider,
+          currentModel,
+          currentContextWindow: bundle.tokenBudget.max,
+          usedTokens: bundle.tokenBudget.used,
+          truncated: bundle.tokenBudget.truncated,
+          availableAlternatives: allProviders.map((p: any) => ({
+            providerId: p.id,
+            providerName: p.displayName,
+            modelId: p.models[0]?.id ?? '',
+            modelName: p.models[0]?.name ?? '',
+            contextWindow: p.models[0]?.contextWindow ?? 0,
+            isFree: p.models[0]?.costTier === 'free',
+          })).filter((a: any) => a.contextWindow > bundle.tokenBudget.used),
+        }, scope));
+      }
       addStep(task.id, {
         kind: 'llm-call',
         label: `context bundle assembled — used=${bundle.tokenBudget.used}/${bundle.tokenBudget.max} tokens, ${bundle.tokenBudget.truncated.length} source(s) truncated`,

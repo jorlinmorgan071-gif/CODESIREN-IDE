@@ -219,6 +219,10 @@ export type AgentEventName =
   | 'memory:created'
   | 'memory:deleted'
   | 'memory:searched'
+  // Task recovery events
+  | 'task:stale-detected'
+  | 'task:recovery-needed'
+  | 'task:context-exceeded'
   // Face Avatar + Live Voice Pipeline events
   | 'voice:transcript'
   | 'voice:agent-start'

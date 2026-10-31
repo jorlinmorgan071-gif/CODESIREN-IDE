@@ -10,7 +10,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { wsClient } from '@/lib/ws';
 import type { AgentEvent, AgentEventName } from '@/types';
-import { AlertTriangle, Loader2, X, ArrowRightCircle } from 'lucide-react';
+import { AlertTriangle, Loader2, X, ArrowRightCircle, ChevronDown, Settings2 } from 'lucide-react';
 
 interface DiagnosticData {
   taskId: string;
@@ -41,6 +41,7 @@ export function RecoveryPanel() {
   const [diagnostic, setDiagnostic] = useState<DiagnosticData | null>(null);
   const [switching, setSwitching] = useState(false);
   const [switchResult, setSwitchResult] = useState<string | null>(null);
+  const [showManualPicker, setShowManualPicker] = useState(false);
 
   useEffect(() => {
     // Listen for task:recovery-needed (Phase 4's recovery flow)
@@ -85,9 +86,58 @@ export function RecoveryPanel() {
     const offRecovery = wsClient.on('task:recovery-needed' as AgentEventName, handleRecoveryNeeded);
     const offStale = wsClient.on('task:stale-detected' as AgentEventName, handleStaleDetected);
 
+    // ── Context limit exceeded handler ──────────────────────────────────
+    // When an agent hits its context window limit, the server broadcasts
+    // task:context-exceeded. This handler maps the payload to the same
+    // DiagnosticData format so the existing panel renders it.
+    const handleContextExceeded = (evt: AgentEvent) => {
+      const data = evt.payload as {
+        taskId: string;
+        agentId: string;
+        haltReason: string;
+        errorMessage: string;
+        remediation: string;
+        currentProvider: string;
+        currentModel: string;
+        currentContextWindow: number;
+        usedTokens: number;
+        truncated: string[];
+        availableAlternatives: Array<{
+          providerId: string;
+          providerName: string;
+          modelId: string;
+          modelName: string;
+          contextWindow: number;
+          isFree: boolean;
+        }>;
+      };
+
+      setDiagnostic({
+        taskId: data.taskId,
+        agentId: data.agentId,
+        haltReason: data.haltReason,
+        errorMessage: data.errorMessage,
+        remediation: data.remediation,
+        currentProvider: data.currentProvider,
+        currentModel: data.currentModel,
+        availableAlternatives: data.availableAlternatives,
+        resumptionPoint: {
+          shouldResume: true,
+          resumeFromStep: null,
+          reason: `Context used ${data.usedTokens} / ${data.currentContextWindow} tokens`,
+          completedSteps: 0,
+          totalSteps: 0,
+        },
+      });
+      setSwitchResult(null);
+    };
+
+    const offContext = wsClient.on('task:context-exceeded' as AgentEventName, handleContextExceeded);
+
     return () => {
       offRecovery();
       offStale();
+      offContext();
     };
   }, []);
 
@@ -218,6 +268,65 @@ export function RecoveryPanel() {
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Manual per-agent picker — fix option 2: "review the specific
+                agent manually and fix it by switching its provider and model" */}
+            {!switchResult && (
+              <div>
+                <button
+                  onClick={() => setShowManualPicker(!showManualPicker)}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors"
+                  style={{ backgroundColor: 'var(--surface-dark)', border: '1px solid var(--border-subtle)' }}
+                >
+                  <Settings2 className="w-3 h-3" style={{ color: 'var(--steel-silver)' }} />
+                  <span className="text-[11px] flex-1" style={{ color: 'var(--steel-silver)' }}>
+                    Manually pick a provider for agent: {diagnostic.agentId}
+                  </span>
+                  <ChevronDown className="w-3 h-3" style={{ color: 'var(--muted-silver)' }} />
+                </button>
+                <AnimatePresence>
+                  {showManualPicker && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="space-y-1 mt-1.5">
+                        {diagnostic.availableAlternatives.map((alt) => (
+                          <button
+                            key={`manual-${alt.providerId}-${alt.modelId}`}
+                            onClick={() => {
+                              handleSwitch(alt.providerId, alt.modelId);
+                              setShowManualPicker(false);
+                            }}
+                            disabled={switching}
+                            className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors disabled:opacity-60"
+                            style={{ backgroundColor: 'var(--surface-dark)', border: '1px solid var(--border-subtle)' }}
+                          >
+                            {switching ? (
+                              <Loader2 className="w-3 h-3 animate-spin" style={{ color: 'var(--steel-silver)' }} />
+                            ) : (
+                              <ArrowRightCircle className="w-3 h-3" style={{ color: 'var(--siren-red)' }} />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px]" style={{ color: 'var(--bright-silver)' }}>
+                                {alt.modelName}
+                              </div>
+                              <div className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>
+                                {alt.providerName}
+                                {alt.isFree && ' · Free'}
+                                {alt.contextWindow > 0 && ` · ${(alt.contextWindow / 1000).toFixed(0)}K context`}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             )}
 
