@@ -127,6 +127,20 @@ function posTrack(
   return new THREE.VectorKeyframeTrack(`${bone}.position`, times, values);
 }
 
+// Helper: build a scale keyframe track for a bone.
+function scaleTrack(
+  bone: BoneName,
+  keyframes: KeyframeVec3[],
+): THREE.VectorKeyframeTrack {
+  const times: number[] = [];
+  const values: number[] = [];
+  for (const kf of keyframes) {
+    times.push(kf.time);
+    values.push(kf.value[0], kf.value[1], kf.value[2]);
+  }
+  return new THREE.VectorKeyframeTrack(`${bone}.scale`, times, values);
+}
+
 // Helper: convert Euler degrees to quaternion [x, y, z, w].
 function eulerDeg(degX: number, degY: number, degZ: number): [number, number, number, number] {
   const q = new THREE.Quaternion().setFromEuler(
@@ -146,6 +160,8 @@ const IDENTITY: [number, number, number, number] = [0, 0, 0, 1];
 // ── Clip builders ───────────────────────────────────────────────────
 
 // A relaxed standing idle with gentle breathing and subtle weight shift.
+// Includes chest bone scaling for visible breathing (fixes "flat chest"
+// glitch on some VRM models like yinlin).
 function buildStandingIdle(): THREE.AnimationClip {
   const duration = 6;
   const t = (s: number) => s;
@@ -162,6 +178,16 @@ function buildStandingIdle(): THREE.AnimationClip {
     { time: t(3), value: IDENTITY },
     { time: t(4.5), value: eulerDeg(-1, 0, -0.5) },
     { time: t(6), value: IDENTITY },
+  ];
+  // Chest breathing — subtle scale on the Z axis (forward expansion)
+  // This makes the chest visibly expand/contract, simulating breathing.
+  // Without this, some VRM models (like yinlin) appear flat/empty.
+  const chestScale: KeyframeVec3[] = [
+    { time: t(0), value: [1, 1, 1] },
+    { time: t(1.5), value: [1, 1, 1.04] }, // expand on inhale
+    { time: t(3), value: [1, 1, 1] },
+    { time: t(4.5), value: [1, 1, 0.98] }, // contract on exhale
+    { time: t(6), value: [1, 1, 1] },
   ];
   const headRot: KeyframeQuat[] = [
     { time: t(0), value: IDENTITY },
@@ -182,6 +208,7 @@ function buildStandingIdle(): THREE.AnimationClip {
   return new THREE.AnimationClip('standing-idle', duration, [
     posTrack('hips', hipsY),
     quatTrack('spine', spineRot),
+    scaleTrack('chest', chestScale),
     quatTrack('head', headRot),
     quatTrack('leftUpperArm', leftArmRot),
     quatTrack('rightUpperArm', rightArmRot),

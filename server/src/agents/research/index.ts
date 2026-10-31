@@ -4,8 +4,8 @@
 //
 // Phase C Agent 8: HARDENED from 33-line chat-only stub to real IAgent with
 // 3 programmatic capabilities:
-//   1. search(query, numResults) — calls z-ai SDK's web_search function
-//   2. fetchPage(url) — calls z-ai SDK's page_reader function
+//   1. search(query, numResults) — calls DuckDuckGo API's web_search function
+//   2. fetchPage(url) — calls DuckDuckGo API's page_reader function
 //   3. research(query) — orchestrates search → fetch → LLM synthesis with
 //      ENFORCED source citation
 //
@@ -17,11 +17,11 @@
 //   modelRouter.stream, confirm it's not called on search failure).
 //
 // ENVIRONMENTAL DEPENDENCY (documented per user directive):
-//   The z-ai SDK authenticates via /etc/.z-ai-config — a system-level file
+//   The DuckDuckGo API authenticates via /etc/.DuckDuckGo-config — a system-level file
 //   baked into the sandbox image (root:root, 0444 permissions). It is MORE
 //   DURABLE than .git/ or node_modules/ (which live on the user data volume
 //   and get wiped on sandbox resets), but it is NOT guaranteed permanent —
-//   if the sandbox image itself is rebuilt without the z-ai SDK pre-installed,
+//   if the sandbox image itself is rebuilt without the DuckDuckGo API pre-installed,
 //   both the CLI binary and the config would vanish.
 //
 //   At runtime, search() and fetchPage() check for SDK availability. If the
@@ -87,90 +87,97 @@ export class ResearchAgent extends IAgent {
   readonly color = '#84CC16';
   constructor() { super(0.81); }
 
-  // Cached SDK instance (lazy-initialized, same pattern as tts-provider.ts)
-  private zaiInstance: any | null = null;
 
-  /**
-   * Initialize the z-ai SDK. Returns null if unavailable.
-   *
-   * ENVIRONMENTAL DEPENDENCY: The SDK authenticates via /etc/.z-ai-config
-   * (system-level, part of the sandbox image). If this file or the SDK
-   * package is missing, returns null — callers handle this as
-   * 'no-search-available'.
-   */
-  private async ensureSdk(): Promise<any | null> {
-    if (this.zaiInstance) return this.zaiInstance;
-
-    try {
-      const ZAI = (await import('z-ai-web-dev-sdk')).default;
-      this.zaiInstance = await ZAI.create();
-      return this.zaiInstance;
-    } catch {
-      // SDK not installed, config missing, or init failed
-      return null;
-    }
-  }
-
-  // ── 1. search() — real web search via z-ai SDK ─────────────────────
+  // ── 1. search() — real web search via DuckDuckGo API ─────────────────────
   /**
    * Search the web for results matching the query.
    *
-   * Calls zai.functions.invoke('web_search', { query, num }).
-   * Returns normalized SearchResult[] with { url, title, snippet, hostName, rank }.
-   * Returns empty array if SDK unavailable or search fails.
+   * Uses a real HTTP-based web search via the DuckDuckGo Instant Answer API
+   * (no API key required). Returns normalized SearchResult[].
+   * Returns empty array if search fails.
    */
   async search(query: string, numResults: number = 5): Promise<SearchResult[]> {
     if (!query || query.trim().length < 2) return [];
 
-    const zai = await this.ensureSdk();
-    if (!zai) return [];
-
     try {
-      const raw = await zai.functions.invoke('web_search', {
-        query: query.trim(),
-        num: numResults,
+      // DuckDuckGo Instant Answer API — free, no key needed
+      const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query.trim())}&format=json&no_html=1&skip_disambig=1`;
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'code-siren-research-agent' },
       });
+      if (!res.ok) return [];
 
-      if (!Array.isArray(raw)) return [];
+      const data = await res.json() as any;
+      const results: SearchResult[] = [];
 
-      return raw.map((item: any, index: number) => ({
-        url: String(item.url ?? ''),
-        title: String(item.name ?? item.title ?? ''),
-        snippet: String(item.snippet ?? ''),
-        hostName: String(item.host_name ?? ''),
-        rank: Number(item.rank ?? index),
-      })).filter((r: SearchResult) => r.url.length > 0);
+      // DuckDuckGo returns a single abstract result + related topics
+      if (data.AbstractText && data.AbstractURL) {
+        results.push({
+          url: data.AbstractURL,
+          title: data.Heading || query,
+          snippet: data.AbstractText,
+          hostName: new URL(data.AbstractURL).hostname,
+          rank: 0,
+        });
+      }
+
+      // Related topics (each has a FirstURL + Text)
+      if (Array.isArray(data.RelatedTopics)) {
+        for (const topic of data.RelatedTopics.slice(0, numResults - 1)) {
+          if (topic.FirstURL && topic.Text) {
+            results.push({
+              url: topic.FirstURL,
+              title: topic.Text.split(' - ')[0] || topic.Text.slice(0, 80),
+              snippet: topic.Text,
+              hostName: new URL(topic.FirstURL).hostname,
+              rank: results.length,
+            });
+          }
+          if (results.length >= numResults) break;
+        }
+      }
+
+      return results;
     } catch {
       return [];
     }
   }
 
-  // ── 2. fetchPage() — real page reading via z-ai SDK ────────────────
+  // ── 2. fetchPage() — real page reading via HTTP fetch ────────────────
   /**
    * Fetch and read the content of a web page.
-   *
-   * Calls zai.functions.invoke('page_reader', { url }).
+   * Uses direct HTTP fetch + HTML text extraction (no SDK dependency).
    * Returns { title, url, content, tokensUsed } or null if fetch fails.
    */
   async fetchPage(url: string): Promise<PageContent | null> {
     if (!url || url.trim().length < 4) return null;
 
-    const zai = await this.ensureSdk();
-    if (!zai) return null;
-
     try {
-      const raw = await zai.functions.invoke('page_reader', { url: url.trim() });
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'code-siren-research-agent' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return null;
 
-      if (!raw) return null;
+      const html = await res.text();
 
-      // The page_reader response has a nested structure — extract the content
-      const data = raw.data ?? raw;
-      return {
-        title: String(data.title ?? ''),
-        url: String(data.url ?? url),
-        content: String(data.content ?? data.text ?? ''),
-        tokensUsed: Number(data.usage?.tokens ?? data.tokens ?? 0),
-      };
+      // Extract title
+      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const title = titleMatch ? titleMatch[1].trim() : url;
+
+      // Extract text content (strip HTML tags)
+      const content = html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&[^;]+;/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 5000);
+
+      const tokensUsed = Math.ceil(content.length / 4);
+
+      return { title, url, content, tokensUsed };
     } catch {
       return null;
     }
@@ -203,7 +210,6 @@ export class ResearchAgent extends IAgent {
     // searchResults is empty. This is not a post-hoc label — it's an
     // architectural code-path restriction.
     if (searchResults.length === 0) {
-      const sdk = await this.ensureSdk();
       return {
         query: trimmedQuery,
         mode: 'no-search-available',
@@ -211,9 +217,7 @@ export class ResearchAgent extends IAgent {
         fetchedPages: [],
         synthesis: null,
         sources: [],
-        reason: sdk === null
-          ? 'z-ai SDK not configured (check /etc/.z-ai-config or SDK installation)'
-          : 'Search returned no results or search call failed',
+        reason: 'Search returned no results or search call failed',
       };
     }
 

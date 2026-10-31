@@ -2,7 +2,7 @@
 // TTSProvider interface — same dependency-injection pattern as
 // PrinterClient, BrowserClient, DeviceClient, etc.
 //
-// This phase ships ZaiTTSProvider (z-ai SDK). A later phase will add
+// This phase ships Z.ai via OpenAI-compatible TTS provider. A later phase will add
 // KokoroTTSProvider (local, high-quality open-source TTS).
 // The voice proxy and Face consume ONLY the interface — swapping
 // providers is a new class implementing the same interface, zero
@@ -30,53 +30,8 @@ export interface TTSProvider {
   speak(text: string): Promise<TTSResult>;
 }
 
-// ── ZaiTTSProvider — uses z-ai-web-dev-sdk ───────────────────────────────
 
-export class ZaiTTSProvider implements TTSProvider {
-  readonly implementation = 'zai';
-  private zaiInstance: any | null = null;
-
-  private async ensureZai(): Promise<any> {
-    if (!this.zaiInstance) {
-      const ZAI = (await import('z-ai-web-dev-sdk')).default;
-      this.zaiInstance = await ZAI.create();
-    }
-    return this.zaiInstance;
-  }
-
-  async speak(text: string): Promise<TTSResult> {
-    if (!text || text.trim().length === 0) {
-      throw new Error('TTS: empty text');
-    }
-
-    // z-ai TTS limit: 1024 chars — split if needed
-    const truncated = text.slice(0, 1024);
-
-    const zai = await this.ensureZai();
-    const response = await zai.audio.tts.create({
-      input: truncated,
-      voice: 'tongtong',
-      speed: 1.0,
-      response_format: 'wav',
-      stream: false,
-    });
-
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBase64 = Buffer.from(new Uint8Array(arrayBuffer)).toString('base64');
-
-    // Estimate duration: WAV at 24kHz, 16-bit mono ≈ 48KB/sec
-    const estimatedDurationMs = Math.round((arrayBuffer.byteLength / 48000) * 1000);
-
-    return {
-      audioBase64,
-      format: 'wav',
-      sampleRate: 24000,
-      durationMs: estimatedDurationMs,
-    };
-  }
-}
-
-// ── StubTTSProvider — for testing without z-ai ───────────────────────────
+// ── StubTTSProvider — for testing ───────────────────────────
 
 import { wrapPcmInWav, pcmDurationMs } from './audio-wav.js';
 

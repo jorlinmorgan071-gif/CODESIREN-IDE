@@ -68,7 +68,7 @@ describe('built-in animation library', () => {
     }
   });
 
-  it('every track targets a VRM humanoid bone name with .quaternion or .position', () => {
+  it('every track targets a VRM humanoid bone name with .quaternion, .position, or .scale', () => {
     const validBoneNames = new Set([
       'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
       'leftShoulder', 'rightShoulder',
@@ -88,7 +88,7 @@ describe('built-in animation library', () => {
         const bone = track.name.substring(0, dotIndex);
         const property = track.name.substring(dotIndex + 1);
         expect(validBoneNames.has(bone)).toBe(true);
-        expect(['quaternion', 'position']).toContain(property);
+        expect(['quaternion', 'position', 'scale']).toContain(property);
       }
     }
   });

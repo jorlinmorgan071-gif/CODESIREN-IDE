@@ -95,9 +95,10 @@ function buildVoiceProviders(): VoiceProviderOption[] {
   return [
     {
       id: 'zai',
-      label: 'Z.ai Cloud TTS',
-      desc: 'Cloud-based TTS via z-ai-web-dev-sdk. No local install required.',
-      available: true,
+      label: 'Z.ai Cloud TTS (OpenAI-compatible)',
+      desc: 'Cloud TTS via Z.ai API. Uses OpenAI-compatible /v1/audio/speech endpoint.',
+      available: false,
+      reason: 'Set ZAI_API_KEY in server/.env to enable.',
     },
     {
       id: 'kokoro',
@@ -473,12 +474,6 @@ export async function applyVoiceProvider(settings: VoiceSettings): Promise<void>
   const { setTTSProvider } = await import('../systems/voice/tts-provider.js');
 
   switch (settings.provider) {
-    case 'zai': {
-      const { ZaiTTSProvider } = await import('../systems/voice/tts-provider.js');
-      setTTSProvider(new ZaiTTSProvider());
-      console.log(`[voice:settings] active TTS provider: zai`);
-      break;
-    }
     case 'kokoro': {
       const { KokoroTTSProvider } = await import('../systems/voice/kokoro-provider.js');
       setTTSProvider(
@@ -508,6 +503,7 @@ export async function applyVoiceProvider(settings: VoiceSettings): Promise<void>
     // All these providers use the same API pattern: POST /v1/audio/speech.
     // The OpenAICompatibleTTSProvider handles them all with provider-specific
     // config (API URL, key, default model, default voice).
+    case 'zai':
     case 'openai-tts':
     case 'doubao':
     case 'minimax-tts':
@@ -524,6 +520,7 @@ export async function applyVoiceProvider(settings: VoiceSettings): Promise<void>
       }
       // Provider-specific defaults
       const TTS_DEFAULTS: Record<string, { model: string; voice: string }> = {
+        'zai': { model: 'tts-1', voice: 'tongtong' },
         'openai-tts': { model: 'tts-1', voice: 'alloy' },
         'doubao': { model: 'tts', voice: 'default' },
         'minimax-tts': { model: 'speech-01-turbo', voice: 'male-qn-qingse' },

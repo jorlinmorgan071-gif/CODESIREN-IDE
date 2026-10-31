@@ -17,9 +17,13 @@ const ModelRouter = lazy(() => import('./pages/ModelRouter'));
 function Fallback() {
   return (
     <div
-      className="h-screen w-screen flex items-center justify-center"
+      className="h-screen w-screen flex flex-col items-center justify-center gap-3"
       style={{ backgroundColor: 'var(--void-black)', color: 'var(--steel-silver)' }}
     >
+      <div
+        className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+        style={{ borderColor: 'var(--siren-red)', borderTopColor: 'transparent' }}
+      />
       <span className="text-[12px]">Loading…</span>
     </div>
   );

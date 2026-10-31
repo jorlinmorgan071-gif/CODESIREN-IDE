@@ -51,7 +51,6 @@
     "typescript": "^5.9.3",
     "uuid": "^11.0.3",
     "ws": "^8.18.0",
-    "z-ai-web-dev-sdk": "^0.0.18",
     "zod": "^4.6.7"
   },
   "devDependencies": {
