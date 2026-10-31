@@ -280,18 +280,62 @@ class ModelRouter {
       console.log('[router] OpenRouter engine available (OPENROUTER_API_KEY set)');
     }
     // Phase A Section 6: register Anthropic + Groq engines when API keys are present.
-    // These replace the old log-only detection — the engines are now real + usable.
     if (config.ANTHROPIC_API_KEY) {
       this.registerEngine(new AnthropicEngine());
     }
     if (config.GROQ_API_KEY) {
       this.registerEngine(new GroqEngine());
     }
-    // OpenAI direct is detected but not implemented (low marginal value — OpenRouter covers it)
-    if (config.OPENAI_API_KEY) console.log('[router] OPENAI_API_KEY detected (not implemented — use OpenRouter for OpenAI models)');
+
+    // ── Register OpenAI-compatible engines for all additional providers ──
+    // Each provider that has an API key gets its own engine instance.
+    // The engine is generic — it works with any OpenAI-compatible API.
+    this.registerOpenAICompatibleEngines();
 
     // Check Ollama availability asynchronously — don't block startup
     this.initOllama();
+  }
+
+  /**
+   * Register OpenAI-compatible engines for all providers in the config
+   * that have API keys. This covers: OpenAI, Gemini, DeepSeek, Moonshot,
+   * Qwen, Zhipu, Mistral, StepFun, BytePlus, MiniMax, Xiaomi, LM Studio,
+   * Kilo Code.
+   */
+  private registerOpenAICompatibleEngines(): void {
+    // Dynamic import to avoid circular dependency at module load time
+    // and to handle the .js→.ts resolution in the test environment.
+    import('./engines/openai-compatible.js')
+      .then(({ OpenAICompatibleEngine }) => {
+        const providers: Array<{ id: string; apiKey: string; apiUrl: string; defaultModel: string; envVar: string }> = [
+          { id: 'openai', apiKey: config.OPENAI_API_KEY || '', apiUrl: 'https://api.openai.com/v1', defaultModel: 'gpt-4o', envVar: 'OPENAI_API_KEY' },
+          { id: 'gemini', apiKey: config.GEMINI_API_KEY || '', apiUrl: 'https://generativelanguage.googleapis.com/v1beta', defaultModel: 'gemini-1.5-flash', envVar: 'GEMINI_API_KEY' },
+          { id: 'deepseek', apiKey: config.DEEPSEEK_API_KEY || '', apiUrl: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', envVar: 'DEEPSEEK_API_KEY' },
+          { id: 'moonshot', apiKey: config.MOONSHOT_API_KEY || '', apiUrl: 'https://api.moonshot.cn/v1', defaultModel: 'moonshot-v1-8k', envVar: 'MOONSHOT_API_KEY' },
+          { id: 'qwen', apiKey: config.QWEN_API_KEY || '', apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus', envVar: 'QWEN_API_KEY' },
+          { id: 'zhipu', apiKey: config.ZHIPU_API_KEY || '', apiUrl: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-4-flash', envVar: 'ZHIPU_API_KEY' },
+          { id: 'mistral', apiKey: config.MISTRAL_API_KEY || '', apiUrl: 'https://api.mistral.ai/v1', defaultModel: 'mistral-large-latest', envVar: 'MISTRAL_API_KEY' },
+          { id: 'stepfun', apiKey: config.STEPFUN_API_KEY || '', apiUrl: 'https://api.stepfun.com/v1', defaultModel: 'step-1-8k', envVar: 'STEPFUN_API_KEY' },
+          { id: 'byteplus', apiKey: config.BYTEPLUS_API_KEY || '', apiUrl: 'https://ark.cn-beijing.volces.com/api/v3', defaultModel: 'doubao-pro-32k', envVar: 'BYTEPLUS_API_KEY' },
+          { id: 'minimax-llm', apiKey: config.MINIMAX_API_KEY || '', apiUrl: 'https://api.minimax.chat/v1', defaultModel: 'abab6.5-chat', envVar: 'MINIMAX_API_KEY' },
+          { id: 'xiaomi', apiKey: config.XIAOMI_API_KEY || '', apiUrl: 'https://api.mimo.xiaomi.com/v1', defaultModel: 'mimo-v1', envVar: 'XIAOMI_API_KEY' },
+          { id: 'lmstudio', apiKey: config.LMSTUDIO_API_KEY || 'lm-studio', apiUrl: 'http://127.0.0.1:1234/v1', defaultModel: 'local-model', envVar: 'LMSTUDIO_API_KEY' },
+          { id: 'kilocode', apiKey: config.KILOCODE_API_KEY || '', apiUrl: 'https://code.kilocode.ai/api/v1', defaultModel: 'kilo-default', envVar: 'KILOCODE_API_KEY' },
+        ];
+
+        for (const p of providers) {
+          if (p.apiKey) {
+            this.engines.set(p.id as EngineId, new OpenAICompatibleEngine({
+              id: p.id as EngineId,
+              apiUrl: p.apiUrl,
+              apiKey: p.apiKey,
+              defaultModel: p.defaultModel,
+            }));
+            console.log(`[router] ${p.id} engine available (${p.envVar} set)`);
+          }
+        }
+      })
+      .catch((err) => console.warn('[router] failed to load OpenAI-compatible engines:', err));
   }
 
   private async initOllama(): Promise<void> {

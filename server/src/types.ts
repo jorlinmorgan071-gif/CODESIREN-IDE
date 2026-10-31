@@ -348,7 +348,20 @@ export type EngineId =
   | 'ollama'         // local — directive's offline→Ollama branch
   | 'vllm'           // local
   | 'sglang'         // local
-  | 'llamacpp';      // local
+  | 'llamacpp'       // local
+  // Additional providers (Morgan's provider list — all OpenAI-compatible)
+  | 'gemini'         // Google Gemini
+  | 'deepseek'       // DeepSeek
+  | 'moonshot'       // Moonshot AI · Kimi
+  | 'qwen'           // Alibaba Cloud · Qwen
+  | 'zhipu'          // Zhipu AI · GLM (by ZAI)
+  | 'mistral'        // Mistral AI
+  | 'stepfun'        // StepFun
+  | 'byteplus'       // BytePlus · ModelArk
+  | 'minimax-llm'    // MiniMax (LLM)
+  | 'xiaomi'         // Xiaomi · MiMo
+  | 'lmstudio'       // LM Studio (Local)
+  | 'kilocode';      // Kilo Code
 
 export interface ModelRouterRequest {
   agentId: string;

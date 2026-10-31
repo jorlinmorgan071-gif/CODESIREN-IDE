@@ -27,6 +27,18 @@ const schema = z.object({
   GROQ_API_KEY: z.string().optional(),
   // Orchestrator engines (Agent Relay — directive Section 1.1)
   GEMINI_API_KEY: z.string().optional(),
+  // Additional LLM providers (Morgan's provider list)
+  DEEPSEEK_API_KEY: z.string().optional(),
+  MOONSHOT_API_KEY: z.string().optional(),       // Kimi
+  QWEN_API_KEY: z.string().optional(),            // Alibaba Cloud
+  ZHIPU_API_KEY: z.string().optional(),           // GLM by ZAI
+  MISTRAL_API_KEY: z.string().optional(),
+  STEPFUN_API_KEY: z.string().optional(),
+  BYTEPLUS_API_KEY: z.string().optional(),        // ModelArk
+  MINIMAX_API_KEY: z.string().optional(),
+  XIAOMI_API_KEY: z.string().optional(),           // MiMo
+  LMSTUDIO_API_KEY: z.string().optional(),        // Local — usually no key
+  KILOCODE_API_KEY: z.string().optional(),
   CORS_ORIGINS: z.string().default('http://localhost:3000,http://localhost:5173,http://localhost:4173'),
 });
 
