@@ -22,8 +22,29 @@ import type { ProviderEntry, ProviderModel } from '@/types';
 import {
   Loader2, CheckCircle, RefreshCw, Eye, EyeOff,
   Zap, Activity, AlertTriangle,
-  Cpu, ChevronRight, Code,
+  Cpu, ChevronRight, Code, Layers, Users, Sparkles,
 } from 'lucide-react';
+
+type RoutingMode = 'one-provider' | 'mixed-provider' | 'auto-free';
+
+interface RoutingConfig {
+  config: {
+    mode: RoutingMode;
+    oneProvider?: { providerId: string; modelId: string };
+    mixedAssignments?: Record<string, { providerId: string; modelId: string }>;
+    autoFreeAssignments?: Record<string, { providerId: string; modelId: string }>;
+  };
+  providers: Array<{
+    id: string;
+    displayName: string;
+    modelCount: number;
+    freeModelCount: number;
+  }>;
+}
+
+interface AgentList {
+  agents: Array<{ agentId: string; domain: string; taskType: string }>;
+}
 
 export default function ModelRouter() {
   const navigate = useNavigate();
@@ -32,10 +53,17 @@ export default function ModelRouter() {
   const [testingAll, setTestingAll] = useState(false);
   const [testResults, setTestResults] = useState<Record<string, { success: boolean; error: string | null; durationMs: number }>>({});
 
+  // Routing state
+  const [routingConfig, setRoutingConfig] = useState<RoutingConfig | null>(null);
+  const [agentList, setAgentList] = useState<AgentList | null>(null);
+  const [routingMode, setRoutingMode] = useState<RoutingMode>('one-provider');
+  const [oneProviderId, setOneProviderId] = useState('');
+  const [oneModelId, setOneModelId] = useState('');
+  const [savingMode, setSavingMode] = useState(false);
+
   const fetchProviders = useCallback(async () => {
     try {
       const data = await api.listProviders();
-      // Only show LLM providers on this screen
       const llmProviders = (data.providers ?? []).filter((p) => p.category === 'llm');
       setProviders(llmProviders);
     } catch (err) {
@@ -45,9 +73,66 @@ export default function ModelRouter() {
     }
   }, []);
 
+  const fetchRouting = useCallback(async () => {
+    try {
+      const [routingRes, agentsRes] = await Promise.all([
+        fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api'}/models/routing`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('code_siren_jwt')}` },
+        }).then(r => r.json()),
+        fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api'}/models/routing/agents`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('code_siren_jwt')}` },
+        }).then(r => r.json()),
+      ]);
+      setRoutingConfig(routingRes);
+      setAgentList(agentsRes);
+      setRoutingMode(routingRes.config?.mode ?? 'one-provider');
+      if (routingRes.config?.oneProvider) {
+        setOneProviderId(routingRes.config.oneProvider.providerId);
+        setOneModelId(routingRes.config.oneProvider.modelId);
+      }
+    } catch (err) {
+      console.warn('[model-router] failed to fetch routing:', err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchProviders();
-  }, [fetchProviders]);
+    fetchRouting();
+  }, [fetchProviders, fetchRouting]);
+
+  const handleSetMode = async (mode: RoutingMode) => {
+    setSavingMode(true);
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api'}/models/routing/mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('code_siren_jwt')}` },
+        body: JSON.stringify({ mode }),
+      });
+      setRoutingMode(mode);
+      fetchRouting();
+    } catch (err) {
+      console.warn('[model-router] failed to set mode:', err);
+    } finally {
+      setSavingMode(false);
+    }
+  };
+
+  const handleSetOneProvider = async () => {
+    if (!oneProviderId || !oneModelId) return;
+    setSavingMode(true);
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api'}/models/routing/one-provider`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('code_siren_jwt')}` },
+        body: JSON.stringify({ providerId: oneProviderId, modelId: oneModelId }),
+      });
+      fetchRouting();
+    } catch (err) {
+      console.warn('[model-router] failed to set one provider:', err);
+    } finally {
+      setSavingMode(false);
+    }
+  };
 
   const handleTest = async (providerId: string) => {
     setTestResults((prev) => ({ ...prev, [providerId]: { success: false, error: null, durationMs: 0 } }));
@@ -135,8 +220,184 @@ export default function ModelRouter() {
         </div>
       </div>
 
-      {/* Provider list */}
+      {/* Routing mode toggle + provider list */}
       <div className="flex-1 overflow-y-auto p-6">
+        {/* ── Routing Mode Toggle ───────────────────────────────────── */}
+        <div className="max-w-4xl mx-auto mb-6">
+          <div
+            className="rounded-lg p-4"
+            style={{
+              backgroundColor: 'var(--surface-dark)',
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <Layers className="w-4 h-4" style={{ color: 'var(--siren-red)' }} />
+              <span className="text-[12px] font-medium" style={{ color: 'var(--bright-silver)' }}>
+                Agent Routing Mode
+              </span>
+              {routingConfig && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: 'rgba(238, 28, 28, 0.1)', color: 'var(--siren-red)' }}>
+                  {routingMode}
+                </span>
+              )}
+            </div>
+
+            {/* 3 routing mode buttons */}
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              {/* One Provider */}
+              <button
+                onClick={() => handleSetMode('one-provider')}
+                disabled={savingMode}
+                className="flex flex-col items-start gap-1 p-3 rounded-md text-left transition-colors disabled:opacity-50"
+                style={{
+                  backgroundColor: routingMode === 'one-provider' ? 'rgba(238, 28, 28, 0.08)' : 'transparent',
+                  border: routingMode === 'one-provider' ? '1px solid rgba(238, 28, 28, 0.3)' : '1px solid var(--border-subtle)',
+                }}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Layers className="w-3 h-3" style={{ color: routingMode === 'one-provider' ? 'var(--siren-red)' : 'var(--steel-silver)' }} />
+                  <span className="text-[11px] font-medium" style={{ color: routingMode === 'one-provider' ? 'var(--siren-red)' : 'var(--bright-silver)' }}>
+                    One Provider
+                  </span>
+                </div>
+                <span className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>
+                  All agents use the same provider
+                </span>
+              </button>
+
+              {/* Mixed Provider */}
+              <button
+                onClick={() => handleSetMode('mixed-provider')}
+                disabled={savingMode || (routingConfig?.providers.filter(p => p.modelCount > 0).length ?? 0) < 2}
+                className="flex flex-col items-start gap-1 p-3 rounded-md text-left transition-colors disabled:opacity-50"
+                style={{
+                  backgroundColor: routingMode === 'mixed-provider' ? 'rgba(238, 28, 28, 0.08)' : 'transparent',
+                  border: routingMode === 'mixed-provider' ? '1px solid rgba(238, 28, 28, 0.3)' : '1px solid var(--border-subtle)',
+                }}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Users className="w-3 h-3" style={{ color: routingMode === 'mixed-provider' ? 'var(--siren-red)' : 'var(--steel-silver)' }} />
+                  <span className="text-[11px] font-medium" style={{ color: routingMode === 'mixed-provider' ? 'var(--siren-red)' : 'var(--bright-silver)' }}>
+                    Mixed Provider
+                  </span>
+                </div>
+                <span className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>
+                  Each agent gets its own model
+                </span>
+                {(routingConfig?.providers.filter(p => p.modelCount > 0).length ?? 0) < 2 && (
+                  <span className="text-[8px]" style={{ color: 'var(--siren-red)' }}>
+                    Requires 2+ providers
+                  </span>
+                )}
+              </button>
+
+              {/* Auto Free */}
+              <button
+                onClick={() => handleSetMode('auto-free')}
+                disabled={savingMode}
+                className="flex flex-col items-start gap-1 p-3 rounded-md text-left transition-colors disabled:opacity-50"
+                style={{
+                  backgroundColor: routingMode === 'auto-free' ? 'rgba(238, 28, 28, 0.08)' : 'transparent',
+                  border: routingMode === 'auto-free' ? '1px solid rgba(238, 28, 28, 0.3)' : '1px solid var(--border-subtle)',
+                }}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-3 h-3" style={{ color: routingMode === 'auto-free' ? 'var(--siren-red)' : 'var(--steel-silver)' }} />
+                  <span className="text-[11px] font-medium" style={{ color: routingMode === 'auto-free' ? 'var(--siren-red)' : 'var(--bright-silver)' }}>
+                    Auto Free
+                  </span>
+                </div>
+                <span className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>
+                  Auto-route to free models by task
+                </span>
+              </button>
+            </div>
+
+            {/* One Provider config: pick provider + model */}
+            {routingMode === 'one-provider' && (
+              <div className="flex items-center gap-2 mt-3">
+                <select
+                  value={oneProviderId}
+                  onChange={(e) => {
+                    setOneProviderId(e.target.value);
+                    const p = providers.find(p => p.id === e.target.value);
+                    setOneModelId(p?.models[0]?.id ?? '');
+                  }}
+                  className="px-2 py-1.5 text-[11px] rounded-md outline-none"
+                  style={{ backgroundColor: 'var(--void-black)', border: '1px solid var(--border-subtle)', color: 'var(--bright-silver)' }}
+                >
+                  <option value="">Select provider...</option>
+                  {providers.filter(p => p.apiKeyIsSet || p.id === 'lmstudio').map(p => (
+                    <option key={p.id} value={p.id}>{p.displayName}</option>
+                  ))}
+                </select>
+                <select
+                  value={oneModelId}
+                  onChange={(e) => setOneModelId(e.target.value)}
+                  className="px-2 py-1.5 text-[11px] rounded-md outline-none"
+                  style={{ backgroundColor: 'var(--void-black)', border: '1px solid var(--border-subtle)', color: 'var(--bright-silver)' }}
+                >
+                  <option value="">Select model...</option>
+                  {providers.find(p => p.id === oneProviderId)?.models.map(m => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleSetOneProvider}
+                  disabled={savingMode || !oneProviderId || !oneModelId}
+                  className="px-3 py-1.5 text-[11px] rounded-md transition-colors disabled:opacity-50"
+                  style={{ backgroundColor: 'rgba(238, 28, 28, 0.1)', border: '1px solid rgba(238, 28, 28, 0.3)', color: 'var(--siren-red)' }}
+                >
+                  {savingMode ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
+                </button>
+              </div>
+            )}
+
+            {/* Mixed Provider: show agent list + assignments */}
+            {routingMode === 'mixed-provider' && agentList && (
+              <div className="mt-3 space-y-1">
+                <div className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--steel-silver)' }}>
+                  Agent Assignments ({agentList.agents.length} agents)
+                </div>
+                {agentList.agents.slice(0, 8).map(agent => {
+                  const assignment = routingConfig?.config?.mixedAssignments?.[agent.agentId];
+                  return (
+                    <div key={agent.agentId} className="flex items-center gap-2 text-[10px]">
+                      <span className="w-32 truncate" style={{ color: 'var(--bright-silver)' }}>{agent.agentId}</span>
+                      <span className="text-[9px] px-1 rounded" style={{ backgroundColor: 'var(--surface-raised)', color: 'var(--muted-silver)' }}>{agent.taskType}</span>
+                      <span className="flex-1 truncate" style={{ color: assignment ? 'var(--siren-red)' : 'var(--muted-silver)' }}>
+                        {assignment ? `${assignment.providerId}/${assignment.modelId}` : 'not assigned — uses One Provider fallback'}
+                      </span>
+                    </div>
+                  );
+                })}
+                <p className="text-[9px] mt-1" style={{ color: 'var(--muted-silver)' }}>
+                  Assign per-agent models from the RecoveryPanel when an agent hits context limits, or via the API Hub settings.
+                </p>
+              </div>
+            )}
+
+            {/* Auto Free: show computed assignments */}
+            {routingMode === 'auto-free' && routingConfig?.config?.autoFreeAssignments && (
+              <div className="mt-3 space-y-1">
+                <div className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--steel-silver)' }}>
+                  Auto-computed Free Model Assignments
+                </div>
+                {Object.entries(routingConfig.config.autoFreeAssignments).slice(0, 8).map(([agentId, assignment]) => (
+                  <div key={agentId} className="flex items-center gap-2 text-[10px]">
+                    <span className="w-32 truncate" style={{ color: 'var(--bright-silver)' }}>{agentId}</span>
+                    <span className="flex-1 truncate" style={{ color: '#22C55E' }}>
+                      {assignment.providerId}/{assignment.modelId}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Provider list (existing) ──────────────────────────────── */}
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-6 h-6 animate-spin" style={{ color: 'var(--siren-red)' }} />
