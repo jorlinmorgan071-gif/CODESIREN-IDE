@@ -34,7 +34,18 @@ const SETTINGS_PATH = join(__dirname, '..', '..', '.runtime', 'voice-settings.js
  * when those providers are implemented — also add a matching entry to
  * VOICE_PROVIDERS below and a case to applyVoiceProvider().
  */
-export type VoiceProviderId = 'zai' | 'kokoro' | 'elevenlabs';
+export type VoiceProviderId =
+  | 'zai'
+  | 'kokoro'
+  | 'elevenlabs'
+  | 'openai-tts'
+  | 'doubao'
+  | 'minimax-tts'
+  | 'cartesia'
+  | 'fish-audio'
+  | 'speechify'
+  | 'gemini-tts'
+  | 'mistral-voxtral';
 
 export interface VoiceProviderOption {
   id: VoiceProviderId;
@@ -76,6 +87,11 @@ export interface VoiceSettings {
  */
 function buildVoiceProviders(): VoiceProviderOption[] {
   const elevenlabsKeyConfigured = !!process.env.ELEVENLABS_API_KEY;
+  const openaiKeyConfigured = !!process.env.OPENAI_API_KEY;
+  const doubaoKeyConfigured = !!process.env.BYTEPLUS_API_KEY;
+  const minimaxKeyConfigured = !!process.env.MINIMAX_API_KEY;
+  const geminiKeyConfigured = !!process.env.GEMINI_API_KEY;
+  const mistralKeyConfigured = !!process.env.MISTRAL_API_KEY;
   return [
     {
       id: 'zai',
@@ -86,20 +102,72 @@ function buildVoiceProviders(): VoiceProviderOption[] {
     {
       id: 'kokoro',
       label: 'Kokoro-82M (Local)',
-      desc: 'Local neural TTS — Apache 2.0, 82M params. Requires Python sidecar (~1.4 GB venv, ~312 MB model). 54 voices across 9 languages.',
+      desc: 'Local neural TTS — Apache 2.0, 82M params. Requires Python sidecar. 54 voices across 9 languages.',
       available: true,
     },
     {
       id: 'elevenlabs',
       label: 'ElevenLabs (BYOK)',
-      desc: 'Cloud TTS via ElevenLabs REST API. Bring Your Own Key — requires ELEVENLABS_API_KEY in server/.env. Free tier: 10,000 credits/month. 21 premade voices.',
+      desc: 'Cloud TTS via ElevenLabs REST API. Free tier: 10,000 credits/month.',
       available: elevenlabsKeyConfigured,
-      reason: elevenlabsKeyConfigured
-        ? undefined
-        : 'API key not configured — add ELEVENLABS_API_KEY to server/.env and restart the server.',
+      reason: elevenlabsKeyConfigured ? undefined : 'API key not configured — add ELEVENLABS_API_KEY to server/.env.',
     },
-    // Future providers slot in here:
-    // { id: 'chatterbox', label: 'Chatterbox', desc: '...', available: true },
+    {
+      id: 'openai-tts',
+      label: 'OpenAI TTS',
+      desc: 'Cloud TTS via OpenAI API (tts-1, 6 voices: alloy/echo/fable/onyx/nova/shimmer).',
+      available: openaiKeyConfigured,
+      reason: openaiKeyConfigured ? undefined : 'API key not configured — add OPENAI_API_KEY to server/.env.',
+    },
+    {
+      id: 'doubao',
+      label: 'Doubao / Volcano TTS',
+      desc: 'Cloud TTS via ByteDance Volcano API. Chinese + English voices.',
+      available: doubaoKeyConfigured,
+      reason: doubaoKeyConfigured ? undefined : 'API key not configured — add BYTEPLUS_API_KEY to server/.env.',
+    },
+    {
+      id: 'minimax-tts',
+      label: 'MiniMax TTS',
+      desc: 'Cloud TTS via MiniMax API. High-quality multi-language voices.',
+      available: minimaxKeyConfigured,
+      reason: minimaxKeyConfigured ? undefined : 'API key not configured — add MINIMAX_API_KEY to server/.env.',
+    },
+    {
+      id: 'cartesia',
+      label: 'Cartesia',
+      desc: 'Cloud TTS via Cartesia API. Ultra-low-latency voice generation.',
+      available: false,
+      reason: 'API key not configured — add CARTESIA_API_KEY to server/.env.',
+    },
+    {
+      id: 'fish-audio',
+      label: 'Fish Audio',
+      desc: 'Cloud TTS via Fish Audio API. Voice cloning + natural speech.',
+      available: false,
+      reason: 'API key not configured — add FISH_AUDIO_API_KEY to server/.env.',
+    },
+    {
+      id: 'speechify',
+      label: 'Speechify',
+      desc: 'Cloud TTS via Speechify API. Natural narrator-quality voices.',
+      available: false,
+      reason: 'API key not configured — add SPEECHIFY_API_KEY to server/.env.',
+    },
+    {
+      id: 'gemini-tts',
+      label: 'Gemini TTS',
+      desc: 'Cloud TTS via Google Gemini API.',
+      available: geminiKeyConfigured,
+      reason: geminiKeyConfigured ? undefined : 'API key not configured — add GEMINI_API_KEY to server/.env.',
+    },
+    {
+      id: 'mistral-voxtral',
+      label: 'Mistral Voxtral',
+      desc: 'Cloud TTS via Mistral AI Voxtral API.',
+      available: mistralKeyConfigured,
+      reason: mistralKeyConfigured ? undefined : 'API key not configured — add MISTRAL_API_KEY to server/.env.',
+    },
   ];
 }
 
@@ -422,9 +490,6 @@ export async function applyVoiceProvider(settings: VoiceSettings): Promise<void>
       console.log(
         `[voice:settings] active TTS provider: kokoro (voice=${settings.kokoroVoice ?? 'af_heart'}, langCode=${settings.kokoroLangCode ?? 'a'})`
       );
-      // Note: sidecar spawns LAZILY on first speak() call — no preload here.
-      // Per directive Section 0.2 decision: leave running on switch-away,
-      // no teardown logic when switching away from Kokoro.
       break;
     }
     case 'elevenlabs': {
@@ -437,12 +502,51 @@ export async function applyVoiceProvider(settings: VoiceSettings): Promise<void>
       console.log(
         `[voice:settings] active TTS provider: elevenlabs (voiceId=${settings.elevenlabsVoiceId ?? 'CwhRBWXzGAHq8TQ4Fs17'})`
       );
-      // No sidecar — pure cloud fetch. No teardown needed when switching away.
+      break;
+    }
+    // ── OpenAI-compatible TTS providers ────────────────────────────────
+    // All these providers use the same API pattern: POST /v1/audio/speech.
+    // The OpenAICompatibleTTSProvider handles them all with provider-specific
+    // config (API URL, key, default model, default voice).
+    case 'openai-tts':
+    case 'doubao':
+    case 'minimax-tts':
+    case 'cartesia':
+    case 'fish-audio':
+    case 'speechify':
+    case 'gemini-tts':
+    case 'mistral-voxtral': {
+      const { OpenAICompatibleTTSProvider } = await import('../systems/voice/openai-compatible-tts.js');
+      const { getProvider } = await import('../provider-registry/registry.js');
+      const provider = getProvider(settings.provider);
+      if (!provider || !provider.apiKey) {
+        throw new Error(`[voice:settings] provider ${settings.provider} not configured — no API key`);
+      }
+      // Provider-specific defaults
+      const TTS_DEFAULTS: Record<string, { model: string; voice: string }> = {
+        'openai-tts': { model: 'tts-1', voice: 'alloy' },
+        'doubao': { model: 'tts', voice: 'default' },
+        'minimax-tts': { model: 'speech-01-turbo', voice: 'male-qn-qingse' },
+        'cartesia': { model: 'sonic-english', voice: 'f32f1f10-2c0f-4d34-audio' },
+        'fish-audio': { model: 'fish-speech-1.5', voice: 'default' },
+        'speechify': { model: 'tts-1', voice: 'alex' },
+        'gemini-tts': { model: 'gemini-1.5-flash-tts', voice: 'default' },
+        'mistral-voxtral': { model: 'voxtral-mini-latest', voice: 'default' },
+      };
+      const defaults = TTS_DEFAULTS[settings.provider] ?? { model: 'tts-1', voice: 'default' };
+      setTTSProvider(
+        new OpenAICompatibleTTSProvider({
+          providerId: settings.provider,
+          apiUrl: provider.apiUrl,
+          apiKey: provider.apiKey,
+          defaultModel: defaults.model,
+          defaultVoice: defaults.voice,
+        })
+      );
+      console.log(`[voice:settings] active TTS provider: ${settings.provider} (model=${defaults.model}, voice=${defaults.voice})`);
       break;
     }
     default: {
-      // Should never happen — getVoiceSettings() validates and falls back.
-      // If it does, throw loudly so the bug surfaces.
       throw new Error(
         `applyVoiceProvider: unknown provider '${settings.provider}'. ` +
         `This indicates a bug — getVoiceSettings() should have validated and fallen back to default.`
