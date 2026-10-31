@@ -252,8 +252,8 @@ export const ChatBubble = memo(function ChatBubble({
         )}
       </div>
 
-      {/* Bubble content */}
-      <div className={`flex flex-col max-w-[75%] ${isUser ? 'items-end' : 'items-start'}`}>
+      {/* Bubble content — allow natural growth during streaming */}
+      <div className={`flex flex-col max-w-[75%] ${isUser ? 'items-end' : 'items-start'} min-w-0`}>
         {/* Agent name (for assistant messages) */}
         {isAssistant && message.agentName && (
           <div className="text-[10px] mb-0.5" style={{ color: 'var(--muted-silver)' }}>
@@ -264,10 +264,13 @@ export const ChatBubble = memo(function ChatBubble({
         {/* Bubble */}
         <div
           className={`rounded-lg px-3.5 py-2.5 ${styleClass}`}
-          style={isUser ? {
-            backgroundColor: 'var(--surface-raised)',
-            border: '1px solid var(--border-subtle)',
-          } : undefined}
+          style={{
+            ...(isUser ? {
+              backgroundColor: 'var(--surface-raised)',
+              border: '1px solid var(--border-subtle)',
+            } : {}),
+            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2)',
+          }}
         >
           {/* Thinking panel (assistant only) */}
           {isAssistant && (message.isThinking || message.thinkingContent !== undefined) && (

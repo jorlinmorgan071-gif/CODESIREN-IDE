@@ -42,6 +42,9 @@ export interface AppState {
   layoutMode: 'full-chat' | 'split' | 'full-view';
   // When in 'split' mode, which view occupies the non-chat side.
   splitView: 'editor' | 'terminal' | 'face' | 'dashboard' | 'brain';
+  // Global wallpaper — set in ChatPanel, also applied to the editor (with
+  // extra blur). When type='none', no wallpaper is shown.
+  globalBackground: { type: 'none' | 'image' | 'video'; url: string; opacity: number; blur: number };
 
   // Content
   fileTree: FileNode[];
@@ -95,6 +98,7 @@ export type AppAction =
   | { type: 'SET_BOTTOM_TAB'; payload: BottomPanelTab }
   | { type: 'SET_LAYOUT_MODE'; payload: 'full-chat' | 'split' | 'full-view' }
   | { type: 'SET_SPLIT_VIEW'; payload: AppState['splitView'] }
+  | { type: 'SET_GLOBAL_BACKGROUND'; payload: AppState['globalBackground'] }
   | { type: 'TOGGLE_FOLDER'; payload: string }
   | { type: 'OPEN_FILE'; payload: string }
   | { type: 'CLOSE_TAB'; payload: string }
@@ -141,6 +145,7 @@ export const initialState: AppState = {
   activeBottomTab: 'terminal',
   layoutMode: 'full-chat',
   splitView: 'editor',
+  globalBackground: { type: 'none', url: '', opacity: 0.3, blur: 0 },
 
   fileTree: sampleFileTree,
   editorTabs: sampleEditorTabs,
@@ -199,6 +204,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, layoutMode: action.payload };
     case 'SET_SPLIT_VIEW':
       return { ...state, splitView: action.payload, layoutMode: 'split' };
+    case 'SET_GLOBAL_BACKGROUND':
+      return { ...state, globalBackground: action.payload };
 
     case 'TOGGLE_FOLDER': {
       const toggleInTree = (nodes: FileNode[]): FileNode[] =>
@@ -509,6 +516,7 @@ interface AppContextValue {
   toggleSettings: () => void;
   setLayoutMode: (mode: 'full-chat' | 'split' | 'full-view') => void;
   setSplitView: (view: AppState['splitView']) => void;
+  setGlobalBackground: (bg: AppState['globalBackground']) => void;
   setActiveTerminal: (id: string) => void;
   addTerminalLine: (sessionId: string, line: TerminalSession['history'][0]) => void;
   // Auth helpers
@@ -632,6 +640,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'SET_LAYOUT_MODE', payload: mode }), []);
   const setSplitView = useCallback((view: AppState['splitView']) =>
     dispatch({ type: 'SET_SPLIT_VIEW', payload: view }), []);
+  const setGlobalBackground = useCallback((bg: AppState['globalBackground']) =>
+    dispatch({ type: 'SET_GLOBAL_BACKGROUND', payload: bg }), []);
   const setActiveTerminal = useCallback((id: string) => dispatch({ type: 'SET_ACTIVE_TERMINAL', payload: id }), []);
   const addTerminalLine = useCallback((sessionId: string, line: TerminalSession['history'][0]) =>
     dispatch({ type: 'ADD_TERMINAL_LINE', payload: { sessionId, line } }), []);
@@ -807,6 +817,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         toggleSettings,
         setLayoutMode,
         setSplitView,
+        setGlobalBackground,
         setActiveTerminal,
         addTerminalLine,
         login,

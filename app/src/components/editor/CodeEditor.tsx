@@ -614,7 +614,23 @@ export function CodeEditor() {
   const language = activeTab ? languageMap[activeTab.language] || 'plaintext' : 'plaintext';
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden zt-grid-bg">
+    <div className="flex-1 flex flex-col overflow-hidden zt-grid-bg relative">
+      {/* Global wallpaper — same as chat background but with extra blur
+          so the editor content stays readable. Applied behind the Monaco
+          editor (z-index 0), pointer-events: none. */}
+      {state.globalBackground.type === 'image' && state.globalBackground.url && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            backgroundImage: `url(${state.globalBackground.url})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: state.globalBackground.opacity * 0.5, // dimmer than chat
+            filter: `blur(${state.globalBackground.blur + 4}px)`, // extra blur
+            zIndex: 0,
+          }}
+        />
+      )}
       {/* Tab bar — Bug F fix: overflow-x:auto with custom thin scrollbar,
           tabs use min-width:0 + flex-1 + truncate so they compress
           gracefully when the parent flex container shrinks (sidebars

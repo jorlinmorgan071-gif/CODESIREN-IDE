@@ -22,7 +22,7 @@ import { RecoveryPanel } from './RecoveryPanel';
 import { getActiveEditorContent, getActiveEditorSelection } from '@/components/editor/CodeEditor';
 import { RotatingLoader } from '@/components/ui/loaders';
 import { NotificationContainer, type NotificationItem } from '@/components/ui/notification-alert';
-import { ChatBackgroundSettings, type ChatBackground } from './ChatBackgroundSettings';
+import { ChatBackgroundSettings } from './ChatBackgroundSettings';
 
 // ── Helper: generate message ID ──────────────────────────────────────────
 
@@ -35,12 +35,13 @@ function genId(): string {
 export function ChatPanel() {
   const { state, addChatMessage, updateChatMessage } = useApp();
   const relay = useRelay();
+  const { setGlobalBackground } = useApp();
   const [bubbleStyle, setBubbleStyle] = useState<BubbleStyle>('A');
   const [isGenerating, setIsGenerating] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [showStyleToggle, setShowStyleToggle] = useState(false);
-  // Custom chat background (separate from Brain directive)
-  const [chatBackground, setChatBackground] = useState<ChatBackground>({ type: 'none', url: '', opacity: 0.3, blur: 0 });
+  // Global wallpaper — stored in AppContext so the editor can also read it
+  const chatBackground = state.globalBackground;
   const [showBackgroundSettings, setShowBackgroundSettings] = useState(false);
   // Start Project loading state — directive Section 2.1.
   const [startProjectLoading, setStartProjectLoading] = useState(false);
@@ -562,7 +563,7 @@ export function ChatPanel() {
         open={showBackgroundSettings}
         onClose={() => setShowBackgroundSettings(false)}
         background={chatBackground}
-        onChange={setChatBackground}
+        onChange={setGlobalBackground}
       />
     </div>
   );
