@@ -47,6 +47,9 @@ export interface AgentRoutingConfig {
   mixedAssignments?: Record<string, AgentRoutingAssignment>;
   /** Auto Free mode: computed assignments (recomputed when providers change) */
   autoFreeAssignments?: Record<string, AgentRoutingAssignment>;
+  /** Companion Provider: when Auto Free has shortfalls, this provider's
+   *  models (free or low-cost paid) are used for the remaining agents. */
+  companionProvider?: string;
 }
 
 // ── Agent task-type inference (for Auto Free mode) ──────────────────────
@@ -300,6 +303,7 @@ export function computeAutoFreeAssignments(): {
   assignments: Record<string, AgentRoutingAssignment>;
   shortfalls: Array<{ agentId: string; taskType: TaskType; reason: string }>;
 } {
+  const config = getRoutingConfig();
   const providers = getConfiguredLLMProviders();
   const assignments: Record<string, AgentRoutingAssignment> = {};
   const shortfalls: Array<{ agentId: string; taskType: TaskType; reason: string }> = [];
@@ -314,6 +318,25 @@ export function computeAutoFreeAssignments(): {
     }
   }
 
+  // If a companion provider is configured, collect its models (free OR
+  // low-cost paid) — these cover shortfall agents that couldn't get a free model.
+  const companionProvider = config.companionProvider
+    ? getProvider(config.companionProvider)
+    : null;
+  const companionModels: Array<{ provider: ProviderRegistryEntry; model: ProviderModel }> = [];
+  if (companionProvider && companionProvider.models.length > 0) {
+    for (const model of companionProvider.models) {
+      // Use free models first, then freemium, then the cheapest paid
+      if (model.costTier === 'free' || model.costTier === 'freemium') {
+        companionModels.push({ provider: companionProvider, model });
+      }
+    }
+    // If no free/freemium models, use the first paid model (low-cost fallback)
+    if (companionModels.length === 0 && companionProvider.models.length > 0) {
+      companionModels.push({ provider: companionProvider, model: companionProvider.models[0] });
+    }
+  }
+
   for (const [agentId, domain] of Object.entries(AGENT_DOMAINS)) {
     const taskType = inferTaskType(agentId);
 
@@ -324,6 +347,14 @@ export function computeAutoFreeAssignments(): {
       assignments[agentId] = {
         providerId: bestModel.provider.id,
         modelId: bestModel.model.id,
+      };
+    } else if (companionModels.length > 0) {
+      // No free model available — use the companion provider's models
+      const companionBest = findBestFreeModel(companionModels, taskType)
+        ?? companionModels[0]; // fallback to first available
+      assignments[agentId] = {
+        providerId: companionBest.provider.id,
+        modelId: companionBest.model.id,
       };
     } else {
       shortfalls.push({
@@ -437,4 +468,35 @@ export function setAgentAssignment(agentId: string, providerId: string, modelId:
   if (!config.mixedAssignments) config.mixedAssignments = {};
   config.mixedAssignments[agentId] = { providerId, modelId };
   setRoutingConfig(config);
+}
+
+/**
+ * Set the companion provider for Auto Free mode.
+ * When Auto Free has shortfalls (agents without a free model), the
+ * companion provider's models (free or low-cost paid) are used to
+ * cover those agents.
+ */
+export function setCompanionProvider(providerId: string): void {
+  const config = getRoutingConfig();
+  config.companionProvider = providerId;
+  // Recompute auto-free assignments with the new companion
+  const { assignments } = computeAutoFreeAssignments();
+  config.autoFreeAssignments = assignments;
+  setRoutingConfig(config);
+}
+
+/**
+ * Get the recommended companion provider — the one with the most free models.
+ * Returns null if no providers have free models.
+ */
+export function getRecommendedCompanion(): { providerId: string; displayName: string; freeModelCount: number } | null {
+  const providers = getConfiguredLLMProviders();
+  let best: { providerId: string; displayName: string; freeModelCount: number } | null = null;
+  for (const p of providers) {
+    const freeCount = p.models.filter(m => m.costTier === 'free').length;
+    if (freeCount > 0 && (!best || freeCount > best.freeModelCount)) {
+      best = { providerId: p.id, displayName: p.displayName, freeModelCount: freeCount };
+    }
+  }
+  return best;
 }

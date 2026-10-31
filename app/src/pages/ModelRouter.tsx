@@ -60,6 +60,8 @@ export default function ModelRouter() {
   const [oneProviderId, setOneProviderId] = useState('');
   const [oneModelId, setOneModelId] = useState('');
   const [savingMode, setSavingMode] = useState(false);
+  const [companionProvider, setCompanionProvider] = useState<string | null>(null);
+  const [recommendedCompanion, setRecommendedCompanion] = useState<string | null>(null);
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -75,13 +77,14 @@ export default function ModelRouter() {
 
   const fetchRouting = useCallback(async () => {
     try {
-      const [routingRes, agentsRes] = await Promise.all([
-        fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api'}/models/routing`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem('code_siren_jwt')}` },
-        }).then(r => r.json()),
-        fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api'}/models/routing/agents`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem('code_siren_jwt')}` },
-        }).then(r => r.json()),
+      const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+      const token = localStorage.getItem('code_siren_jwt');
+      const headers = { Authorization: `Bearer ${token}` };
+
+      const [routingRes, agentsRes, companionRes] = await Promise.all([
+        fetch(`${API_BASE}/models/routing`, { headers }).then(r => r.json()),
+        fetch(`${API_BASE}/models/routing/agents`, { headers }).then(r => r.json()),
+        fetch(`${API_BASE}/models/routing/companion`, { headers }).then(r => r.json()),
       ]);
       setRoutingConfig(routingRes);
       setAgentList(agentsRes);
@@ -90,6 +93,8 @@ export default function ModelRouter() {
         setOneProviderId(routingRes.config.oneProvider.providerId);
         setOneModelId(routingRes.config.oneProvider.modelId);
       }
+      setCompanionProvider(companionRes.current);
+      setRecommendedCompanion(companionRes.recommended);
     } catch (err) {
       console.warn('[model-router] failed to fetch routing:', err);
     }
@@ -129,6 +134,24 @@ export default function ModelRouter() {
       fetchRouting();
     } catch (err) {
       console.warn('[model-router] failed to set one provider:', err);
+    } finally {
+      setSavingMode(false);
+    }
+  };
+
+  const handleSetCompanion = async (providerId: string) => {
+    setSavingMode(true);
+    try {
+      const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api';
+      await fetch(`${API_BASE}/models/routing/companion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('code_siren_jwt')}` },
+        body: JSON.stringify({ providerId }),
+      });
+      setCompanionProvider(providerId);
+      fetchRouting();
+    } catch (err) {
+      console.warn('[model-router] failed to set companion:', err);
     } finally {
       setSavingMode(false);
     }
@@ -392,6 +415,59 @@ export default function ModelRouter() {
                     </span>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Companion Provider selection (Auto Free mode) */}
+            {routingMode === 'auto-free' && (
+              <div className="mt-3 p-3 rounded-md" style={{ backgroundColor: 'var(--void-black)', border: '1px solid var(--border-subtle)' }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Users className="w-3 h-3" style={{ color: 'var(--steel-silver)' }} />
+                  <span className="text-[11px] font-medium" style={{ color: 'var(--bright-silver)' }}>
+                    Companion Provider
+                  </span>
+                  {companionProvider && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)', color: '#22C55E' }}>
+                      {companionProvider}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[9px] mb-2" style={{ color: 'var(--muted-silver)' }}>
+                  When free models can't cover all agents, the companion provider's models (free or low-cost paid) fill the gap. Hover to see free models.
+                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {routingConfig?.providers.filter(p => p.modelCount > 0).map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => handleSetCompanion(p.id)}
+                      disabled={savingMode}
+                      title={`${p.displayName} — ${p.freeModelCount} free model(s)`}
+                      className="px-2 py-1 text-[10px] rounded-md transition-colors disabled:opacity-50"
+                      style={{
+                        backgroundColor: companionProvider === p.id ? 'rgba(34, 197, 94, 0.1)' : 'transparent',
+                        border: companionProvider === p.id
+                          ? '1px solid rgba(34, 197, 94, 0.3)'
+                          : recommendedCompanion === p.id
+                            ? '1px solid rgba(238, 28, 28, 0.2)'
+                            : '1px solid var(--border-subtle)',
+                        color: companionProvider === p.id ? '#22C55E' : recommendedCompanion === p.id ? 'var(--siren-red)' : 'var(--steel-silver)',
+                      }}
+                    >
+                      {p.displayName}
+                      <span className="text-[8px] ml-1" style={{ color: 'var(--muted-silver)' }}>
+                        ({p.freeModelCount} free)
+                      </span>
+                      {recommendedCompanion === p.id && !companionProvider && (
+                        <span className="text-[8px] ml-1" style={{ color: 'var(--siren-red)' }}>★ recommended</span>
+                      )}
+                    </button>
+                  ))}
+                  {routingConfig?.providers.filter(p => p.modelCount > 0).length === 0 && (
+                    <span className="text-[9px]" style={{ color: 'var(--muted-silver)' }}>
+                      No providers with loaded models. Test & load a provider first.
+                    </span>
+                  )}
+                </div>
               </div>
             )}
           </div>

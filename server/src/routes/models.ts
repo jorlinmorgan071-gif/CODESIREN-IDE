@@ -27,6 +27,8 @@ import {
   setRoutingMode,
   setOneProvider,
   setAgentAssignment,
+  setCompanionProvider,
+  getRecommendedCompanion,
   getRoutingForAgent,
   canEnableMixedMode,
   computeAutoFreeAssignments,
@@ -247,6 +249,31 @@ modelsRouter.get('/routing/auto-free', requireAuth, (_req, res) => {
     }))
   );
   res.json({ assignments, shortfalls, freeModels, providerCount: providers.length });
+});
+
+// ── Companion Provider ──────────────────────────────────────────────────
+// POST /api/models/routing/companion — set the companion provider for Auto Free mode
+// GET  /api/models/routing/companion — get recommendation + current companion
+
+modelsRouter.post('/routing/companion', requireAuth, (req, res) => {
+  const schema = z.object({ providerId: z.string().min(1) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Missing providerId', issues: parsed.error.issues });
+    return;
+  }
+  setCompanionProvider(parsed.data.providerId);
+  res.json({ success: true, companionProvider: parsed.data.providerId });
+});
+
+modelsRouter.get('/routing/companion', requireAuth, (_req, res) => {
+  const recommended = getRecommendedCompanion();
+  const config = getRoutingConfig();
+  res.json({
+    current: config.companionProvider ?? null,
+    recommended: recommended?.providerId ?? null,
+    recommendation: recommended,
+  });
 });
 
 modelsRouter.get('/routing/agents', requireAuth, (_req, res) => {
