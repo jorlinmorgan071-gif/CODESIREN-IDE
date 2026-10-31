@@ -354,17 +354,29 @@ toolRegistry.register({
 
 // ── ai-prompt tool ─────────────────────────────────────────────────────
 // Used by imported GitHub skills (SKILL.md format). The skill's markdown
-// instructions are passed as the "instructions" arg. The tool returns
-// the instructions so the agent receives them as context — the agent
-// then follows the instructions to complete the task.
+// instructions are passed as base64-encoded "instructions_b64" (to avoid
+// TOML/JSON escaping issues) OR as plain "instructions". The tool decodes
+// and returns them so the agent can follow the skill's guidance.
 toolRegistry.register({
   name: 'ai-prompt',
-  description: 'Execute a prompt-based skill. Args: { "instructions": "the full markdown instructions from the skill" } — the instructions are returned as context for the agent to follow.',
+  description: 'Execute a prompt-based skill. Args: { "instructions_b64": "base64-encoded markdown instructions" } or { "instructions": "plain markdown instructions" } — the instructions are returned as context for the agent to follow.',
   async execute(args) {
-    const instructions = String(args.instructions ?? '').trim();
-    if (!instructions) {
-      return { name: 'ai-prompt', content: 'Missing "instructions" arg', success: false };
+    // Try base64-encoded instructions first (used by imported skills)
+    let instructions = '';
+    if (args.instructions_b64) {
+      try {
+        instructions = Buffer.from(String(args.instructions_b64), 'base64').toString('utf-8');
+      } catch {
+        return { name: 'ai-prompt', content: 'Failed to decode base64 instructions', success: false };
+      }
+    } else if (args.instructions) {
+      instructions = String(args.instructions);
     }
+
+    if (!instructions) {
+      return { name: 'ai-prompt', content: 'Missing "instructions_b64" or "instructions" arg', success: false };
+    }
+
     // Return the instructions as content — the agent receives them and
     // follows the skill's guidance. This is how prompt-based skills work:
     // they're instructions, not code.
