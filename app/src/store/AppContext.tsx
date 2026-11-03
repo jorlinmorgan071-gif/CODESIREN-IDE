@@ -14,14 +14,6 @@ import type {
   AuthUser,
   Problem,
 } from '@/types';
-import {
-  sampleFileTree,
-  sampleChatSessions,
-  sampleAgents,
-  sampleTerminalSessions,
-  sampleEditorTabs,
-  sampleFileContent,
-} from './demoData';
 import { defaultTheme, applyTheme } from './themes';
 import { api } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
@@ -139,34 +131,34 @@ export type AppAction =
 export const initialState: AppState = {
   activeSidebarTab: 'explorer',
   sidebarVisible: true,
-  explorerVisible: true,
+  explorerVisible: false,
   chatPanelVisible: true,
-  bottomPanelVisible: true,
+  bottomPanelVisible: false,
   activeBottomTab: 'terminal',
   layoutMode: 'full-chat',
   splitView: 'editor',
   globalBackground: { type: 'none', url: '', opacity: 0.3, blur: 0 },
 
-  fileTree: sampleFileTree,
-  editorTabs: sampleEditorTabs,
-  activeFileId: 'f17',
-  fileContents: sampleFileContent,
+  // Empty state — no demo/prop data. The user starts with a clean slate.
+  // Files, editors, and chats are populated by real usage.
+  fileTree: [],
+  editorTabs: [],
+  activeFileId: null,
+  fileContents: {},
 
-  chatSessions: sampleChatSessions,
-  activeChatId: sampleChatSessions[0].id,
+  // Start with an empty chat — the auto-save/load system will restore
+  // saved chats from localStorage if they exist.
+  chatSessions: [],
+  activeChatId: '',
 
-  agents: sampleAgents,
+  agents: [],
 
-  terminalSessions: sampleTerminalSessions,
-  // D10 #2 closeout: with sampleTerminalSessions now empty, the activeTerminalId
-  // default is null instead of 't1' (which no longer exists). Terminal.tsx
-  // handles this gracefully — it shows the honest "Terminal unavailable"
-  // banner regardless of whether a session is active.
+  terminalSessions: [],
   activeTerminalId: '',
 
   ghostMode: 'approval-required',
   currentTheme: defaultTheme,
-  currentModel: 'Ollama 3',
+  currentModel: '',
   isAIGenerating: false,
 
   inlineAIVisible: false,

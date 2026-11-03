@@ -13,12 +13,14 @@ describe('authoritative change transaction editor reconciliation', () => {
   });
 
   it('updates the existing file buffer and clears only the reconciled tab modification marker', () => {
+    const testTabs = [
+      { fileId: 'f17', fileName: 'App.tsx', language: 'typescript' as const, isModified: true, isActive: true },
+      { fileId: 'f3', fileName: 'Header.tsx', language: 'typescript' as const, isModified: false, isActive: false },
+    ];
     const before = {
       ...initialState,
-      fileContents: { ...initialState.fileContents, f17: 'const before = true;' },
-      editorTabs: initialState.editorTabs.map((tab) =>
-        tab.fileId === 'f17' ? { ...tab, isModified: true } : tab
-      ),
+      editorTabs: testTabs,
+      fileContents: { f17: 'const before = true;' },
     };
     const after = appReducer(before, {
       type: 'RECONCILE_FILE_CONTENT',

@@ -70,6 +70,22 @@ export default function Home() {
     applyTheme(state.currentTheme);
   }, [state.currentTheme]);
 
+  // Auto-create a chat session on boot if none exists (after localStorage
+  // load). This ensures the user always sees a chat interface on launch,
+  // not an empty screen.
+  useEffect(() => {
+    if (!state.activeChatId && state.chatSessions.length === 0) {
+      const newChatId = createChatSessionId();
+      createChatSession({
+        id: newChatId,
+        name: 'New Chat',
+        messages: [],
+        isActive: false,
+      });
+      dispatch({ type: 'SET_ACTIVE_CHAT', payload: newChatId });
+    }
+  }, [state.activeChatId, state.chatSessions.length, createChatSession, dispatch]);
+
   // Phase B: Fetch avatar settings on boot (for PIP overlay)
   useEffect(() => {
     if (!state.authReady) return;
