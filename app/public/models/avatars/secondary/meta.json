@@ -1,0 +1,10 @@
+{
+  "id": "secondary",
+  "name": "Secondary Avatar",
+  "format": "0.x",
+  "hasExpressions": false,
+  "expressionCount": 0,
+  "hasSpringBones": true,
+  "authors": "Unknown",
+  "source": "VRM 0.x model"
+}
