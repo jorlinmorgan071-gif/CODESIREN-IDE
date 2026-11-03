@@ -583,7 +583,7 @@ export default function FaceView() {
   }, [sessionId]);
 
   // Phase B: Avatar picker state
-  const [avatarUrl, setAvatarUrl] = useState('/models/sample.vrm'); // default until settings load
+  const [avatarUrl, setAvatarUrl] = useState('/models/avatars/default/model.vrm'); // default until settings load
   const [avatarList, setAvatarList] = useState<Array<{ id: string; name: string; thumbnail: string | null; format: string; expressionCount: number; isCustom?: boolean; issues?: string[] }>>([]);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [currentAvatarName, setCurrentAvatarName] = useState('Default Avatar');
@@ -596,7 +596,7 @@ export default function FaceView() {
   const [localVrmSession, setLocalVrmSession] = useState<LocalVrmSession | null>(null);
   const localVrmInputRef = useRef<HTMLInputElement>(null);
   const avatarSelectionGateRef = useRef(new LatestOperationGate());
-  const catalogAvatarFallbackRef = useRef({ url: '/models/sample.vrm', name: 'Default Avatar' });
+  const catalogAvatarFallbackRef = useRef({ url: '/models/avatars/default/model.vrm', name: 'Default Avatar' });
   const {
     animationRegistry: localVrmaRegistry,
     addOrReplaceLocalVrma,

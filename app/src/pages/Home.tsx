@@ -4,9 +4,7 @@ import { useApp } from '@/store/AppContext';
 import { applyTheme } from '@/store/themes';
 import { useVoiceSession } from '@/store/VoiceSessionContext';
 import { TitleBar } from '@/components/layout/TitleBar';
-import { FileExplorer } from '@/components/layout/FileExplorer';
 import { StatusBar } from '@/components/layout/StatusBar';
-import { Sidebar } from '@/components/sidebar/Sidebar';
 import { Dock } from '@/components/dock/Dock';
 import { Sparkles, PictureInPicture2, Mic, Monitor } from 'lucide-react';
 import { useGestureInput, dispatchGesture, type GestureType } from '@/systems/presence/gesture';
@@ -15,19 +13,18 @@ import { wsClient } from '@/lib/ws';
 import { getToken } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { createChatSessionId } from '@/lib/chat-session';
-import { SensoryFeedbackOverlay } from '@/components/voice/SensoryFeedbackOverlay';
-import { ScreenIntelligence } from '@/components/voice/ScreenIntelligence';
-import { BubbleToggle } from '@/components/voice/BubbleToggle';
+import { ApprovalDialog } from '@/components/modals/ApprovalDialog';
+import { RelayBanner } from '@/components/panels/RelayBanner';
+import { useRelay } from '@/store/RelayContext';
+import { SplitViewPicker, SplitViewContent } from '@/components/layout/SplitView';
 
-// Phase B — lazy-load heavy voice components (Three.js + VRM + wlipsync)
-const InteractionBubble = lazy(() => import('@/components/voice/InteractionBubble').then(m => ({ default: m.InteractionBubble })));
-
-// Phase B — lazy-load the AvatarOverlay (heavy: Three.js + VRM)
-const AvatarOverlay = lazy(() => import('@/components/avatar/AvatarOverlay').then(m => ({ default: m.AvatarOverlay })));
-
-// Phase 5 — lazy-load heavy, conditionally-rendered components.
-// These components pull in large vendor libs (xterm, motion/react, monaco)
-// that aren't needed on initial page load.
+// ── Lazy-loaded heavy components (not needed on initial page load) ────
+// These are loaded ONLY when the user opens them, not on every page load.
+const FileExplorer = lazy(() => import('@/components/layout/FileExplorer').then((m) => ({ default: m.FileExplorer })));
+const Sidebar = lazy(() => import('@/components/sidebar/Sidebar').then((m) => ({ default: m.Sidebar })));
+const SensoryFeedbackOverlay = lazy(() => import('@/components/voice/SensoryFeedbackOverlay').then((m) => ({ default: m.SensoryFeedbackOverlay })));
+const ScreenIntelligence = lazy(() => import('@/components/voice/ScreenIntelligence').then((m) => ({ default: m.ScreenIntelligence })));
+const BubbleToggle = lazy(() => import('@/components/voice/BubbleToggle').then((m) => ({ default: m.BubbleToggle })));
 const CodeEditor = lazy(() => import('@/components/editor/CodeEditor').then((m) => ({ default: m.CodeEditor })));
 const ChatPanel = lazy(() => import('@/components/chat/ChatPanel').then((m) => ({ default: m.ChatPanel })));
 const Terminal = lazy(() => import('@/components/terminal/Terminal').then((m) => ({ default: m.Terminal })));
@@ -35,16 +32,8 @@ const InlineAI = lazy(() => import('@/components/panels/InlineAI').then((m) => (
 const AgentPanel = lazy(() => import('@/components/modals/AgentPanel').then((m) => ({ default: m.AgentPanel })));
 const SettingsModal = lazy(() => import('@/components/modals/SettingsModal').then((m) => ({ default: m.SettingsModal })));
 const PlanReviewPanel = lazy(() => import('@/components/modals/PlanReviewPanel').then((m) => ({ default: m.PlanReviewPanel })));
-// Approval-gate fix: real approval dialog. NOT lazy-loaded — it must be
-// available immediately when a ghost:plan event arrives, even on a fresh
-// page load. It's small (no vendor deps) so the bundle impact is minimal.
-import { ApprovalDialog } from '@/components/modals/ApprovalDialog';
-// Relay banner — directive Section 2.3. Shows when orchestrator pauses
-// between milestones (default-approval mode). NOT lazy-loaded: it needs to
-// be available the moment a relay:awaiting-user event arrives.
-import { RelayBanner } from '@/components/panels/RelayBanner';
-import { useRelay } from '@/store/RelayContext';
-import { SplitViewPicker, SplitViewContent } from '@/components/layout/SplitView';
+const InteractionBubble = lazy(() => import('@/components/voice/InteractionBubble').then(m => ({ default: m.InteractionBubble })));
+const AvatarOverlay = lazy(() => import('@/components/avatar/AvatarOverlay').then(m => ({ default: m.AvatarOverlay })));
 
 export default function Home() {
   const { state, toggleInlineAI, toggleAgentPanel, toggleSettings, dispatch, createChatSession, setLayoutMode, setSplitView } = useApp();
@@ -64,7 +53,7 @@ export default function Home() {
   // Phase B: PIP avatar overlay state
   const [pipEnabled, setPipEnabled] = useState(false);
   const [pipPosition, setPipPosition] = useState({ x: 100, y: 100 });
-  const [pipAvatarUrl, setPipAvatarUrl] = useState('/models/sample.vrm');
+  const [pipAvatarUrl, setPipAvatarUrl] = useState('/models/avatars/default/model.vrm');
 
   useEffect(() => {
     applyTheme(state.currentTheme);
