@@ -159,13 +159,6 @@ export function attachWsServer(server: HttpServer): void {
         // Real PTY terminal — create session, write input, resize, kill.
         // All commands go through validateShellCommand() in pty-manager.
         if (msg.event === 'terminal:create') {
-          if (!ptyManager.isEnabled()) {
-            ws.send(JSON.stringify(makeEvent('terminal:output', {
-              sessionId: 'none',
-              data: '\r\n\x1b[31mTerminal is disabled. Set TERMINAL_ENABLED=true in server/.env to enable.\x1b[0m\r\n',
-            }, { userId: state.claims.sub, projectId: state.projectId })));
-            return;
-          }
           const cwd = msg.payload?.cwd || process.cwd();
           const termId = ptyManager.createSession(state.claims.sub, cwd);
           state.terminalSessionId = termId;
