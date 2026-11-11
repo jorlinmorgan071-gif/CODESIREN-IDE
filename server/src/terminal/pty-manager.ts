@@ -1,21 +1,30 @@
 // server/src/terminal/pty-manager.ts
 // Real PTY session manager — spawns node-pty processes for interactive terminals.
 //
-// Security model:
-//   1. Every command written to the PTY is intercepted and validated via
-//      validateShellCommand() BEFORE it reaches the shell.
-//   2. Blocked commands (shell metacharacters, rm -rf, curl|sh, etc.) are
-//      rejected — the user sees the block reason in the terminal.
-//   3. Approved commands execute in a real bash/zsh PTY with full ANSI support.
+// SECURITY MODEL:
+//   The terminal is a REAL shell — keystrokes go to the PTY raw, with no
+//   server-side filtering. This is by design: the terminal is a user-facing
+//   shell, like opening a terminal in VS Code. The user is authenticated
+//   and operates in their own workspace.
 //
-// Each session is tied to a user (userId) and has a working directory.
-// Sessions are cleaned up on disconnect or after 30 minutes of inactivity.
+//   AI AGENTS that need to run shell commands do NOT use this PTY. They use
+//   the workflow-runner's runShellCommand() which enforces
+//   validateShellCommand() + the approval gate. The terminal is for the
+//   human user; the agent path is separate and gated.
+//
+// ENVIRONMENT:
+//   The shell is spawned with an allowlisted env only (PATH, HOME, TERM, LANG).
+//   No JWT_SECRET, no API keys, no server-internal secrets leak to the shell.
+//
+// TERMINAL_ENABLED:
+//   - Development: default ON
+//   - Production: default OFF — must explicitly set TERMINAL_ENABLED=true
+//   If disabled, createSession() throws and the WS handler returns an error.
 
 import * as pty from 'node-pty';
 import { EventEmitter } from 'node:events';
 import { v4 as uuid } from 'uuid';
-import { validateShellCommand } from '../security/sandbox.js';
-import { classifyCommand } from '../orchestration/classify-command.js';
+import { config } from '../config.js';
 
 export interface PtySession {
   id: string;
@@ -24,22 +33,47 @@ export interface PtySession {
   process: pty.IPty;
   lastActivity: number;
   buffer: string;
-  pendingCommand: string;
 }
 
 const MAX_BUFFER_LINES = 1000;
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
+/** Allowlisted environment variables for the shell.
+ *  Only these are passed to the PTY — no JWT_SECRET, no API keys. */
+function buildShellEnv(cwd: string): Record<string, string> {
+  return {
+    PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+    HOME: process.env.HOME || '/tmp',
+    TERM: 'xterm-256color',
+    LANG: process.env.LANG || 'en_US.UTF-8',
+    SHELL: process.env.SHELL || '/bin/bash',
+    PWD: cwd,
+  };
+}
+
 class PtyManager extends EventEmitter {
   private sessions = new Map<string, PtySession>();
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private enabled: boolean;
 
   constructor() {
     super();
+    this.enabled = config.TERMINAL_ENABLED;
+    if (this.enabled && config.isProd) {
+      console.warn('[terminal] WARNING: Terminal is enabled in production mode. This allows authenticated users to run arbitrary shell commands. Ensure this is intentional.');
+    }
     this.cleanupInterval = setInterval(() => this.cleanupStale(), 5 * 60 * 1000);
   }
 
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
   createSession(userId: string, cwd: string = process.cwd()): string {
+    if (!this.enabled) {
+      throw new Error('Terminal is disabled (TERMINAL_ENABLED=false).');
+    }
+
     const id = uuid();
     const shell = process.env.SHELL || '/bin/bash';
     const args = shell.endsWith('zsh') ? ['-l'] : [];
@@ -49,13 +83,7 @@ class PtyManager extends EventEmitter {
       cols: 80,
       rows: 24,
       cwd,
-      env: {
-        ...process.env,
-        TERM: 'xterm-256color',
-        BASH_ENV: '',
-        ENV: '',
-        PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
-      },
+      env: buildShellEnv(cwd),
     });
 
     const session: PtySession = {
@@ -65,7 +93,6 @@ class PtyManager extends EventEmitter {
       process: ptyProcess,
       lastActivity: Date.now(),
       buffer: '',
-      pendingCommand: '',
     };
 
     ptyProcess.onData((data: string) => {
@@ -87,37 +114,19 @@ class PtyManager extends EventEmitter {
     return id;
   }
 
+  /**
+   * Forward raw keystrokes to the PTY. No server-side filtering — the
+   * terminal is a real shell for the authenticated human user.
+   *
+   * AI agents that need to run commands use runShellCommand() in
+   * workflow-runner.ts, which enforces validateShellCommand() + the
+   * approval gate. This path is NOT used by agents.
+   */
   writeInput(sessionId: string, data: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
     session.lastActivity = Date.now();
-
-    if (data === '\r' || data === '\n') {
-      const cmd = session.pendingCommand;
-      session.pendingCommand = '';
-
-      if (cmd.trim()) {
-        const validation = validateShellCommand(cmd);
-        if (!validation.allowed) {
-          const blockMsg = `\r\n\x1b[31m✗ Blocked: ${validation.reason}\x1b[0m\r\n`;
-          session.process.write(blockMsg);
-          session.process.write('\r');
-          return;
-        }
-        const classification = classifyCommand(cmd);
-        this.emit('command', session.id, session.userId, {
-          command: cmd,
-          risk: classification.risk,
-          explanation: classification.explanation,
-        });
-      }
-    } else if (data === '\u007f' || data === '\b') {
-      session.pendingCommand = session.pendingCommand.slice(0, -1);
-    } else if (data.charCodeAt(0) >= 32) {
-      session.pendingCommand += data;
-    }
-
     session.process.write(data);
   }
 

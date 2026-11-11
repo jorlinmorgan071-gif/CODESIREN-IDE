@@ -39,6 +39,19 @@ const schema = z.object({
   XIAOMI_API_KEY: z.string().optional(),           // MiMo
   LMSTUDIO_API_KEY: z.string().optional(),        // Local — usually no key
   KILOCODE_API_KEY: z.string().optional(),
+  // Terminal: enabled in dev by default, off in production unless explicitly set.
+  // Accepts "true"/"false"/"1"/"0"/"" — anything else defaults to the
+  // NODE_ENV-based default. "false", "0", and "" are OFF.
+  TERMINAL_ENABLED: z.preprocess(
+    (val) => {
+      if (val === undefined || val === null) return process.env.NODE_ENV !== 'production';
+      const s = String(val).toLowerCase().trim();
+      if (s === 'false' || s === '0' || s === '') return false;
+      if (s === 'true' || s === '1') return true;
+      return process.env.NODE_ENV !== 'production';
+    },
+    z.boolean(),
+  ),
   CORS_ORIGINS: z.string().default('http://localhost:3000,http://localhost:5173,http://localhost:4173'),
 });
 
