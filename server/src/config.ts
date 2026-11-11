@@ -39,6 +39,10 @@ const schema = z.object({
   XIAOMI_API_KEY: z.string().optional(),           // MiMo
   LMSTUDIO_API_KEY: z.string().optional(),        // Local — usually no key
   KILOCODE_API_KEY: z.string().optional(),
+  // Terminal: enabled in dev by default, off in production unless explicitly set.
+  // When off, createSession() throws and the WS terminal:create handler
+  // returns an error to the client.
+  TERMINAL_ENABLED: z.coerce.boolean().default(process.env.NODE_ENV !== 'production'),
   CORS_ORIGINS: z.string().default('http://localhost:3000,http://localhost:5173,http://localhost:4173'),
 });
 
