@@ -56,6 +56,16 @@ desktop.ini
 # Code Siren runtime
 server/backups/
 server/.biometric-templates/
+# Root .biometric-templates/ is never used — runtime path is server/.biometric-templates/.
+# The root dir was accidentally committed once by a UUID commit and contained
+# only test stub files. This rule prevents a recurrence.
+/.biometric-templates/
+# Root skills/ folder is cruft from agent-runtime definitions — the server's
+# built-in TOML skills live in server/src/skills/library/. The root folder
+# (61 MB of cloned external skills) was accidentally committed once by a UUID
+# commit. The CI repo-hygiene job also fails the build if /skills/ reappears.
+/skills/
+/.polarfs-test
 # Phase E: voice-settings.json + orchestrator-settings.json live here
 # (user preferences, not source code — regenerated on first use)
 server/.runtime/

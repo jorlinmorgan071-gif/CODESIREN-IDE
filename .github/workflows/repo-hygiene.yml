@@ -1,0 +1,95 @@
+name: Repo Hygiene
+
+# Independent gate that fails the build on:
+#   1. Any tracked file larger than 2 MB that is NOT on the allowlist.
+#      The allowlist is the canonical VRM avatar set the frontend ships —
+#      adding anything else over 2 MB requires explicit review.
+#   2. A root `skills/` folder (the agent-runtime skills copy that was
+#      accidentally committed by a UUID commit — 61 MB of cruft. The
+#      server's built-in TOML skills live under server/src/skills/library/.
+#   3. A stray `.polarfs-test` marker file at the repo root.
+#
+# These three checks catch the regressions that UUID commits ebd7874 and
+# 164d6a8 introduced (61 MB skills/, 22 MB avatars/secondary/model.vrm,
+# 10 MB sample.vrm, .polarfs-test, .template files). They run on every
+# push and pull request so the same mistakes cannot land on main again.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  repo-hygiene:
+    name: File size + cruft guard
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail if any tracked file exceeds 2 MB outside the allowlist
+        run: |
+          set -e
+          # Allowlist — the 4 canonical VRM avatars shipped to the frontend.
+          # Source: app/public/models/manifest.json (the avatar picker list).
+          ALLOWLIST=(
+            'app/public/models/avatars/default/model.vrm'
+            'app/public/models/avatars/hatsune-miku/model.vrm'
+            'app/public/models/avatars/marionette/model.vrm'
+            'app/public/models/avatars/yinlin/model.vrm'
+          )
+
+          # 2 MB in bytes (2 * 1024 * 1024)
+          LIMIT=$((2 * 1024 * 1024))
+          violations=0
+
+          # List every tracked file (no recursion into submodule paths).
+          while IFS= read -r f; do
+            # Skip the allowlist entries — these are intentional.
+            skip=false
+            for allowed in "${ALLOWLIST[@]}"; do
+              if [ "$f" = "$allowed" ]; then
+                skip=true
+                break
+              fi
+            done
+            if [ "$skip" = "true" ]; then
+              continue
+            fi
+
+            size=$(stat -c '%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null || echo 0)
+            if [ "$size" -gt "$LIMIT" ]; then
+              echo "✗ FAIL: $f is $size bytes (limit $LIMIT)"
+              violations=$((violations + 1))
+            fi
+          done < <(git ls-files)
+
+          if [ "$violations" -gt 0 ]; then
+            echo "✗ $violations file(s) exceed the 2 MB limit and are not on the allowlist."
+            echo "  Allowlist: ${ALLOWLIST[*]}"
+            echo "  To add a legitimate large file, extend ALLOWLIST in .github/workflows/repo-hygiene.yml."
+            exit 1
+          fi
+          echo "✓ All tracked files are within the 2 MB limit (or on the allowlist)."
+
+      - name: Fail if a root skills/ folder exists
+        run: |
+          set -e
+          if [ -d "skills" ]; then
+            echo "✗ FAIL: a root skills/ folder exists."
+            echo "  The root skills/ folder is cruft from agent-runtime skill definitions."
+            echo "  The server's built-in TOML skills live in server/src/skills/library/."
+            echo "  scripts/build-tarball.sh already excludes ./skills from the tarball."
+            exit 1
+          fi
+          echo "✓ No root skills/ folder."
+
+      - name: Fail if .polarfs-test exists at the repo root
+        run: |
+          set -e
+          if [ -f ".polarfs-test" ]; then
+            echo "✗ FAIL: .polarfs-test exists at the repo root."
+            echo "  This marker file was accidentally committed by UUID commit ebd7874."
+            exit 1
+          fi
+          echo "✓ No .polarfs-test marker at the repo root."

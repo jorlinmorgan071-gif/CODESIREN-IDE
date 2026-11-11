@@ -181,7 +181,12 @@ describe('PTY Terminal Manager — Raw Shell (no keystroke filter)', () => {
   });
 
   // ── 7. isEnabled reflects config ──────────────────────────────────
-  it('isEnabled returns a boolean', () => {
+  it('isEnabled() returns true when TERMINAL_ENABLED defaults to ON (test env)', () => {
+    // vitest.config.ts sets NODE_ENV='test'. config.TERMINAL_ENABLED
+    // defaults to ON for any NODE_ENV other than 'production', so the
+    // ptyManager singleton — which reads config at construction time —
+    // reports enabled. The WS handler's gate 1 reads this method.
     expect(typeof ptyManager.isEnabled()).toBe('boolean');
+    expect(ptyManager.isEnabled()).toBe(true);
   });
 });

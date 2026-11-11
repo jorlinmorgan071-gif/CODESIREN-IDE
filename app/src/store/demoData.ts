@@ -241,7 +241,7 @@ export const sampleAgents: Agent[] = [
 // entries (`t1` bash with fake `npm install`/`git status`/`npm run dev` output,
 // `t2` node with fake `console.log` output). Those fake outputs were rendered
 // in Terminal.tsx BELOW the honest "Terminal unavailable" banner, contradicting
-// P0_TERMINAL_TRUST_HARDENING.md's claim that all fake output was removed.
+// the worklog.md closeout entry that all fake terminal output was removed.
 //
 // Now the array is empty — Terminal.tsx renders only the honest banner.
 // The export is kept (rather than deleted) because AppContext initialState

@@ -40,14 +40,17 @@ const schema = z.object({
   LMSTUDIO_API_KEY: z.string().optional(),        // Local — usually no key
   KILOCODE_API_KEY: z.string().optional(),
   // Terminal: enabled in dev by default, off in production unless explicitly set.
-  // Accepts "true"/"false"/"1"/"0"/"" — anything else defaults to the
-  // NODE_ENV-based default. "false", "0", and "" are OFF.
+  // Accepts "true"/"yes"/"1"/"" (case-insensitive) — "false", "0", "" are OFF.
+  // Any other value (including unset) falls back to the NODE_ENV-based default:
+  //   development / test → ON, production → OFF.
+  // In production with TERMINAL_ENABLED=true, the WS handler additionally
+  // requires the user's JWT `plan` to be 'admin' (see ws/server.ts).
   TERMINAL_ENABLED: z.preprocess(
     (val) => {
       if (val === undefined || val === null) return process.env.NODE_ENV !== 'production';
       const s = String(val).toLowerCase().trim();
-      if (s === 'false' || s === '0' || s === '') return false;
-      if (s === 'true' || s === '1') return true;
+      if (s === 'false' || s === '0' || s === '' || s === 'no') return false;
+      if (s === 'true' || s === '1' || s === 'yes') return true;
       return process.env.NODE_ENV !== 'production';
     },
     z.boolean(),

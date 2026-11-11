@@ -207,6 +207,8 @@ export type AgentEventName =
   | 'terminal:resize'
   | 'terminal:ready'
   | 'terminal:kill'
+  | 'terminal:disabled'   // sent when TERMINAL_ENABLED=false (gate 1)
+  | 'terminal:denied'      // sent when a non-admin opens a terminal in production (gate 2)
   // Preview events
   | 'preview:reload'
   | 'preview:regression'

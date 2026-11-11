@@ -157,8 +157,31 @@ export function attachWsServer(server: HttpServer): void {
 
         // ── Terminal events ──────────────────────────────────────────────
         // Real PTY terminal — create session, write input, resize, kill.
-        // All commands go through validateShellCommand() in pty-manager.
+        // The terminal is a raw shell for the authenticated user; agents use
+        // workflow-runner's runShellCommand() (gated by validateShellCommand).
         if (msg.event === 'terminal:create') {
+          // Gate 1: TERMINAL_ENABLED flag must be on. The ptyManager
+          // singleton reads config.TERMINAL_ENABLED at construction time;
+          // we re-check here so the WS handler emits a clean event to the
+          // client instead of letting the createSession() throw propagate.
+          if (!ptyManager.isEnabled()) {
+            ws.send(JSON.stringify(makeEvent('terminal:disabled', {
+              reason: 'Terminal is disabled on this server. Set TERMINAL_ENABLED=true on the server to enable it.',
+            }, { userId: state.claims.sub, projectId: state.projectId })));
+            return;
+          }
+
+          // Gate 2: in production, only admin users may open a terminal.
+          // Hosted deployments expose a real shell to authenticated users —
+          // restricting to admins limits the blast radius. Local dev and
+          // self-hosted desktop installs are unaffected (config.isProd=false).
+          if (config.isProd && state.claims.plan !== 'admin') {
+            ws.send(JSON.stringify(makeEvent('terminal:denied', {
+              reason: 'Admin role required to use the terminal in production.',
+            }, { userId: state.claims.sub, projectId: state.projectId })));
+            return;
+          }
+
           const cwd = msg.payload?.cwd || process.cwd();
           const termId = ptyManager.createSession(state.claims.sub, cwd);
           state.terminalSessionId = termId;

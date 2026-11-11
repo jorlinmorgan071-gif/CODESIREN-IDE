@@ -12,11 +12,12 @@ models/
       model.vrm              ← Default VRM 1.0 avatar (18 expressions, spring bones)
     hatsune-miku/
       model.vrm              ← VRM 0.x Hatsune Miku (14 blendShapes)
-    secondary/
-      model.vrm              ← VRM 0.x secondary avatar (no expressions)
-  sample.vrm                 ← Legacy path (kept for backwards compat — same as default/model.vrm)
   lip-sync-profile.json      ← wlipsync MFCC vowel profile
 ```
+
+The 4 avatars in `manifest.json` (default, hatsune-miku, marionette, yinlin) are the
+canonical set. Other VRMs that previously lived under `avatars/secondary/` and
+`sample.vrm` were removed — they were unused duplicates inflating repo size.
 
 ## Adding More Avatars
 
@@ -42,8 +43,8 @@ presets to VRM 1.0 expression presets — no code changes needed per model.
 
 ## Model Quality Notes
 
-- Models with 0 expressions (like `secondary`) will render but won't support
-  blink/lip-sync/emotion — the avatar will have a static face
+- Models with 0 expressions will render but won't support blink/lip-sync/emotion —
+  the avatar will have a static face. All 4 canonical avatars ship with expressions.
 - Models with spring bones (hair/cloth physics) work automatically —
   `vrm.update(delta)` in the render loop handles them
 - VRM 0.x materials are auto-converted to VRM 1.0-compatible format by
