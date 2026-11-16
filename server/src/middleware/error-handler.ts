@@ -3,6 +3,7 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import { logSecurityEvent } from '../monitoring/security-log.js';
+import { logger, captureError } from '../observability/logger.js';
 
 const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS ?? '30000', 10);
 
@@ -35,13 +36,19 @@ export function requestTimeout(req: Request, res: Response, next: NextFunction):
 }
 
 // ── Error boundary — catches all unhandled errors ────────────────────────
+//
+// Uses the structured logger (pino JSON) instead of console.error, and
+// forwards to Sentry when SENTRY_DSN is set (no-op otherwise). The
+// captureError call is fire-and-forget — the HTTP response is sent
+// synchronously without waiting for the Sentry network round-trip.
 
 export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction): void {
-  // Log the error
-  console.error(`[error] ${req.method} ${req.path}:`, err.message);
-  if (process.env.NODE_ENV !== 'production') {
-    console.error(err.stack);
-  }
+  // Structured log + Sentry forward (async, fire-and-forget)
+  captureError(err, {
+    method: req.method,
+    path: req.path,
+    ip: req.ip,
+  }).catch((e) => logger.warn({ err: (e as Error).message }, 'captureError failed in errorHandler'));
 
   // Log security event for unexpected errors
   logSecurityEvent({

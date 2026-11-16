@@ -46,6 +46,8 @@
     "multer": "^2.2.0",
     "node-pty": "^1.1.0",
     "pg": "^8.13.1",
+    "pino": "^9.14.0",
+    "pino-pretty": "^11.3.0",
     "playwright": "^1.62.1",
     "proxy-addr": "^2.0.8",
     "tweetnacl": "^1.0.3",

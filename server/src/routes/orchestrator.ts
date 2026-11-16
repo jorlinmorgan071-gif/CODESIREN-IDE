@@ -33,6 +33,7 @@ import { listProviders, getProvider } from '../provider-registry/registry.js';
 import { startDirectEditorEvidence, type DirectEditorAction } from '../orchestrator/direct-editor-evidence.js';
 import { ProjectAccessError, SessionAccessError, ensureOwnedSession, resolveTenantScope } from '../tenancy/scope.js';
 import { WorkspaceAccessError, resolveWorkspace, workspaceRelativePath } from '../workspace/service.js';
+import { logger } from '../observability/logger.js';
 
 export const orchestratorRouter = Router();
 
@@ -174,7 +175,7 @@ orchestratorRouter.post('/chat', requireAuth, async (req, res) => {
     parsed.data.mode,
     parsed.data.webSearch,
   ).catch((err) => {
-    console.error('[orchestrator:chat] task failed:', err);
+    logger.error({ err: err }, '[orchestrator:chat] task failed');
   });
   res.status(202).json({
     taskId,
@@ -212,7 +213,7 @@ orchestratorRouter.post('/plan', requireAuth, async (req, res) => {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[orchestrator:plan] generation failed:', msg);
+    logger.error({ err: msg }, '[orchestrator:plan] generation failed');
     res.status(500).json({ error: msg });
   }
 });
@@ -281,7 +282,7 @@ orchestratorRouter.post('/plan/:id/approve', requireAuth, async (req, res) => {
   // The frontend follows progress via WS events (relay:milestone-start,
   // relay:milestone-complete, relay:awaiting-user, etc.).
   runRelayPlan(planId, scope).catch((err) => {
-    console.error('[orchestrator:approve] relay loop crashed:', err);
+    logger.error({ err: err }, '[orchestrator:approve] relay loop crashed');
   });
 
   res.json({ planId, status: 'approved', message: 'Relay execution started' });
@@ -563,7 +564,7 @@ orchestratorRouter.post('/complete', requireAuth, async (req, res) => {
       res.json({ text: '', evidence: evidenceRun.timeout(0) });
       return;
     }
-    console.error('[orchestrator:complete] error:', err.message);
+    logger.error({ message: err.message }, '[orchestrator:complete] error');
     res.status(500).json({ error: err.message, evidence: evidenceRun.fail() });
   }
 });
@@ -652,7 +653,7 @@ orchestratorRouter.post('/explain', requireAuth, async (req, res) => {
       res.json({ explanation: '', evidence: evidenceRun.timeout(0) });
       return;
     }
-    console.error('[orchestrator:explain] error:', err.message);
+    logger.error({ message: err.message }, '[orchestrator:explain] error');
     res.status(500).json({ error: err.message, evidence: evidenceRun.fail() });
   }
 });
@@ -772,7 +773,7 @@ orchestratorRouter.post('/refactor', requireAuth, async (req, res) => {
       res.json({ result: '', evidence: evidenceRun.timeout(0) });
       return;
     }
-    console.error('[orchestrator:refactor] error:', err.message);
+    logger.error({ message: err.message }, '[orchestrator:refactor] error');
     res.status(500).json({ error: err.message, evidence: evidenceRun.fail() });
   }
 });
@@ -895,7 +896,7 @@ Vision-capable models include:
 
   try {
     // PRIVACY: do NOT log the image data. Log only metadata.
-    console.log(`[orchestrator:vision] analyzing image (${Math.round(dataUri.length / 1024)}KB) via ${visionModel.providerName} / ${visionModel.modelName} with prompt: "${prompt.slice(0, 80)}"`);
+    logger.info(`[orchestrator:vision] analyzing image (${Math.round(dataUri.length / 1024)}KB) via ${visionModel.providerName} / ${visionModel.modelName} with prompt: "${prompt.slice(0, 80)}"`);
 
     // Build the vision request using content blocks (text + image)
     const contentBlocks: ContentBlock[] = [
@@ -936,7 +937,7 @@ Vision-capable models include:
       .replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '(image data redacted)')
       .replace(/[A-Za-z0-9+/=]{50,}/g, '(base64 redacted)')
       .slice(0, 200);
-    console.error('[orchestrator:vision] error:', safeError);
+    logger.error({ err: safeError }, '[orchestrator:vision] error');
     res.status(500).json({ error: safeError, evidence: evidenceRun.fail() });
   }
 });

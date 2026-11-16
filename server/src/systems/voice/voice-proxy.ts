@@ -60,6 +60,7 @@ import {
   type WriteComponentParams,
 } from '../../orchestration/voice-intent-router.js';
 import type { BackendRouteResult, MigrationResult, UIGenerateResult } from '../../types.js';
+import { logger } from '../../observability/logger.js';
 
 // ── Greeting Pool ────────────────────────────────────────────────────────
 // Phase B: Hands-Free — rotating greeting pool with time-context tags.
@@ -226,12 +227,12 @@ class VoiceProxy {
     // Start silence timer
     this.resetSilenceTimer(sessionId);
 
-    console.log(`[voice-proxy] session started: ${sessionId} for user ${userId} (${userDisplayName || 'no name'})`);
+    logger.info(`[voice-proxy] session started: ${sessionId} for user ${userId} (${userDisplayName || 'no name'})`);
 
     // Fire wake greeting — non-blocking, fire-and-forget. If TTS fails,
     // the session still works normally (user just doesn't hear a greeting).
     this.fireGreeting(sessionId).catch((err) => {
-      console.warn(`[voice-proxy] greeting failed: ${err.message}`);
+      logger.warn(`[voice-proxy] greeting failed: ${err.message}`);
     });
 
     return sessionId;
@@ -253,7 +254,7 @@ class VoiceProxy {
   private async fireGreeting(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) {
-      console.warn(`[voice-proxy] fireGreeting: session ${sessionId} not found`);
+      logger.warn(`[voice-proxy] fireGreeting: session ${sessionId} not found`);
       return;
     }
 
@@ -261,7 +262,7 @@ class VoiceProxy {
     const variant = pickGreeting(hour);
     const greeting = personalizeGreeting(variant.text, session.userDisplayName);
 
-    console.log(`[voice-proxy] greeting: id=${variant.id} tone=${variant.tone} timeTag=${variant.timeTag} hour=${hour} → "${greeting}"`);
+    logger.info(`[voice-proxy] greeting: id=${variant.id} tone=${variant.tone} timeTag=${variant.timeTag} hour=${hour} → "${greeting}"`);
 
     // Broadcast the greeting text immediately (for live caption)
     broadcast(makeEvent('voice:greeting' as any, {
@@ -277,7 +278,7 @@ class VoiceProxy {
     try {
       const tts = getTTSProvider();
       const result = await tts.speak(greeting);
-      console.log(`[voice-proxy] greeting TTS via ${tts.implementation}: ${result.audioBase64.length} chars base64, ~${result.durationMs}ms`);
+      logger.info(`[voice-proxy] greeting TTS via ${tts.implementation}: ${result.audioBase64.length} chars base64, ~${result.durationMs}ms`);
 
       // Broadcast the greeting again WITH audio (client replaces the first event)
       broadcast(makeEvent('voice:greeting' as any, {
@@ -289,7 +290,7 @@ class VoiceProxy {
         ts: Date.now(),
       }));
     } catch (err: any) {
-      console.warn(`[voice-proxy] greeting TTS failed: ${err.message}`);
+      logger.warn(`[voice-proxy] greeting TTS failed: ${err.message}`);
       // Text-only greeting already broadcast above — audio stays null
     }
   }
@@ -321,7 +322,7 @@ class VoiceProxy {
     session.audioBuffer = [];  // clear for next turn
 
     if (combinedBuffer.length < 1000) {
-      console.log('[voice-proxy] audio too short, skipping');
+      logger.info('[voice-proxy] audio too short, skipping');
       return;
     }
 
@@ -334,9 +335,9 @@ class VoiceProxy {
       const asr = getASRProvider();
       const asrResult = await asr.transcribe(combinedBuffer);
       transcript = asrResult.text;
-      console.log(`[voice-proxy] ASR result (via ${asr.implementation}): "${transcript.slice(0, 100)}"`);
+      logger.info(`[voice-proxy] ASR result (via ${asr.implementation}): "${transcript.slice(0, 100)}"`);
     } catch (err: any) {
-      console.error('[voice-proxy] ASR failed:', err.message);
+      logger.error({ message: err.message }, '[voice-proxy] ASR failed');
       // Surface the Whisper-installer prompt if the sidecar isn't installed
       const error = err.message?.includes('Whisper sidecar') || err.message?.includes('sidecar')
         ? `Voice transcription isn't set up yet. Open Settings → API Hub → Tool API → Whisper and click Download to install the offline transcription engine. (${err.message})`
@@ -348,7 +349,7 @@ class VoiceProxy {
     }
 
     if (!transcript.trim()) {
-      console.log('[voice-proxy] empty transcript, skipping');
+      logger.info('[voice-proxy] empty transcript, skipping');
       return;
     }
 
@@ -368,17 +369,17 @@ class VoiceProxy {
       // Match: no, cancel, stop, abort, nope
       const cancelPatterns = /^(no|cancel|stop|abort|nope)\b/i;
       if (confirmPatterns.test(lower)) {
-        console.log(`[voice-proxy] voice confirm detected: "${transcript}"`);
+        logger.info(`[voice-proxy] voice confirm detected: "${transcript}"`);
         await this.confirmWrite(sessionId, confirmId);
         return;
       }
       if (cancelPatterns.test(lower)) {
-        console.log(`[voice-proxy] voice cancel detected: "${transcript}"`);
+        logger.info(`[voice-proxy] voice cancel detected: "${transcript}"`);
         this.cancelWriteConfirmation(sessionId, confirmId, 'user-cancel');
         return;
       }
       // User said something else during confirmation — prompt again
-      console.log(`[voice-proxy] unrecognized during confirmation: "${transcript}"`);
+      logger.info(`[voice-proxy] unrecognized during confirmation: "${transcript}"`);
       await this.speakText(sessionId, "I didn't catch that. Say yes to confirm, or cancel to abort.");
       return;
     }
@@ -396,7 +397,7 @@ class VoiceProxy {
     // Check for trigger phrase — only invoke the intent router if present.
     // Nothing gets acted on until the trigger phrase is heard.
     if (containsTriggerPhrase(transcript)) {
-      console.log(`[voice-proxy] trigger phrase detected in transcript`);
+      logger.info(`[voice-proxy] trigger phrase detected in transcript`);
 
       // Use the full accumulated buffer for context, with the trigger phrase
       // stripped from the current turn
@@ -412,7 +413,7 @@ class VoiceProxy {
 
       // Classify intent
       const intent = await classifyIntent(cleanedTranscript);
-      console.log(`[voice-proxy] intent: type=${intent.type} confidence=${intent.confidence.toFixed(2)}`);
+      logger.info(`[voice-proxy] intent: type=${intent.type} confidence=${intent.confidence.toFixed(2)}`);
 
       // Build proposed action for any write-type intent
       if (intent.type === 'write-route' && intent.params) {
@@ -527,11 +528,11 @@ class VoiceProxy {
       agentResponse = result.text;
       agentError = result.error;
       if (agentError) {
-        console.error(`[voice-proxy] agent execution failed: ${agentError}`);
+        logger.error(`[voice-proxy] agent execution failed: ${agentError}`);
         agentResponse = `I encountered an error: ${agentError}`;
       }
     } catch (err: any) {
-      console.error('[voice-proxy] executeAndWait threw:', err.message);
+      logger.error({ message: err.message }, '[voice-proxy] executeAndWait threw');
       agentResponse = `I encountered an error: ${err.message}`;
       agentError = err.message;
     } finally {
@@ -550,9 +551,9 @@ class VoiceProxy {
       const ttsResult = await tts.speak(agentResponse);
       audioBase64 = ttsResult.audioBase64;
       ttsDurationMs = ttsResult.durationMs;
-      console.log(`[voice-proxy] TTS generated via ${tts.implementation}: ${audioBase64.length} chars base64, ~${ttsDurationMs}ms`);
+      logger.info(`[voice-proxy] TTS generated via ${tts.implementation}: ${audioBase64.length} chars base64, ~${ttsDurationMs}ms`);
     } catch (err: any) {
-      console.error('[voice-proxy] TTS failed:', err.message);
+      logger.error({ message: err.message }, '[voice-proxy] TTS failed');
     }
 
     // Step 5: Emit the agent's response text + audio to the client
@@ -566,7 +567,7 @@ class VoiceProxy {
 
     // Voice-turn summary log (trace is already persisted by executeAndWait —
     // no need for a separate addStep call that would no-op on the completed trace)
-    console.log(`[voice-proxy] turn complete — ASR: "${transcript.slice(0, 60)}" → agent: ${agentResponse.length} chars → TTS: ${audioBase64 ? 'ok' : 'failed'}${agentError ? ` (agent error: ${agentError})` : ''}`);
+    logger.info(`[voice-proxy] turn complete — ASR: "${transcript.slice(0, 60)}" → agent: ${agentResponse.length} chars → TTS: ${audioBase64 ? 'ok' : 'failed'}${agentError ? ` (agent error: ${agentError})` : ''}`);
 
     this.resetSilenceTimer(sessionId);
   }
@@ -587,7 +588,7 @@ class VoiceProxy {
       const result = await tts.speak(text);
       audioBase64 = result.audioBase64;
     } catch (err: any) {
-      console.warn(`[voice-proxy] speakText TTS failed: ${err.message}`);
+      logger.warn(`[voice-proxy] speakText TTS failed: ${err.message}`);
     }
     broadcast(makeEvent('voice:agent-response' as any, {
       sessionId, text, audioBase64, ts: Date.now(),
@@ -643,7 +644,7 @@ class VoiceProxy {
     const spokenPrompt = `I'm ready to ${proposedAction} Say yes or click confirm to proceed, or say cancel.`;
     await this.speakText(sessionId, spokenPrompt);
 
-    console.log(`[voice-proxy] confirmation pending: confirmId=${confirmId} intentType=${intent.type}`);
+    logger.info(`[voice-proxy] confirmation pending: confirmId=${confirmId} intentType=${intent.type}`);
   }
 
   /**
@@ -653,17 +654,17 @@ class VoiceProxy {
   async confirmWrite(sessionId: string, confirmId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) {
-      console.warn(`[voice-proxy] confirmWrite: session ${sessionId} not found`);
+      logger.warn(`[voice-proxy] confirmWrite: session ${sessionId} not found`);
       return;
     }
 
     const pending = session.pendingConfirmation;
     if (!pending) {
-      console.warn(`[voice-proxy] confirmWrite: no pending confirmation`);
+      logger.warn(`[voice-proxy] confirmWrite: no pending confirmation`);
       return;
     }
     if (pending.confirmId !== confirmId) {
-      console.warn(`[voice-proxy] confirmWrite: confirmId mismatch (expected ${pending.confirmId}, got ${confirmId})`);
+      logger.warn(`[voice-proxy] confirmWrite: confirmId mismatch (expected ${pending.confirmId}, got ${confirmId})`);
       return;
     }
 
@@ -678,7 +679,7 @@ class VoiceProxy {
 
     const intentType = pending.intent.type;
     const params = pending.intent.params!;
-    console.log(`[voice-proxy] confirmWrite: dispatching intent type=${intentType}`);
+    logger.info(`[voice-proxy] confirmWrite: dispatching intent type=${intentType}`);
 
     // Dispatch to the appropriate agent's structured method based on intent type.
     // All three methods are UNCHANGED — they go through their own self-checks
@@ -764,7 +765,7 @@ class VoiceProxy {
         throw new Error(`Unknown write type: ${intentType}`);
       }
     } catch (err: any) {
-      console.error(`[voice-proxy] ${intentType} dispatch failed: ${err.message}`);
+      logger.error(`[voice-proxy] ${intentType} dispatch failed: ${err.message}`);
       resultText = `I tried to generate the ${intentType.replace('write-', '')}, but encountered an error: ${err.message}`;
       error = err.message;
     }
@@ -782,7 +783,7 @@ class VoiceProxy {
       ts: Date.now(),
     }));
 
-    console.log(`[voice-proxy] write result: success=${success} filePath=${filePath} refused=${refused ?? 'none'} error=${error ?? 'none'}`);
+    logger.info(`[voice-proxy] write result: success=${success} filePath=${filePath} refused=${refused ?? 'none'} error=${error ?? 'none'}`);
   }
 
   /**
@@ -809,7 +810,7 @@ class VoiceProxy {
       : 'Cancelled. No route was written.';
     void this.speakText(sessionId, cancelText);
 
-    console.log(`[voice-proxy] write cancelled: confirmId=${confirmId} reason=${reason}`);
+    logger.info(`[voice-proxy] write cancelled: confirmId=${confirmId} reason=${reason}`);
   }
 
   /**
@@ -819,7 +820,7 @@ class VoiceProxy {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.muted = muted;
-      console.log(`[voice-proxy] session ${sessionId} ${muted ? 'muted' : 'unmuted'}`);
+      logger.info(`[voice-proxy] session ${sessionId} ${muted ? 'muted' : 'unmuted'}`);
     }
   }
 
@@ -844,7 +845,7 @@ class VoiceProxy {
       sessionId, ts: Date.now(),
     }));
     this.sessions.delete(sessionId);
-    console.log(`[voice-proxy] session ended: ${sessionId} — no further audio will be processed`);
+    logger.info(`[voice-proxy] session ended: ${sessionId} — no further audio will be processed`);
   }
 
   /**
@@ -889,7 +890,7 @@ class VoiceProxy {
     if (existing) clearTimeout(existing);
 
     const timer = setTimeout(() => {
-      console.log(`[voice-proxy] auto-disconnect after ${this.SILENCE_TIMEOUT_MS / 1000}s silence: ${sessionId}`);
+      logger.info(`[voice-proxy] auto-disconnect after ${this.SILENCE_TIMEOUT_MS / 1000}s silence: ${sessionId}`);
       const session = this.sessions.get(sessionId);
       if (!session) return;
       broadcast(makeEvent('voice:auto-disconnect' as any, {
