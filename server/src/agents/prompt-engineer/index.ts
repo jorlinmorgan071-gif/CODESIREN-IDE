@@ -87,7 +87,11 @@ export class PromptEngineerAgent extends IAgent {
     for (const dir of agentDirs) {
       if (agentId && dir !== agentId) continue;
 
-      const indexPath = join(agentsDir, dir, 'index.ts');
+      // In dev the source is index.ts; in the compiled build it's index.js.
+      // Read whichever exists so prompt extraction works in both modes.
+      const tsPath = join(agentsDir, dir, 'index.ts');
+      const jsPath = join(agentsDir, dir, 'index.js');
+      const indexPath = existsSync(tsPath) ? tsPath : jsPath;
       if (!existsSync(indexPath)) continue;
 
       let content: string;

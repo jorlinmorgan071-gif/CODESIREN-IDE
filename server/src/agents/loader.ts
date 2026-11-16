@@ -59,14 +59,19 @@ export async function loadAgents(): Promise<LoadResult[]> {
   console.log(`[agents:loader] scanning ${dirs.length} agent directories...`);
 
   for (const dirName of dirs) {
-    const indexPath = join(agentsDir, dirName, 'index.ts');
-    if (!existsSync(indexPath)) {
-      console.warn(`[agents:loader] ${dirName}: no index.ts — skipping`);
+    // In dev (tsx), the source file is index.ts. In the compiled production
+    // build (npm run build → dist/src/agents/<name>/index.js), it's index.js.
+    // Check for whichever exists so the loader works in both modes.
+    const tsPath = join(agentsDir, dirName, 'index.ts');
+    const jsPath = join(agentsDir, dirName, 'index.js');
+    if (!existsSync(tsPath) && !existsSync(jsPath)) {
+      console.warn(`[agents:loader] ${dirName}: no index.ts/js — skipping`);
       continue;
     }
 
     try {
-      // Dynamic import — Node resolves .ts via tsx at runtime
+      // Dynamic import — Node resolves .ts via tsx at runtime, and .js
+      // directly in the compiled production build.
       const module = await import(`./${dirName}/index.js`);
 
       // Find the exported class that extends IAgent

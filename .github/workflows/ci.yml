@@ -21,6 +21,10 @@ jobs:
       - run: npm ci
       - run: npx playwright install chromium --with-deps
       - run: npm run typecheck
+      # Production build — catches regressions tsc-only typecheck misses:
+      # missing non-TS assets (SQL/TOML), broken agent loader paths, etc.
+      # The build runs copy-assets.mjs which copies migrations + skills to dist/.
+      - run: npm run build
       - run: npm run test -- --exclude tests/unit/run-tests.test.ts --exclude tests/unit/ghost-remediation.test.ts --exclude tests/unit/playwright-client.test.ts --exclude tests/unit/workflow-runner.test.ts --exclude tests/unit/upr-phase1-step2b-abortsignal-cap.test.ts
       - run: bash ../scripts/grep-audit.sh
       - name: Boot smoke test (health + Express 5 route integrity)

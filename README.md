@@ -131,19 +131,46 @@ OPENAI_API_KEY=...
 # etc. — see server/.env.example for all options
 ```
 
-### 3. Run
+### 3. Run (dev)
 
 ```bash
 # Start the server (dev mode — hot reload via tsx watch)
 cd server
 npm run dev
 
-# In another terminal, start the app (Vite dev server)
+# In another terminal, start the app (Vite dev server on :3000)
 cd app
 npm run dev
 ```
 
-Open http://localhost:5173
+Open http://localhost:3000 (app dev server) — the app talks to the
+server at http://localhost:3001 (configured via `VITE_API_URL`).
+
+### 3a. Run (Docker — one command)
+
+```bash
+# Generate a JWT secret, then bring up the whole stack
+echo "JWT_SECRET=$(openssl rand -hex 32)" > .env
+docker compose up --build
+```
+
+This starts three services (defined in `docker-compose.yml`):
+
+| Service | Image | Port | Purpose |
+|---|---|---|---|
+| `db` | postgres:16-alpine | 5432 | PostgreSQL backing store (the server runs in degraded in-memory mode without it) |
+| `server` | built from `server/Dockerfile` | 3001 | Compiled Express + WS backend (production build, `TERMINAL_ENABLED=false`) |
+| `app` | built from `app/Dockerfile` | 8080 | nginx-served static build of the React frontend |
+
+Open http://localhost:8080. The app reaches the server at
+http://localhost:3001 from the host browser (baked into the Vite build
+via `VITE_API_URL` in `docker-compose.yml`).
+
+The server Dockerfile is a multi-stage build: `tsc` compiles `src/` →
+`dist/src/`, then `scripts/copy-assets.mjs` copies the 12 SQL migrations
+and 35 TOML skill files that `tsc` leaves behind (both are loaded at
+runtime via `__dirname`). The app Dockerfile builds the Vite bundle and
+serves it from nginx:alpine (~10 MB runtime image).
 
 ### 4. Test & build
 
@@ -212,7 +239,7 @@ All 6 CI jobs must pass on every push to `main`/`master` and on every pull reque
 
 | Job | What it checks |
 |---|---|
-| Server | `npm ci` + typecheck + 1082 tests (5 service-dependent files excluded) + grep-audit + boot smoke test (health + login validation) |
+| Server | `npm ci` + typecheck + **production build** (tsc + copy-assets) + 1082 tests (5 service-dependent files excluded) + grep-audit + boot smoke test (health + login validation) |
 | App | `npm ci` + typecheck + eslint `--max-warnings 0` + vitest (136 tests) + `vite build` |
 | Lockfile hygiene | No mirror registries (npmmirror) in any lockfile |
 | Gitleaks | Full git history scan with baseline (catches new secrets in any commit, even committed-then-deleted) |

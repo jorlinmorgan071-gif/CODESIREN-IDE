@@ -1,0 +1,14 @@
+# server/.dockerignore — keeps the build context small
+node_modules
+dist
+.env
+.env.local
+.env.*.local
+*.log
+.git
+.gitignore
+tests
+docs
+backups
+.runtime
+.biometric-templates
