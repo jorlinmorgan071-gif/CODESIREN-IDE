@@ -144,6 +144,9 @@ describe('WS terminal:create gates', () => {
       NODE_ENV: 'test',
       TERMINAL_ENABLED: 'false',
       JWT_SECRET: 'test-secret-at-least-32-chars-long-for-tests-only',
+      // Suppress info-level logs so the READY:<port>:<token> line on stdout
+      // isn't interleaved with boot messages from the structured logger.
+      LOG_LEVEL: 'error',
       // The fixture needs the user to be NON-admin so the test verifies gate 1
       // (not gate 2). Gate 2 only fires in production, so we're safe here.
       WS_TEST_USER_PLAN: 'free',

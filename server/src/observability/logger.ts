@@ -36,15 +36,22 @@ import { config } from '../config.js';
 // In production: raw JSON to stdout (one object per line). A log shipper
 //   like Fluent Bit or Vector can forward these to Loki/ES/Datadog without
 //   a parsing step.
+//
+// pino-pretty spawns a worker thread for formatting. When stdout is NOT a
+// TTY (e.g. a subprocess pipe in tests, or a container with no terminal),
+// skip the transport and emit JSON directly — this avoids worker-thread
+// startup overhead and keeps stdout clean for protocols like the
+// `READY:<port>:<token>` handshake used by test fixtures.
 const isDev = config.NODE_ENV !== 'production';
+const isTTY = process.stdout.isTTY === true;
 
 export const logger = pino({
-  level: process.env.LOG_LEVEL ?? (isDev ? 'debug' : 'info'),
+  level: process.env.LOG_LEVEL?.trim() || (isDev ? 'debug' : 'info'),
   base: {
     service: 'code-siren-server',
     env: config.NODE_ENV,
   },
-  ...(isDev
+  ...(isDev && isTTY
     ? {
         transport: {
           target: 'pino-pretty',
