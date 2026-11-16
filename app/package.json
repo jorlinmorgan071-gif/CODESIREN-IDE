@@ -9,7 +9,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "lint": "eslint .",
+    "lint:strict": "eslint . --max-warnings 0",
     "test": "vitest run",
     "preview": "vite preview"
   },

@@ -1,4 +1,20 @@
 {
+  "name": "code-siren-ide",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Code Siren IDE — AI-powered development environment. This is a monorepo root; it has no shared runtime dependencies. Install and run from server/ and app/ separately (see README.md Quick Start).",
+  "workspaces": [],
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix app install",
+    "ci:all": "npm --prefix server ci && npm --prefix app ci",
+    "test": "npm --prefix server test -- --exclude tests/unit/run-tests.test.ts --exclude tests/unit/ghost-remediation.test.ts --exclude tests/unit/playwright-client.test.ts --exclude tests/unit/workflow-runner.test.ts --exclude tests/unit/upr-phase1-step2b-abortsignal-cap.test.ts && npm --prefix app test",
+    "test:server": "npm --prefix server test -- --exclude tests/unit/run-tests.test.ts --exclude tests/unit/ghost-remediation.test.ts --exclude tests/unit/playwright-client.test.ts --exclude tests/unit/workflow-runner.test.ts --exclude tests/unit/upr-phase1-step2b-abortsignal-cap.test.ts",
+    "test:app": "npm --prefix app test",
+    "typecheck": "npm --prefix server run typecheck && npm --prefix app run typecheck",
+    "build": "npm --prefix server run build && npm --prefix app run build",
+    "verify:server": "npm --prefix server run verify",
+    "verify:app": "npm --prefix app run typecheck && npm --prefix app run lint:strict && npm --prefix app test && npm --prefix app run build"
+  },
   "devDependencies": {
     "typescript": "~5.9.3"
   }

@@ -83,17 +83,35 @@
 git clone <repo-url> code-siren
 cd code-siren
 
-# Use the correct Node version
+# Use the correct Node version (>= 22, pinned via .nvmrc)
 nvm use        # reads .nvmrc → Node 22
 
-# Install server deps
-cd server
-cp .env.example .env
-npm install
+# Reproducible install from the committed lockfiles (recommended)
+npm run ci:all          # runs `npm ci` in both server/ and app/
 
-# Install app deps
-cd ../app
-npm install
+# …or a plain install (updates the lockfile if deps changed)
+npm run install:all     # runs `npm install` in both server/ and app/
+```
+
+This is a monorepo with **no shared root dependencies** — the root
+`package.json` only holds convenience scripts that delegate to `server/`
+and `app/`. Installs happen inside each subproject. The root scripts are:
+
+| Script | What it does |
+|---|---|
+| `npm run ci:all` | `npm ci` in `server/` then `app/` (reproducible from lockfile) |
+| `npm run install:all` | `npm install` in `server/` then `app/` |
+| `npm run typecheck` | `tsc --noEmit` in both `server/` and `app/` |
+| `npm run test` | server vitest + app vitest (server uses the 5 CI exclusions below) |
+| `npm run build` | `tsc -p` in `server/` then `tsc -b && vite build` in `app/` |
+| `npm run verify:server` | server typecheck + grep-audit + tests |
+| `npm run verify:app` | app typecheck + eslint + tests + build |
+
+You can also run each subproject directly:
+
+```bash
+cd server && cp .env.example .env && npm ci      # server deps
+cd ../app && npm ci                               # app deps
 ```
 
 ### 2. Configure
@@ -116,18 +134,42 @@ OPENAI_API_KEY=...
 ### 3. Run
 
 ```bash
-# Start the server
+# Start the server (dev mode — hot reload via tsx watch)
 cd server
 npm run dev
 
-# In another terminal, start the app
+# In another terminal, start the app (Vite dev server)
 cd app
 npm run dev
 ```
 
 Open http://localhost:5173
 
-### 4. Model Router
+### 4. Test & build
+
+```bash
+# From the repo root — runs both server and app test suites
+npm run test
+
+# Or per subproject:
+cd server && npm test          # vitest run (1118 tests across 94 files)
+cd app && npm test             # vitest run (136 tests across 19 files)
+
+# Production build (server tsc + app vite build)
+npm run build
+
+# Pre-flight verification the CI pipeline runs
+npm run verify:server         # typecheck + grep-audit + tests
+npm run verify:app            # typecheck + eslint + tests + build
+```
+
+The server suite excludes 5 files that require external services
+(`run-tests`, `ghost-remediation`, `playwright-client`, `workflow-runner`,
+`upr-phase1-step2b-abortsignal-cap`) — these run in dedicated CI jobs or
+locally with the backing services started. The exclusion list is encoded
+in the root `npm run test` and `test:server` scripts and in `.github/workflows/ci.yml`.
+
+### 5. Model Router
 
 Open the Model Router (Dock → Model Router button) to:
 - Paste API keys for providers
@@ -151,7 +193,7 @@ code-siren/
 │   │   ├── systems/voice/  # TTS (11 providers) + ASR
 │   │   ├── terminal/       # Real PTY terminal manager
 │   │   └── security/       # Sandbox, egress policy, secret patterns
-│   └── tests/              # 86 test files, 1067+ tests
+│   └── tests/              # 94 test files, 1118 tests (1082 run in CI; 5 files excluded — need external services)
 ├── app/                    # React + Vite + TypeScript
 │   ├── src/
 │   │   ├── components/     # Chat, editor, terminal, dock, sidebar
@@ -166,15 +208,20 @@ code-siren/
 
 ## CI
 
-All 5 CI jobs must pass on every push:
+All 6 CI jobs must pass on every push to `main`/`master` and on every pull request:
 
 | Job | What it checks |
 |---|---|
-| Server | typecheck + 1067 tests + grep-audit + boot smoke test (health + login validation) |
-| App | typecheck + eslint + vitest + build |
+| Server | `npm ci` + typecheck + 1082 tests (5 service-dependent files excluded) + grep-audit + boot smoke test (health + login validation) |
+| App | `npm ci` + typecheck + eslint `--max-warnings 0` + vitest (136 tests) + `vite build` |
 | Lockfile hygiene | No mirror registries (npmmirror) in any lockfile |
-| Gitleaks | Full git history scan with baseline (catches new secrets in any commit) |
-| Security Audit | server: 0 vulnerabilities, app: 0 high (--omit=dev) |
+| Gitleaks | Full git history scan with baseline (catches new secrets in any commit, even committed-then-deleted) |
+| Security Audit | server: 0 vulnerabilities, app: 0 high (`--omit=dev`) |
+| Repo hygiene | No tracked file > 2 MB outside the VRM allowlist; no root `skills/` folder; no `.polarfs-test` marker |
+
+The exclusion list for the server test job lives in `.github/workflows/ci.yml`
+and in the root `package.json` `test` / `test:server` scripts — keep them in
+sync when adding a service-dependent test file.
 
 ---
 
