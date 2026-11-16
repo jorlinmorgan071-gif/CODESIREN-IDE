@@ -8,10 +8,10 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from './test-fixtures.js';
 
 const SERVER_URL = 'http://localhost:3001';
 const TEST_EMAIL = `completion-test-${Date.now()}@example.com`;
-const TEST_PASSWORD = 'test-password-123';
 
 async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 

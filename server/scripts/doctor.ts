@@ -21,6 +21,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from '../../scripts/test-fixtures.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = join(__dirname, '..');
@@ -98,7 +99,7 @@ async function main() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: `doctor-${Date.now()}@code-siren.local`,
-          password: 'doctor-password-temp',
+          password: TEST_PASSWORD,
           name: 'Doctor',
         }),
       });

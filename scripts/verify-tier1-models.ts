@@ -2,6 +2,7 @@
 // Tier 1 chat endpoint, and prints the server log line that confirms
 // which model the orchestrator is calling.
 import { spawn } from 'node:child_process';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from './test-fixtures.js';
 
 const SERVER_DIR = '/home/z/my-project/extracted/code_siren/server';
 const PORT = '3099'; // non-default to avoid conflicts
@@ -45,7 +46,7 @@ async function fetchJson(url, opts = {}) {
 
   // Register (or login if exists)
   const email = `verify@test.local`;
-  const password = 'verify-password-1234';
+  const password = TEST_PASSWORD;
   let regRes = await fetchJson(`${BASE}/auth/register`, {
     method: 'POST',
     body: JSON.stringify({ email, password, name: 'Verify User' }),

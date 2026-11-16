@@ -9,6 +9,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from './test-fixtures.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = '/home/z/my-project/extracted/code_siren/server';
@@ -77,7 +78,7 @@ async function main() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: `dash-cache-${Date.now()}@code-siren.local`,
-        password: 'dash-cache-password',
+        password: TEST_PASSWORD,
         name: 'DashCache',
       }),
     });

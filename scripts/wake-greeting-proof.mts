@@ -4,6 +4,7 @@
 import { WebSocket } from 'ws';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from './test-fixtures.js';
 
 const SERVER_URL = 'http://localhost:3001';
 const WS_URL = 'ws://localhost:3001/ws';
@@ -41,11 +42,11 @@ async function main() {
     const email = `greeting-test-${Date.now()}@example.com`;
     await fetch(`${SERVER_URL}/api/auth/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password: 'test-password-123', name: 'Greeting Test' }),
+      body: JSON.stringify({ email, password: TEST_PASSWORD, name: 'Greeting Test' }),
     }).catch(() => {});
     const loginRes = await fetch(`${SERVER_URL}/api/auth/login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password: 'test-password-123' }),
+      body: JSON.stringify({ email, password: TEST_PASSWORD }),
     });
     const { token } = await loginRes.json() as any;
     console.log('Authenticated.');

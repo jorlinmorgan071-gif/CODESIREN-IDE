@@ -21,6 +21,11 @@ import sys
 import os
 import signal
 
+# Test password — reads from env to match scripts/test-fixtures.ts. This is
+# a throwaway fixture for registering a test account against a local dev
+# server, NOT a real secret.
+TEST_PASSWORD = os.environ.get("TEST_PASSWORD", "test-password-fixture-change-me")
+
 def run_command(cmd, cwd=None, env=None, background=False):
     """Run a command, optionally in background."""
     full_env = {**os.environ, **(env or {})}
@@ -88,7 +93,7 @@ def main():
     import urllib.request
 
     email = f"lipsync-test-{int(time.time())}@example.com"
-    data = json.dumps({"email": email, "password": "testpassword123", "name": "LipSync Test"}).encode()
+    data = json.dumps({"email": email, "password": TEST_PASSWORD, "name": "LipSync Test"}).encode()
     try:
         req = urllib.request.Request("http://localhost:3001/api/auth/register",
             data=data, headers={"Content-Type": "application/json"})
@@ -96,7 +101,7 @@ def main():
     except:
         pass
 
-    data = json.dumps({"email": email, "password": "testpassword123"}).encode()
+    data = json.dumps({"email": email, "password": TEST_PASSWORD}).encode()
     req = urllib.request.Request("http://localhost:3001/api/auth/login",
         data=data, headers={"Content-Type": "application/json"})
     login_resp = json.loads(urllib.request.urlopen(req).read())

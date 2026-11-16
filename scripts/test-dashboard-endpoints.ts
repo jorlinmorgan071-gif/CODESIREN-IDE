@@ -6,6 +6,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from './test-fixtures.js';
 
 const SERVER_DIR = '/home/z/my-project/extracted/code_siren/server';
 
@@ -63,7 +64,7 @@ async function main() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       email: `dash-test-${Date.now()}@code-siren.local`,
-      password: 'dash-test-password',
+      password: TEST_PASSWORD,
       name: 'Dash Test',
     }),
   });

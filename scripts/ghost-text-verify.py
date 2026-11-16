@@ -31,6 +31,11 @@ import sys
 import os
 import urllib.request
 
+# Test password — reads from env to match scripts/test-fixtures.ts. This is
+# a throwaway fixture for registering a test account against a local dev
+# server, NOT a real secret.
+TEST_PASSWORD = os.environ.get("TEST_PASSWORD", "test-password-fixture-change-me")
+
 
 def wait_for_url(url, timeout=30):
     start = time.time()
@@ -92,7 +97,7 @@ def main():
     # ── 2. Auth ──────────────────────────────────────────────────────
     print("\n2. Authenticating...")
     email = f"ghost-test-{int(time.time())}@example.com"
-    data = json.dumps({"email": email, "password": "test-password-123", "name": "Ghost Test"}).encode()
+    data = json.dumps({"email": email, "password": TEST_PASSWORD, "name": "Ghost Test"}).encode()
     req = urllib.request.Request(
         "http://localhost:3001/api/auth/register",
         data=data, headers={"Content-Type": "application/json"},
@@ -101,7 +106,7 @@ def main():
         urllib.request.urlopen(req, timeout=5)
     except Exception:
         pass  # may already exist
-    data = json.dumps({"email": email, "password": "test-password-123"}).encode()
+    data = json.dumps({"email": email, "password": TEST_PASSWORD}).encode()
     req = urllib.request.Request(
         "http://localhost:3001/api/auth/login",
         data=data, headers={"Content-Type": "application/json"},

@@ -92,7 +92,7 @@ async function killServer(child: ChildProcess): Promise<void> {
 
 async function registerUser(): Promise<{ token: string; userId: string; email: string; password: string }> {
   const email = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@code-siren.local`;
-  const password = 'e2e-password-123';
+  const password = TEST_PASSWORD;
   const res = await fetch(`http://localhost:${PORT}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -404,6 +404,7 @@ async function main() {
 
 // spawnSync helper (sync execution for the script-running journeys)
 import { spawnSync } from 'node:child_process';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from './test-fixtures.js';
 
 main().catch((err) => {
   console.error('fatal:', err);

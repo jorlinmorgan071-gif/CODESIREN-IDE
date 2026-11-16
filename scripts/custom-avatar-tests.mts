@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from './test-fixtures.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '..');
@@ -70,7 +71,7 @@ async function waitForApp(url: string, label: string, timeoutMs = 30000): Promis
 
 async function getDevToken(): Promise<string> {
   const email = 'dev@code-siren.local';
-  const password = 'dev-password-step-0';
+  const password = TEST_PASSWORD;
   const name = 'Step 0 Developer';
   let res = await fetch(`${SERVER_URL}/api/auth/register`, {
     method: 'POST',

@@ -31,6 +31,7 @@ import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync } from '
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from './test-fixtures.js';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright') as typeof import('playwright');
@@ -116,7 +117,7 @@ async function getDevToken(): Promise<string> {
   // Register/login the dev user the same way the app does, so we can call
   // the avatar settings API directly from the test.
   const email = 'dev@code-siren.local';
-  const password = 'dev-password-step-0';
+  const password = TEST_PASSWORD;
   const name = 'Step 0 Developer';
 
   // Try register first

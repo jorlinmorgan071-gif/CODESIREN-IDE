@@ -14,6 +14,7 @@ import { WebSocket } from 'ws';
 import { readFileSync, existsSync } from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from './test-fixtures.js';
 
 const SERVER_URL = 'http://localhost:3001';
 const WS_URL = 'ws://localhost:3001/ws';
@@ -51,7 +52,7 @@ async function waitForServer(timeoutMs = 30000): Promise<void> {
 async function registerAndLogin(): Promise<{ token: string; userId: string }> {
   // Register a test user
   const email = `voice-test-${Date.now()}@example.com`;
-  const password = 'test-password-123';
+  const password = TEST_PASSWORD;
   console.log(`Registering test user: ${email}`);
   try {
     await fetch(`${SERVER_URL}/api/auth/register`, {

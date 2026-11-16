@@ -2,6 +2,7 @@
 // npm run benchmark — measures key performance metrics.
 
 import { performance } from 'node:perf_hooks';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from '../../scripts/test-fixtures.js';
 
 const PORT = process.env.PORT ?? '3001';
 const BASE = `http://localhost:${PORT}`;
@@ -27,7 +28,7 @@ async function main() {
   const regRes = await fetch(`${BASE}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'test-password-123', name: 'Bench' }),
+    body: JSON.stringify({ email, password: TEST_PASSWORD, name: 'Bench' }),
   });
   const { token } = await regRes.json();
 

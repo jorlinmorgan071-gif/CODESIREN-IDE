@@ -21,6 +21,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { TEST_PASSWORD, TEST_ADMIN_PASSWORD, testEmail } from './test-fixtures.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = '/home/z/my-project/extracted/code_siren/server';
@@ -128,7 +129,7 @@ async function registerAdminUser(): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       email: `load-admin@code-siren.local`,
-      password: 'load-admin-password',
+      password: TEST_ADMIN_PASSWORD,
       name: 'Load Admin',
     }),
   });
@@ -140,7 +141,7 @@ async function registerAdminUser(): Promise<void> {
     const loginRes = await fetch(`http://localhost:${PORT}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'load-admin@code-siren.local', password: 'load-admin-password' }),
+      body: JSON.stringify({ email: 'load-admin@code-siren.local', password: TEST_ADMIN_PASSWORD }),
     });
     const body = await loginRes.json() as { token: string };
     globalToken = body.token;
@@ -171,7 +172,7 @@ async function registerLoadUser(idx: number): Promise<string> {
   const res = await fetch(`http://localhost:${PORT}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'load-password', name: `LoadUser${idx}` }),
+    body: JSON.stringify({ email, password: TEST_PASSWORD, name: `LoadUser${idx}` }),
   });
   if (res.ok) {
     const body = await res.json() as { token: string };
@@ -181,7 +182,7 @@ async function registerLoadUser(idx: number): Promise<string> {
   const loginRes = await fetch(`http://localhost:${PORT}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'load-password' }),
+    body: JSON.stringify({ email, password: TEST_PASSWORD }),
   });
   const body = await loginRes.json() as { token: string };
   return body.token;
