@@ -120,18 +120,26 @@ describe('Phase 3 integration and interaction safeguards', () => {
   const appRoot = resolve(import.meta.dirname, '..', 'src');
 
   it('keeps diagnostics creation out of R3F frame loops and supplies the shared local adapter in every presentation context', () => {
-    const face = readFileSync(resolve(appRoot, 'pages/FaceView.tsx'), 'utf8');
+    // The 'face' context VRMModel was extracted from FaceView.tsx into
+    // components/avatar/VRMModel.tsx (task 04 — split god files). The
+    // diagnostics *creation* (useAvatarDiagnosticsSnapshot, runtime ref)
+    // lives in VRMModel.tsx; the diagnostics *UI* (variant="drawer",
+    // avatarUrl guard) lives in FaceView.tsx.
+    const faceModel = readFileSync(resolve(appRoot, 'components/avatar/VRMModel.tsx'), 'utf8');
+    const facePage = readFileSync(resolve(appRoot, 'pages/FaceView.tsx'), 'utf8');
     const pip = readFileSync(resolve(appRoot, 'components/avatar/AvatarOverlay.tsx'), 'utf8');
     const bubble = readFileSync(resolve(appRoot, 'components/voice/InteractionBubble.tsx'), 'utf8');
-    for (const source of [face, pip, bubble]) {
+    // Diagnostics creation lives in the model components (not the page).
+    for (const source of [faceModel, pip, bubble]) {
       expect(source).toContain('useAvatarDiagnosticsSnapshot');
       expect(source).toContain('diagnosticsRuntimeRef.current');
       expect(source).not.toContain('createAvatarCompatibilityDiagnostics(');
     }
-    expect(face).toContain('variant="drawer"');
+    // Diagnostics UI (variant + avatarUrl guard) lives in the page components.
+    expect(facePage).toContain('variant="drawer"');
     expect(pip).toContain('variant="sheet"');
     expect(bubble).toContain('variant="sheet"');
-    expect(face).toContain('diagnosticsSnapshot?.diagnostics.avatarUrl === avatarUrl');
+    expect(facePage).toContain('diagnosticsSnapshot?.diagnostics.avatarUrl === avatarUrl');
     expect(pip).toContain('diagnosticsSnapshot?.diagnostics.avatarUrl === avatarUrl');
     expect(bubble).toContain('diagnosticsSnapshot?.diagnostics.avatarUrl === bubbleAvatarUrl');
   });

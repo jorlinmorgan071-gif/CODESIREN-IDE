@@ -25,7 +25,9 @@ describe('Phase 4 avatar runtime lifecycle isolation', () => {
   });
 
   it('uses a distinct context key in every presentation runtime', () => {
-    const face = readFileSync(join(process.cwd(), 'src/pages/FaceView.tsx'), 'utf8');
+    // The 'face' context VRMModel was extracted from FaceView.tsx into
+    // components/avatar/VRMModel.tsx (task 04 — split god files).
+    const face = readFileSync(join(process.cwd(), 'src/components/avatar/VRMModel.tsx'), 'utf8');
     const pip = readFileSync(join(process.cwd(), 'src/components/avatar/AvatarOverlay.tsx'), 'utf8');
     const bubble = readFileSync(join(process.cwd(), 'src/components/voice/InteractionBubble.tsx'), 'utf8');
 
@@ -36,7 +38,7 @@ describe('Phase 4 avatar runtime lifecycle isolation', () => {
 
   it('cancels pending lip-sync creation and disconnects only its own connected node in every context', () => {
     const sources = [
-      readFileSync(join(process.cwd(), 'src/pages/FaceView.tsx'), 'utf8'),
+      readFileSync(join(process.cwd(), 'src/components/avatar/VRMModel.tsx'), 'utf8'),
       readFileSync(join(process.cwd(), 'src/components/avatar/AvatarOverlay.tsx'), 'utf8'),
       readFileSync(join(process.cwd(), 'src/components/voice/InteractionBubble.tsx'), 'utf8'),
     ];
