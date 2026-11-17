@@ -59,12 +59,14 @@ RUN npm prune --omit=dev
 # ── Stage 2: runtime ──────────────────────────────────────────────────
 FROM node:22-bookworm-slim AS runtime
 
-# node-pty's compiled native addon links against libutil; bookworm-slim
-# doesn't ship it by default. Install the minimal runtime lib and clean up
-# the apt cache. No build tools here — keeps the runtime image slim.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends libutil1 \
- && rm -rf /var/lib/apt/lists/*
+# No apt-get step: node-pty's compiled pty.node links only against
+# libstdc++.so.6 / libgcc_s.so.1 / libc.so.6 / libm.so.6 (verified via ldd),
+# all of which ship in node:22-bookworm-slim (libstdc++6 is a Node runtime
+# dep). The old comment claiming node-pty "links against libutil" was wrong,
+# and `libutil1` is not even a bookworm package (libutil was merged into
+# glibc/libc6 in glibc 2.34+; bookworm ships glibc 2.36, which already
+# provides libutil.so.1 via libc6). Keeping the runtime apt-free makes the
+# image slimmer and removes a build-breaking package lookup.
 
 WORKDIR /app
 
