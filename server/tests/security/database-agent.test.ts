@@ -194,11 +194,11 @@ describe('Phase C Agent 3 — DatabaseAgent', () => {
       });
 
       // The fixture creates migrations 001 and 010, and the real repo has
-      // migrations up to 012 (012_row_level_security.sql), so the next
-      // available migration number is 13.
+      // migrations up to 013 (013_admin_plan.sql), so the next available
+      // migration number is 14.
       expect(modelRouter.stream).toHaveBeenCalled();
       const llmCall = (modelRouter.stream as any).mock.calls[0][0];
-      expect(llmCall.messages[1].content).toContain('13');
+      expect(llmCall.messages[1].content).toContain('14');
     });
   });
 

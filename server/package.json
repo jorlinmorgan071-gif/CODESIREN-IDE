@@ -29,7 +29,8 @@
     "restore": "tsx scripts/restore.ts",
     "export-traces": "tsx scripts/export-traces.ts",
     "export-settings": "tsx scripts/export-settings.ts",
-    "seed-memories": "tsx scripts/seed-memories.ts"
+    "seed-memories": "tsx scripts/seed-memories.ts",
+    "make-admin": "tsx scripts/make-admin.ts"
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",

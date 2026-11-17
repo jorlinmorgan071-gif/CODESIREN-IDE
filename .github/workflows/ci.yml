@@ -193,3 +193,97 @@ jobs:
         # See app/SECURITY-NOTES.md for the full advisory table and the
         # Tailwind v4 migration (post-launch task).
         run: npm ci && npm audit --omit=dev --audit-level=high
+
+  docker:
+    name: Docker (compose build + up + /api/health smoke)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify compose refuses to start without JWT_SECRET
+        # docker-compose.yml uses ${JWT_SECRET:?...} — compose MUST fail
+        # fast (non-zero) when the var is unset, instead of booting a
+        # server that signs tokens with an empty secret. This step proves
+        # the :? guard works: `docker compose config` exits non-zero with
+        # no .env file present.
+        run: |
+          if docker compose config >/dev/null 2>&1; then
+            echo "✗ FAIL: docker compose config succeeded with JWT_SECRET unset"
+            exit 1
+          fi
+          echo "✓ PASS: docker compose refuses to interpolate without JWT_SECRET"
+
+      - name: Generate JWT_SECRET and write .env
+        # Compose reads .env automatically. The secret is a fresh 32-byte
+        # hex value per run — never committed, never reused.
+        run: |
+          SECRET=$(openssl rand -hex 32)
+          echo "JWT_SECRET=${SECRET}" > .env
+          echo "✓ wrote .env (JWT_SECRET length: ${#SECRET})"
+
+      - name: Build both images (server + app)
+        # server/Dockerfile compiles node-pty from source in the builder
+        # stage (python3/make/g++), then copies the pruned production
+        # node_modules into a slim runtime. app/Dockerfile is a
+        # vite-build → nginx-served static bundle.
+        run: docker compose build
+
+      - name: Start the stack (db + server + app)
+        run: docker compose up -d
+
+      - name: Poll /api/health (expect 200 + status=ok + db=connected)
+        # Polls the server's published :3001 port from the host. The health
+        # body must report db=connected (real Postgres over the compose
+        # network), NOT degraded-in-memory — that is the proof the Docker
+        # install path actually wired PG_HOST=db through to the server.
+        run: |
+          ok=0
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /tmp/health.json -w '%{http_code}' http://localhost:3001/api/health 2>/dev/null || echo 000)
+            if [ "$code" = "200" ] && \
+               { grep -q '"status":"ok"' /tmp/health.json 2>/dev/null || grep -q '"status": "ok"' /tmp/health.json 2>/dev/null; }; then
+              if grep -q '"db":"connected"' /tmp/health.json 2>/dev/null || \
+                 grep -q '"db": "connected"' /tmp/health.json 2>/dev/null; then
+                echo "✓ GET /api/health → 200 (status=ok, db=connected)"
+                cat /tmp/health.json; echo
+                ok=1
+                break
+              fi
+            fi
+            echo "waiting for /api/health (attempt $i/60, last code=$code)..."
+            sleep 2
+          done
+          if [ "$ok" != "1" ]; then
+            echo "✗ /api/health did not return 200+ok+db=connected within 120s"
+            echo "--- server logs (last 80 lines) ---"
+            docker compose logs --tail=80 server || true
+            exit 1
+          fi
+
+      - name: Run DB migrations (validates the SQL path incl. migration 013)
+        # The runtime image has no tsx (it's a pruned devDependency), so
+        # invoke the compiled migrate entrypoint directly. This proves the
+        # Docker install path is real: every migration applies against the
+        # compose `db` service, including 013_admin_plan.sql which lets
+        # users.plan='admin' (so `npm run make-admin` can promote a user).
+        # pathToFileURL in migrate.ts's CLI guard resolves the relative
+        # path, so this works without an absolute path.
+        run: docker compose exec -T server node dist/src/db/migrate.js
+
+      - name: Confirm the frontend is served on :8080
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ 2>/dev/null || echo 000)
+          if [ "$code" != "200" ]; then
+            echo "✗ app on :8080 did not return 200 (got $code)"
+            docker compose logs --tail=40 app || true
+            exit 1
+          fi
+          echo "✓ GET / on :8080 → 200 (frontend served)"
+
+      - name: Tear down
+        # `if: always()` so the stack is cleaned up even if a prior step
+        # failed — no leaking containers/volumes between CI runs.
+        if: always()
+        run: docker compose down -v --remove-orphans
+

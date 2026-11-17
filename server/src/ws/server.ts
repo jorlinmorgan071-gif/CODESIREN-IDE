@@ -160,13 +160,16 @@ export function attachWsServer(server: HttpServer): void {
         // The terminal is a raw shell for the authenticated user; agents use
         // workflow-runner's runShellCommand() (gated by validateShellCommand).
         if (msg.event === 'terminal:create') {
-          // Gate 1: TERMINAL_ENABLED flag must be on. The ptyManager
-          // singleton reads config.TERMINAL_ENABLED at construction time;
-          // we re-check here so the WS handler emits a clean event to the
-          // client instead of letting the createSession() throw propagate.
-          if (!ptyManager.isEnabled()) {
+          // Gate 1: the terminal must be both enabled by config AND backed
+          // by a loadable node-pty native module. ptyManager loads node-pty
+          // lazily; if the binary is missing/broken it reports a precise
+          // reason here so the client can show it instead of a generic 500.
+          // This also means a missing node-pty never blocks server boot —
+          // every other route and WS event still works.
+          const disabledReason = ptyManager.disabledReason();
+          if (disabledReason) {
             ws.send(JSON.stringify(makeEvent('terminal:disabled', {
-              reason: 'Terminal is disabled on this server. Set TERMINAL_ENABLED=true on the server to enable it.',
+              reason: disabledReason,
             }, { userId: state.claims.sub, projectId: state.projectId })));
             return;
           }

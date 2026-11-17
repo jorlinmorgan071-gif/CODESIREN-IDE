@@ -7,7 +7,8 @@
 // ('test-password-123', 'e2e-password-123', 'perf-password-baseline',
 // 'load-admin-password', etc.). These are not real secrets — they're test
 // fixtures used to register throwaway accounts against a local dev server —
-// but they triggered secret scanners and looked bad to buyers.
+// but they tripped automated secret-detection tooling and read poorly to
+// outside reviewers of the repository.
 //
 // This module centralizes them behind a single process.env read so:
 //   1. No literal password string appears in more than one place.

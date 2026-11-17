@@ -18,7 +18,7 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { initDb, withClient, isDbAvailable, closeDb, query } from './client.js';
 
@@ -192,8 +192,17 @@ export async function runMigrations(appliedBy: string = 'manual'): Promise<Migra
   return result;
 }
 
-// CLI entry point — runs when invoked via `npm run migrate`
-if (import.meta.url === `file://${process.argv[1]}`) {
+// CLI entry point — runs when this file is the main module.
+//
+// Invoked via `npm run migrate` (tsx src/db/migrate.ts) in dev, and via
+// `node dist/src/db/migrate.js` in Docker / production (the runtime image
+// has no tsx — it's a pruned devDependency). The guard compares the current
+// module URL against process.argv[1] using pathToFileURL, which resolves
+// RELATIVE paths against cwd before building the file:// URL. The naive
+// `file://${process.argv[1]}` form only matched when argv[1] was already
+// absolute (tsx), so `node dist/src/db/migrate.js` launched from /app would
+// silently skip migration — a false-green footgun in the Docker path.
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   runMigrations('manual').then((result) => {
     if (result.failed) {
       process.exit(1);
