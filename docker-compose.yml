@@ -25,7 +25,14 @@
 
 services:
   db:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 = official Postgres 16 image WITH the pgvector
+    # extension preinstalled. Migration 001_core.sql runs CREATE EXTENSION
+    # vector (used for embedding columns in the memory tables) and CREATE
+    # EXTENSION uuid-ossp; stock postgres:16-alpine lacks pgvector and the
+    # first migration would fail with "extension vector is not available".
+    # This image ships both pgvector and the standard contrib modules
+    # (including uuid-ossp), so migrations apply cleanly out of the box.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: code_siren
       POSTGRES_USER: code_siren
