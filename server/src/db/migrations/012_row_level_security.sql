@@ -8,8 +8,8 @@
 -- ── Enable RLS on every user-scoped table ──────────────────────────────
 
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE memory_intelligence ENABLE ROW LEVEL SECURITY;
-ALTER TABLE fabrication ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_memory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE fabrication_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sentinel_watches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE voice_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE relay_plans ENABLE ROW LEVEL SECURITY;
@@ -31,16 +31,16 @@ CREATE POLICY users_self_select ON users FOR SELECT USING (true);
 CREATE POLICY users_self_update ON users FOR UPDATE USING (true);
 CREATE POLICY users_self_delete ON users FOR DELETE USING (true);
 
--- memory_intelligence: scoped by user_id
-CREATE POLICY memory_user_select ON memory_intelligence FOR SELECT USING (true);
-CREATE POLICY memory_user_insert ON memory_intelligence FOR INSERT WITH CHECK (true);
-CREATE POLICY memory_user_update ON memory_intelligence FOR UPDATE USING (true);
-CREATE POLICY memory_user_delete ON memory_intelligence FOR DELETE USING (true);
+-- agent_memory: scoped by user_id (created by 002_memory_intelligence.sql as agent_memory)
+CREATE POLICY memory_user_select ON agent_memory FOR SELECT USING (true);
+CREATE POLICY memory_user_insert ON agent_memory FOR INSERT WITH CHECK (true);
+CREATE POLICY memory_user_update ON agent_memory FOR UPDATE USING (true);
+CREATE POLICY memory_user_delete ON agent_memory FOR DELETE USING (true);
 
--- fabrication: scoped by user_id
-CREATE POLICY fabrication_user_select ON fabrication FOR SELECT USING (true);
-CREATE POLICY fabrication_user_insert ON fabrication FOR INSERT WITH CHECK (true);
-CREATE POLICY fabrication_user_delete ON fabrication FOR DELETE USING (true);
+-- fabrication_jobs: scoped by user_id (created by 004_fabrication.sql as fabrication_jobs)
+CREATE POLICY fabrication_user_select ON fabrication_jobs FOR SELECT USING (true);
+CREATE POLICY fabrication_user_insert ON fabrication_jobs FOR INSERT WITH CHECK (true);
+CREATE POLICY fabrication_user_delete ON fabrication_jobs FOR DELETE USING (true);
 
 -- Note: sentinel_watches, voice_sessions, relay_plans, relay_milestone_logs
 -- also have RLS enabled. The service role bypasses RLS, so the app-layer
