@@ -388,3 +388,132 @@ toolRegistry.register({
     };
   },
 });
+
+// ── web_search tool (Step 2b) ───────────────────────────────────────────
+// Real web search via the configured SearchProvider (Tavily). Reads the saved
+// key from the ProviderRegistry entry (or TAVILY_API_KEY env). Goes through the
+// egress policy. No key → clear "add a search provider in the Model Router"
+// message, success:false, and NO fabricated results.
+toolRegistry.register({
+  name: 'web_search',
+  description:
+    'Search the web for real-time information using the configured search provider (Tavily). ' +
+    'Args: { "query": "search text", "max_results": 5 } — returns up to N results, each with a ' +
+    'title, URL, and snippet. Results are real (never fabricated). If no search provider key is ' +
+    'configured, returns a clear "add a search provider in the Model Router" error.',
+  async execute(args) {
+    const query = String(args.query ?? '').trim();
+    if (!query) {
+      return { name: 'web_search', content: 'Missing required "query" arg', success: false };
+    }
+    const maxResults = Number(args.max_results ?? 5);
+
+    const { getTavilySearchProvider } = await import('../../orchestration/search-provider.js');
+    const provider = await getTavilySearchProvider();
+
+    try {
+      const results = await provider.search(query, { maxResults });
+      if (results.length === 0) {
+        return {
+          name: 'web_search',
+          content: `No web results found for: ${query}`,
+          success: true,
+          meta: { provider: provider.id, count: 0, results: [] },
+        };
+      }
+      const formatted = results
+        .map((r, i) => `[${i + 1}] ${r.title}\n    URL: ${r.url}\n    ${r.snippet}`)
+        .join('\n\n');
+      return {
+        name: 'web_search',
+        content: formatted,
+        success: true,
+        meta: { provider: provider.id, count: results.length, results },
+      };
+    } catch (err: any) {
+      if (err?.name === 'SearchProviderNotConfiguredError') {
+        return {
+          name: 'web_search',
+          content: err.message,
+          success: false,
+          meta: { provider: err.providerId, notConfigured: true },
+        };
+      }
+      return {
+        name: 'web_search',
+        content: `Web search failed: ${err.message ?? 'unknown error'}`,
+        success: false,
+      };
+    }
+  },
+});
+
+// ── fetch_page tool (Step 2b) ───────────────────────────────────────────
+// Fetch the text content of a specific page URL behind the egress policy
+// (HTTPS-only, SSRF/private-IP guarded, redirect-revalidated). Used to read a
+// page found via web_search. Extracts <title> + visible text from HTML.
+toolRegistry.register({
+  name: 'fetch_page',
+  description:
+    'Fetch and extract the text content of a web page URL. Args: { "url": "https://...", "max_chars": 5000 } ' +
+    '— returns the page title and its visible text content (HTML tags/scripts/styles stripped). ' +
+    'The fetch goes through the egress policy: HTTPS-only, SSRF/private-IP destinations are blocked.',
+  async execute(args) {
+    const url = String(args.url ?? '').trim();
+    if (!url) {
+      return { name: 'fetch_page', content: 'Missing required "url" arg', success: false };
+    }
+    const maxChars = clampInt(Number(args.max_chars ?? 5000), 200, 20_000);
+
+    const egress = await requestExternalHttp({
+      url,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'code-siren-fetch-page',
+        Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1',
+      },
+      timeoutMs: 15_000,
+    });
+
+    if (!egress.ok || !egress.response) {
+      return {
+        name: 'fetch_page',
+        content: `Egress blocked or failed: ${egress.reason ?? 'request could not be completed'}`,
+        success: false,
+        meta: { violation: egress.violation ?? 'network-error' },
+      };
+    }
+    const { status, statusText, body, finalUrl } = egress.response;
+    if (status < 200 || status >= 300) {
+      return {
+        name: 'fetch_page',
+        content: `HTTP ${status} ${statusText}`,
+        success: false,
+        meta: { finalUrl },
+      };
+    }
+
+    const titleMatch = body.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].trim() : url;
+    const content = body
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&[^;]+;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, maxChars);
+
+    return {
+      name: 'fetch_page',
+      content: `${title}\n${finalUrl}\n\n${content}`,
+      success: true,
+      meta: { title, finalUrl, chars: content.length, text: content },
+    };
+  },
+});
+
+function clampInt(n: number, lo: number, hi: number): number {
+  if (!Number.isFinite(n)) return lo;
+  return Math.min(Math.max(Math.round(n), lo), hi);
+}

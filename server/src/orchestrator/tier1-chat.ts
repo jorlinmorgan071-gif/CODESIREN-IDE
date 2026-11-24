@@ -319,10 +319,12 @@ export async function runChatViaAgentManager(
   };
   const modeDirective = MODE_DIRECTIVES[mode] ?? MODE_DIRECTIVES.ask;
 
-  // ── Web search (investigate mode) ────────────────────────────────────
-  // When webSearch is enabled, fetch relevant results from Wikipedia's API
-  // (no API key needed) and inject them as context. This is NOT a stub —
-  // it makes a real HTTP request to Wikipedia's public API.
+  // ── Web search (webSearch toggle / investigate mode) ────────────────
+  // Calls the shared `web_search` tool (Tavily SearchProvider), then injects
+  // the cited results (title, URL, snippet) as context. No key configured → a
+  // clear "add a search provider in the Model Router" notice and NO fabricated
+  // results. Wikipedia is NOT a silent fallback here (it would only be used via
+  // a labelled "Wikipedia lookup" skill, never as a hidden substitute).
   let webSearchContext = '';
   if (webSearch) {
     try {
@@ -333,21 +335,27 @@ export async function runChatViaAgentManager(
         ts: Date.now(),
       }, scope));
 
-      // Use Wikipedia's public API (no key needed) for a real web search.
-      // Extract key terms from the user message for the search query.
-      const searchQuery = userMessage.slice(0, 100).replace(/[^\w\s]/g, ' ').trim();
-      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchQuery)}&format=json&srlimit=3&origin=*`;
-      const wikiRes = await fetch(wikiUrl);
-      if (wikiRes.ok) {
-        const wikiData = await wikiRes.json() as any;
-        const results = wikiData?.query?.search ?? [];
+      const searchQuery = userMessage.trim().slice(0, 200);
+      const { toolRegistry } = await import('../agents/_shared/tool-registry.js');
+      const result = await toolRegistry.execute('web_search', {
+        query: searchQuery,
+        max_results: 5,
+      });
+
+      if (!result.success) {
+        const notConfigured = (result.meta as { notConfigured?: boolean })?.notConfigured;
+        webSearchContext = notConfigured
+          ? '\n\n[Web search unavailable — add a search provider (Tavily) in the Model Router to enable web search. No results were fetched.]\n'
+          : `\n\n[Web search failed — proceeding without search results: ${result.content}]\n`;
+      } else {
+        const results = (result.meta?.results ?? []) as Array<{ title: string; url: string; snippet: string }>;
         if (results.length > 0) {
-          webSearchContext = '\n\n[Web Search Results from Wikipedia]\n';
+          webSearchContext = '\n\n[Web Search Results]\n';
           for (const r of results) {
-            // Strip HTML tags from the snippet
-            const snippet = (r.snippet ?? '').replace(/<[^>]+>/g, '').replace(/&[^;]+;/g, ' ');
-            webSearchContext += `- ${r.title}: ${snippet}\n  URL: https://en.wikipedia.org/wiki/${encodeURIComponent(r.title.replace(/ /g, '_'))}\n`;
+            webSearchContext += `- ${r.title}: ${r.snippet}\n  URL: ${r.url}\n`;
           }
+        } else {
+          webSearchContext = `\n\n[Web search returned no results for: ${searchQuery}]\n`;
         }
       }
     } catch (err) {

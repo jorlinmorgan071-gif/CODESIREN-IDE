@@ -47,6 +47,7 @@ import type {
 import { IAgent } from '../base-agent.js';
 import { dispatchStrategy } from '../../orchestration/strategies/dispatcher.js';
 import { modelRouter } from '../../orchestration/model-router.js';
+import { toolRegistry } from '../_shared/tool-registry.js';
 
 const SYSTEM_PROMPT = `You are the Research Agent of Zero Two: Code Siren.
 Your role: real web search + page reading + LLM synthesis with mandatory source citation.
@@ -88,96 +89,67 @@ export class ResearchAgent extends IAgent {
   constructor() { super(0.81); }
 
 
-  // ── 1. search() — real web search via DuckDuckGo API ─────────────────────
+  // ── 1. search() — real web search via the web_search tool ───────────────
   /**
    * Search the web for results matching the query.
    *
-   * Uses a real HTTP-based web search via the DuckDuckGo Instant Answer API
-   * (no API key required). Returns normalized SearchResult[].
-   * Returns empty array if search fails.
+   * Uses the shared `web_search` tool (Tavily SearchProvider) — the same tool
+   * the chat web-search toggle and the LLM strategies use. Returns normalized
+   * SearchResult[]. Returns an empty array if the tool fails or no key is
+   * configured (the architectural fabrication guard then keeps the LLM off).
    */
   async search(query: string, numResults: number = 5): Promise<SearchResult[]> {
     if (!query || query.trim().length < 2) return [];
 
     try {
-      // DuckDuckGo Instant Answer API — free, no key needed
-      const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query.trim())}&format=json&no_html=1&skip_disambig=1`;
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'code-siren-research-agent' },
+      const result = await toolRegistry.execute('web_search', {
+        query,
+        max_results: numResults,
       });
-      if (!res.ok) return [];
-
-      const data = await res.json() as any;
+      if (!result.success) return [];
+      const raw = (result.meta?.results ?? []) as Array<{
+        url: string; title: string; snippet: string; score?: number;
+      }>;
       const results: SearchResult[] = [];
-
-      // DuckDuckGo returns a single abstract result + related topics
-      if (data.AbstractText && data.AbstractURL) {
+      for (const r of raw) {
+        if (!r.url) continue;
+        let hostName = '';
+        try { hostName = new URL(r.url).hostname; } catch { hostName = ''; }
         results.push({
-          url: data.AbstractURL,
-          title: data.Heading || query,
-          snippet: data.AbstractText,
-          hostName: new URL(data.AbstractURL).hostname,
-          rank: 0,
+          url: r.url,
+          title: r.title,
+          snippet: r.snippet,
+          hostName,
+          rank: results.length,
         });
       }
-
-      // Related topics (each has a FirstURL + Text)
-      if (Array.isArray(data.RelatedTopics)) {
-        for (const topic of data.RelatedTopics.slice(0, numResults - 1)) {
-          if (topic.FirstURL && topic.Text) {
-            results.push({
-              url: topic.FirstURL,
-              title: topic.Text.split(' - ')[0] || topic.Text.slice(0, 80),
-              snippet: topic.Text,
-              hostName: new URL(topic.FirstURL).hostname,
-              rank: results.length,
-            });
-          }
-          if (results.length >= numResults) break;
-        }
-      }
-
       return results;
     } catch {
       return [];
     }
   }
 
-  // ── 2. fetchPage() — real page reading via HTTP fetch ────────────────
+  // ── 2. fetchPage() — page reading via the fetch_page tool ───────────────
   /**
-   * Fetch and read the content of a web page.
-   * Uses direct HTTP fetch + HTML text extraction (no SDK dependency).
-   * Returns { title, url, content, tokensUsed } or null if fetch fails.
+   * Fetch and read the content of a web page via the shared `fetch_page` tool,
+   * which runs the fetch behind the egress policy (HTTPS-only, SSRF-guarded).
+   * Returns { title, url, content, tokensUsed } or null if the fetch fails.
    */
   async fetchPage(url: string): Promise<PageContent | null> {
     if (!url || url.trim().length < 4) return null;
 
     try {
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'code-siren-research-agent' },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) return null;
-
-      const html = await res.text();
-
-      // Extract title
-      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-      const title = titleMatch ? titleMatch[1].trim() : url;
-
-      // Extract text content (strip HTML tags)
-      const content = html
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&[^;]+;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 5000);
-
+      const result = await toolRegistry.execute('fetch_page', { url, max_chars: 5000 });
+      if (!result.success) return null;
+      const meta = (result.meta ?? {}) as { title?: string; finalUrl?: string; text?: string };
+      const content = meta.text ?? result.content;
       const tokensUsed = Math.ceil(content.length / 4);
-
-      return { title, url, content, tokensUsed };
+      return {
+        title: meta.title ?? url,
+        url: meta.finalUrl ?? url,
+        content,
+        tokensUsed,
+      };
     } catch {
       return null;
     }
