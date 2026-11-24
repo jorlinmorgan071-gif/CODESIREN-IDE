@@ -27,6 +27,11 @@ export function uninstallSkill(name: string): boolean {
   return installedSkills.delete(name);
 }
 
+/** Clear every installed skill. Intended for tests that need a clean store. */
+export function clearInstalledSkills(): void {
+  installedSkills.clear();
+}
+
 export function getSkill(name: string): SkillManifest | undefined {
   return installedSkills.get(name);
 }

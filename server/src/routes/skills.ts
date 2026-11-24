@@ -120,9 +120,13 @@ skillsRouter.post('/discover', requireAuth, async (req, res) => {
 });
 
 // ── Import skills from GitHub repos ────────────────────────────────────
-// POST /api/skills/import
+// POST /api/skills/import   — the EXPLICIT refresh path (boot does NOT fetch).
 //   { repo: "charlie947/social-media-skills", branch: "main" }
-//   → fetches skills/ directory, imports each SKILL.md as a TOML skill
+//   → lists skills/ on the repo's default branch, imports each SKILL.md.
+//   Raw URLs use HEAD so a repo whose default branch is `master` (e.g.
+//   paperclipai/paperclip) does not 404 the way the old hardcoded `main` did.
+//   Per-skill failures are returned in `errors` (and logged) so the UI can
+//   show "imported X of Y, Z failed" instead of silently dropping them.
 skillsRouter.post('/import', requireAuth, async (req, res) => {
   const importSchema = z.object({
     repo: z.string().min(1),
@@ -135,11 +139,13 @@ skillsRouter.post('/import', requireAuth, async (req, res) => {
   }
   try {
     const { importSkillsFromRepo } = await import('../skills/importer.js');
-    const results = await importSkillsFromRepo(parsed.data.repo, parsed.data.branch);
+    const result = await importSkillsFromRepo(parsed.data.repo, parsed.data.branch);
     res.json({
-      imported: results.filter((r) => r.installed).length,
-      total: results.length,
-      skills: results,
+      imported: result.imported.length,
+      failed: result.failed.length,
+      total: result.total,
+      skills: result.imported,
+      errors: result.failed,
     });
   } catch (err) {
     res.status(500).json({ error: `Import failed: ${(err as Error).message}` });

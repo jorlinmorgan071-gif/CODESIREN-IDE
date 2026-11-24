@@ -141,5 +141,10 @@ scripts/secret-scan-donors.sh
 scratch/
 extracted/
 
+# Skill vendoring staging area — untrusted upstream fetches (SKILL.md, LICENSE,
+# SHAs) collected by scripts/fetch-skills.sh before review. The reviewed subset
+# is committed under server/src/skills/vendored/; the staging dir is never tracked.
+.skill-staging/
+
 # Extra skill files not part of the server Skills Vault
 server/src/skills/library/numbers-api.toml

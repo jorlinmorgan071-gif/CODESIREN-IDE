@@ -83,13 +83,17 @@ async function main() {
   const { loadLibrarySkills } = await import('./skills/library/index.js');
   loadLibrarySkills();
 
-  // Import curated skills from GitHub repos (paperclip, ECC, logo-design,
-  // leanrea, social-media-skills). Non-blocking — failures are logged
-  // but don't prevent server startup. Runs in background after the server
-  // is ready so it doesn't delay the boot.
-  import('./skills/importer.js')
-    .then(({ importCuratedSkills }) => importCuratedSkills())
-    .catch((err) => console.warn('[skills:importer] curated import failed:', err));
+  // Load vendored upstream skills (MIT-licensed, pinned to source commit SHAs
+  // in server/src/skills/vendored/MANIFEST.json). Loaded from the repo — NO
+  // network at boot. Refreshing is the explicit POST /api/skills/import route.
+  const { loadVendoredSkills } = await import('./skills/importer.js');
+  const vendored = loadVendoredSkills();
+  if (vendored.failed > 0) {
+    console.warn(
+      `[skills:vendored] ${vendored.failed} of ${vendored.total} vendored skills failed to load`,
+      vendored.errors,
+    );
+  }
 
   // 3. Start Ghost Mode in approval-required mode (PDF Section 16 default)
   ghostMode.setLevel('approval-required');

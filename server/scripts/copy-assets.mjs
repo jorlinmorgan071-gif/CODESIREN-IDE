@@ -15,14 +15,33 @@
 // Run automatically as the `postbuild` step in the `build` npm script.
 // Safe to re-run.
 
-import { readdirSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readdirSync, mkdirSync, copyFileSync, existsSync, statSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = dirname(__dirname); // server/
 
+/** Recursively copy a directory tree (all files, all extensions). */
+function copyDirRecursive(srcAbs, destAbs) {
+  mkdirSync(destAbs, { recursive: true });
+  let n = 0;
+  for (const entry of readdirSync(srcAbs)) {
+    const from = join(srcAbs, entry);
+    const to = join(destAbs, entry);
+    if (statSync(from).isDirectory()) {
+      n += copyDirRecursive(from, to);
+    } else {
+      copyFileSync(from, to);
+      n += 1;
+    }
+  }
+  return n;
+}
+
 // rootDir="./" → compiled JS lives under dist/src/, so assets go there too.
+// Each loader resolves paths with dirname(fileURLToPath(import.meta.url)),
+// so the assets must sit next to the compiled .js files in dist/src/.
 const assetDirs = [
   { src: 'src/db/migrations', dest: 'dist/src/db/migrations', ext: '.sql' },
   { src: 'src/skills/library', dest: 'dist/src/skills/library', ext: '.toml' },
@@ -44,5 +63,19 @@ for (const { src, dest, ext } of assetDirs) {
   }
   console.log(`[copy-assets] ${src} → ${dest} (${files.length} ${ext} files)`);
 }
+
+// Vendored skills: a nested tree of SKILL.md, MANIFEST.json, LICENSE, *.md
+// files under src/skills/vendored/. loadVendoredSkills() reads these at boot
+// via __dirname, so the whole tree must be mirrored next to the compiled JS.
+const vendoredSrc = join(root, 'src/skills/vendored');
+const vendoredDest = join(root, 'dist/src/skills/vendored');
+if (existsSync(vendoredSrc)) {
+  const n = copyDirRecursive(vendoredSrc, vendoredDest);
+  copied += n;
+  console.log(`[copy-assets] src/skills/vendored → dist/src/skills/vendored (${n} files, recursive)`);
+} else {
+  console.warn(`[copy-assets] source missing: src/skills/vendored (skipped)`);
+}
+
 console.log(`[copy-assets] copied ${copied} asset files to dist/`);
 
