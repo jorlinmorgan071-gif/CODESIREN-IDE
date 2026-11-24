@@ -15,7 +15,8 @@
 import type { AgentChunk, AgentTask, RouterMessage } from '../../types.js';
 import type { InferenceEngine } from '../model-router.js';
 import { LoopGuard } from '../loop-guard.js';
-import { formatToolCatalog, toolRegistry } from '../../agents/_shared/tool-registry.js';
+import { formatToolCatalog, toolRegistry, type ToolResult } from '../../agents/_shared/tool-registry.js';
+import { checkToolPolicy } from '../tool-policy.js';
 import { addStep, incrementTurn, addToolResult, setOutcome } from '../../observability/traces.js';
 
 export interface ReactOpts {
@@ -136,10 +137,18 @@ export async function* runReact(
       return;
     }
 
-    // 4. Dispatch tool call
-    const toolStart = Date.now();
+    // 4. Dispatch tool call — enforce chat-mode tool policy (Step 2c)
     const params = safeParseJson(argsStr);
-    const toolResult = await toolRegistry.execute(toolName, params);
+    const policy = checkToolPolicy(task.chatMode, toolName);
+    const toolStart = Date.now();
+    const toolResult: ToolResult = policy.allowed
+      ? await toolRegistry.execute(toolName, params)
+      : {
+          name: toolName,
+          content: `[mode-policy] ${policy.reason}`,
+          success: false,
+          meta: { violation: 'mode-disallowed', mode: task.chatMode },
+        };
     addToolResult(task.id, {
       name: toolName,
       args: params,
@@ -148,11 +157,11 @@ export async function* runReact(
     });
     addStep(task.id, {
       kind: 'tool-call',
-      label: `react turn ${turn} — tool '${toolName}' ${toolResult.success ? 'ok' : 'failed'}`,
+      label: `react turn ${turn} — tool '${toolName}' ${toolResult.success ? 'ok' : 'blocked/failed'}`,
       input: { toolName, args: params },
       output: toolResult.content.slice(0, 500),
       durationMs: Date.now() - toolStart,
-      meta: { turn, success: toolResult.success },
+      meta: { turn, success: toolResult.success, ...(toolResult.meta ?? {}) },
     });
 
     // Stream the observation to the client as a code chunk

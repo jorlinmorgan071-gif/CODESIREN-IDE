@@ -18,12 +18,13 @@ import { makeEvent, broadcast } from '../ws/events.js';
 import { getOrchestratorSettings } from './settings.js';
 import type { OrchestratorMessage } from './engine.js';
 import { agentManager } from '../orchestration/agent-manager.js';
-import type { AgentTask, ExecutionMode, TaskPriority, TaskType } from '../types.js';
+import type { AgentTask, TaskPriority, TaskType } from '../types.js';
 import type { TenantScope } from '../tenancy/scope.js';
 import { sanitizeWorkspacePaths, workspaceRelativePath, type WorkspaceIdentity } from '../workspace/service.js';
 import { executeWorkspaceFileRead } from '../orchestration/capabilities/workspace-file-read.js';
 import { modelRouter } from '../orchestration/model-router.js';
 import { selectNormalChatCapability, type NormalChatCapability } from './normal-chat-capabilities.js';
+import { executionModeForChatMode } from '../orchestration/tool-policy.js';
 
 // Session-scoped history for Tier 1 chat. We keep this in-memory because
 // the directive says Tier 1 is "99% of the time" — storing every casual
@@ -414,7 +415,13 @@ export async function runChatViaAgentManager(
     },
     files: [],
     priority: 'normal' as TaskPriority,
-    executionMode: 'single-shot' as ExecutionMode,
+    // Step 2c — chat mode drives both the strategy and the tool policy.
+    // ask -> single-shot (zero tool calls); debug/build/investigate -> react,
+    // with the tool gate in react.ts/codeact.ts enforcing read-only / all /
+    // web-only tools respectively. Explicit tool use (/skill, web toggle)
+    // bypasses the loop and is unaffected.
+    executionMode: executionModeForChatMode(mode),
+    chatMode: mode,
     origin: 'chat',
     createdAt: Date.now(),
   };

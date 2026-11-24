@@ -9,7 +9,8 @@
 import type { AgentChunk, AgentTask, RouterMessage } from '../../types.js';
 import type { InferenceEngine } from '../model-router.js';
 import { LoopGuard } from '../loop-guard.js';
-import { formatToolCatalog, toolRegistry } from '../../agents/_shared/tool-registry.js';
+import { formatToolCatalog, toolRegistry, type ToolResult } from '../../agents/_shared/tool-registry.js';
+import { checkToolPolicy } from '../tool-policy.js';
 import { addStep, incrementTurn, addToolResult, setOutcome } from '../../observability/traces.js';
 
 export interface CodeActOpts {
@@ -104,7 +105,10 @@ export async function* runCodeAct(
 
       const toolStart = Date.now();
       const params = { code };
-      const toolResult = await toolRegistry.execute(toolName, params);
+      const policy = checkToolPolicy(task.chatMode, toolName);
+      const toolResult: ToolResult = policy.allowed
+        ? await toolRegistry.execute(toolName, params)
+        : { name: toolName, content: `[mode-policy] ${policy.reason}`, success: false, meta: { violation: 'mode-disallowed', mode: task.chatMode } };
       addToolResult(task.id, { name: toolName, args: params, result: toolResult.content.slice(0, 500), success: toolResult.success });
       addStep(task.id, {
         kind: 'code-exec',
@@ -146,7 +150,10 @@ export async function* runCodeAct(
 
       const toolStart = Date.now();
       const params = safeParseJson(argsStr);
-      const toolResult = await toolRegistry.execute(toolName, params);
+      const policy = checkToolPolicy(task.chatMode, toolName);
+      const toolResult: ToolResult = policy.allowed
+        ? await toolRegistry.execute(toolName, params)
+        : { name: toolName, content: `[mode-policy] ${policy.reason}`, success: false, meta: { violation: 'mode-disallowed', mode: task.chatMode } };
       addToolResult(task.id, { name: toolName, args: params, result: toolResult.content.slice(0, 500), success: toolResult.success });
       addStep(task.id, {
         kind: 'tool-call',

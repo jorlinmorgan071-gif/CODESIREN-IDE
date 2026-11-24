@@ -35,6 +35,12 @@ export type ExecutionMode = 'single-shot' | 'react' | 'codeact';
 // They are ported from the donor project's native_react / native_openhands / simple agents
 // into server/orchestration/strategies/{react,codeact,single-shot}.ts (Step 2).
 
+// Step 2c — the UI-selected chat behavior mode. Drives tool policy in the
+// dispatcher (see server/src/orchestration/tool-policy.ts):
+//   ask = single-shot, zero tool calls; debug = read-only tools;
+//   build = all tools; investigate = web_search + fetch_page only.
+export type ChatMode = 'ask' | 'debug' | 'build' | 'investigate';
+
 export type TaskType =
   | 'chat'
   | 'code-gen'
@@ -69,6 +75,9 @@ export interface AgentTask {
   priority: TaskPriority;
   timeout?: number;              // ms
   executionMode: ExecutionMode;  // directive Section 4 — single-shot | react | codeact
+  // Step 2c — chat behavior mode that drives tool policy in the dispatcher.
+  // Undefined for non-chat tasks (treated as build / all tools).
+  chatMode?: ChatMode;
   // Origin transport — a spoken command and a typed command resolve to the SAME
   // AgentTask shape and travel through the SAME AgentManager.send() call.
   // 'voice' is added here ahead of Step 8 to make the contract explicit.
